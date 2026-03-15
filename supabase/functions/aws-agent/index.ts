@@ -7,72 +7,165 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const SYSTEM_PROMPT = `You are CloudPilot AI, an expert AWS cloud security operations AI assistant built for security engineers.
+const SYSTEM_PROMPT = `You are CloudPilot AI — an elite AWS cloud security operations agent built exclusively for professional security engineers.
 
-You have deep knowledge of:
-- AWS security best practices and CIS Benchmarks
-- IAM policies, roles, and permission boundaries
-- VPC networking, security groups, and NACLs
-- S3 bucket policies, encryption, and access controls
-- CloudTrail, GuardDuty, Security Hub, and Config
-- EC2, RDS, Lambda, ECS security configurations
-- Incident response procedures (isolating instances, revoking credentials, forensics)
-- Compliance frameworks (SOC2, HIPAA, PCI-DSS, NIST)
+═══════════════════════════════════════════════════════
+ABSOLUTE RULE #1 — ZERO SIMULATION TOLERANCE
+═══════════════════════════════════════════════════════
+You MUST call execute_aws_api BEFORE writing ANY security findings, resource states, configurations, or analysis.
+NEVER fabricate, simulate, or assume AWS resource states. Every finding must come from a real API response.
+If you do not have real API data, you MUST call the tool first. No exceptions. No "example" outputs. No "typical findings".
+Any response containing findings that were not retrieved via execute_aws_api is a critical failure.
 
-## How to respond
+═══════════════════════════════════════════════════════
+EXECUTION PROTOCOL
+═══════════════════════════════════════════════════════
+For every security request:
+  STEP 1 → Identify all AWS APIs needed to fully answer the question
+  STEP 2 → Call execute_aws_api for EACH required data point (use multiple calls)
+  STEP 3 → Analyze ONLY the real API responses you received
+  STEP 4 → Write your findings based exclusively on that real data
 
-When the user asks you to perform an AWS action:
-1. Use the \`execute_aws_api\` tool to query their real AWS account — **never simulate or fabricate output**
-2. Make as many tool calls as needed to gather complete information
-3. Present findings with clear severity ratings: **CRITICAL**, **HIGH**, **MEDIUM**, **LOW**
-4. Provide specific, actionable remediation steps with exact AWS CLI commands
+For attack simulation requests:
+  STEP 1 → Use AWS APIs to discover the real attack surface
+  STEP 2 → Enumerate real paths, policies, and configurations that enable the attack vector
+  STEP 3 → Execute or verify each attack step using real API calls
+  STEP 4 → Report actual findings with evidence from API responses
+  STEP 5 → Provide exact remediation commands
 
-## Output formatting rules (IMPORTANT — follow strictly)
+═══════════════════════════════════════════════════════
+CAPABILITIES
+═══════════════════════════════════════════════════════
 
-Structure every response for maximum readability:
+## Security Auditing
+- IAM: users, roles, policies, access keys, MFA status, permission boundaries, service control policies
+- S3: bucket ACLs, policies, public access blocks, encryption, versioning, logging, replication
+- EC2: security groups, NACLs, public IPs, IMDSv2, EBS encryption, AMI exposure, launch templates
+- VPC: flow logs, route tables, internet gateways, NAT gateways, VPC peering, PrivateLink
+- RDS/Aurora: public accessibility, encryption, backup retention, deletion protection, parameter groups
+- Lambda: function policies, environment variables, execution roles, VPC config, layer exposure
+- ECS/EKS: task roles, network mode, privileged containers, image vulnerabilities
+- CloudTrail: trail status, log validation, S3 delivery, KMS encryption, event selectors
+- Config: recorder status, rules, conformance packs, remediation actions
+- GuardDuty: detector status, findings, threat intelligence, S3/EKS/Lambda protection
+- Security Hub: standards, findings, insights, suppression rules
+- KMS: key rotation, key policies, grants, cross-account access
+- Secrets Manager / Parameter Store: resource policies, rotation status, cross-account access
+- Organizations: SCPs, delegated admins, member account inventory
+- Certificate Manager: expiry, transparency logging, key algorithm
+- WAF: web ACLs, rules, IP sets, rate limiting, managed rule groups
+- CloudFront: OAI/OAC, HTTPS enforcement, geo restrictions, WAF association
+- API Gateway: auth type, resource policies, logging, WAF, mTLS
+- SNS/SQS: queue/topic policies, encryption, cross-account access
+- ECR: image scanning, repository policies, lifecycle rules
+- Cognito: MFA requirements, advanced security, app client settings
+- EventBridge: rule targets, cross-account event buses
+- Step Functions: execution role permissions
+- Athena: workgroup encryption, result bucket policies
 
-- **Headings**: Use ## for major sections (Summary, Findings, Recommendations), ### for subsections
-- **Findings table**: Always present findings in a markdown table with columns: Resource | Finding | Severity | Risk
-- **Bold**: Use bold for severity levels, resource names, and key technical terms
-- **Code blocks**: Always wrap CLI commands and API calls in fenced code blocks with \`\`\`bash or \`\`\`json
-- **Bullet lists**: Use for recommendations and remediation steps — one action per bullet
-- **Summary first**: Start with a 2–3 sentence executive summary before detailed findings
-- **Section dividers**: Use --- to separate major sections in longer responses
-- **Be concise**: Do not pad responses. Every sentence must add value.
+## Attack Simulation (Authorized Testing Against User's Own Account)
+Run real attack technique simulations against the connected account:
 
-## AWS API tool
+### Privilege Escalation
+- Enumerate all IAM escalation paths: CreatePolicyVersion, AttachUserPolicy, PassRole abuse,
+  CreateAccessKey on other users, UpdateAssumeRolePolicy, iam:CreateLoginProfile, AddUserToGroup,
+  SetDefaultPolicyVersion, PutUserPolicy, PutRolePolicy, UpdateLoginProfile
+- Test each path with real API calls to determine exploitability
 
-The \`execute_aws_api\` tool accepts:
-- \`service\`: AWS service name (e.g. "S3", "EC2", "IAM", "GuardDuty")
-- \`operation\`: Operation method (e.g. "listBuckets", "describeInstances", "listUsers")
-- \`params\`: Optional parameters object (e.g. { "MaxItems": 100 })
+### Credential & Secrets Exposure
+- Scan EC2 user data for embedded credentials (real instances)
+- Enumerate Lambda environment variables for secrets
+- Check Systems Manager Parameter Store for plaintext secrets
+- Detect overly permissive Secrets Manager resource policies
+- Find IAM access keys older than 90 days with broad permissions
 
-Always think like a senior security engineer:
-- Assume breach mentality
-- Principle of least privilege
-- Prioritize findings by blast radius and exploitability
-- Every finding needs a remediation command`;
+### S3 Data Exfiltration Paths
+- Test real bucket accessibility (public read/write/list)
+- Enumerate Cross-Account S3 bucket policies
+- Identify S3 pre-signed URL abuse potential
+- Check for S3 replication to untrusted destinations
+
+### Lateral Movement Mapping
+- Map VPC peering connections and route overlap
+- Enumerate EC2 instance profiles with cross-service trust
+- Identify over-privileged Lambda execution roles
+- Map IAM role trust relationships for cross-service pivoting
+- Check ECS task role permissions and container escape paths
+
+### Detection Evasion Assessment
+- Verify GuardDuty coverage gaps (disabled regions, unmonitored services)
+- Check CloudTrail exclusion filters and logging gaps
+- Identify roles with sts:AssumeRole from suspicious external accounts
+- Test if CloudWatch alarms cover critical API events
+
+### Network Attack Surface
+- Enumerate all 0.0.0.0/0 ingress across all security groups and NACLs
+- Map exposed RDS/ElastiCache/Redshift instances
+- Check for Direct Connect/VPN misconfigurations
+- Identify EC2 instances with both public IP and sensitive IAM roles (SSRF-to-privilege-escalation path)
+
+### Supply Chain & Third-Party Risk
+- Enumerate cross-account IAM roles (vendor access)
+- Check for overly permissive S3 bucket policies with external principals
+- Identify Lambda layers from external accounts
+- Check CloudFormation stack imports from external sources
+
+## Compliance Frameworks
+CIS AWS Foundations Benchmark v3.0, NIST 800-53, SOC 2 Type II, PCI-DSS v4.0,
+HIPAA, ISO 27001, FedRAMP, AWS Well-Architected Security Pillar, MITRE ATT&CK Cloud
+
+## Incident Response
+- Live instance isolation (quarantine SG, snapshot, IMDS disable)
+- Credential revocation (deactivate keys, detach policies, invalidate sessions)
+- Forensic evidence preservation (CloudTrail, VPC Flow Logs, S3 access logs)
+- Threat hunting (GuardDuty findings, CloudTrail anomaly analysis)
+- Blast radius assessment
+
+═══════════════════════════════════════════════════════
+OUTPUT FORMAT — MANDATORY
+═══════════════════════════════════════════════════════
+
+Every response MUST follow this structure:
+
+1. **Executive Summary** (2–3 sentences based on real findings)
+2. **Findings Table** (Resource | Finding | Severity | Evidence)
+3. **Detailed Analysis** (per finding, with real API response data as evidence)
+4. **Remediation** (exact AWS CLI commands, one per bullet)
+
+Severity ratings: **CRITICAL** | **HIGH** | **MEDIUM** | **LOW** | **INFO**
+
+Formatting rules:
+- Use ## for sections, ### for subsections
+- Wrap ALL CLI commands in \`\`\`bash code blocks
+- Wrap ALL JSON/API output in \`\`\`json code blocks
+- Bold all severity levels, resource ARNs, and critical terms
+- Use --- to separate major sections
+- Never pad. Every word must add value.`;
 
 const tools = [
   {
     type: "function",
     function: {
       name: "execute_aws_api",
-      description: "Executes an AWS SDK API call against the user's connected AWS account.",
+      description:
+        "Executes a REAL AWS SDK API call against the user's live AWS account. This is the ONLY source of truth. Must be called before any security analysis is written. Supports all AWS services available in aws-sdk v2.",
       parameters: {
         type: "object",
         properties: {
           service: {
             type: "string",
-            description: "The AWS service name (e.g. 'S3', 'EC2', 'IAM')",
+            description:
+              "AWS service class name exactly as in aws-sdk v2 (e.g. 'S3', 'EC2', 'IAM', 'STS', 'GuardDuty', 'SecurityHub', 'CloudTrail', 'Config', 'RDS', 'Lambda', 'EKS', 'ECS', 'KMS', 'SecretsManager', 'SSM', 'Organizations', 'WAFv2', 'CloudFront', 'SNS', 'SQS', 'ECR', 'Athena', 'CloudWatch', 'CloudWatchLogs', 'Inspector2', 'AccessAnalyzer', 'Macie2', 'NetworkFirewall', 'Shield')",
           },
           operation: {
             type: "string",
-            description: "The AWS operation to perform (e.g. 'listBuckets', 'describeInstances')",
+            description:
+              "The exact method name on the service client (e.g. 'listBuckets', 'describeInstances', 'listUsers', 'getAccountAuthorizationDetails', 'describeFindings', 'getDetector')",
           },
           params: {
             type: "object",
-            description: "Optional parameters for the operation (e.g. { MaxItems: 10 })",
+            description:
+              "Parameters object for the operation. Use pagination params like NextToken, Marker, MaxItems to get complete results.",
           },
         },
         required: ["service", "operation"],
@@ -104,12 +197,12 @@ serve(async (req) => {
       );
     }
 
-    // Configure AWS credentials (do not use AWS.config.update to avoid global state pollution)
+    // Configure AWS credentials
     let awsConfig: any = { region: credentials.region };
 
     if (credentials.method === "access_key") {
       if (!credentials.accessKeyId || !credentials.secretAccessKey) {
-        throw new Error("Access Key ID and Secret Access Key are required for access_key method.");
+        throw new Error("Access Key ID and Secret Access Key are required.");
       }
       awsConfig = {
         credentials: {
@@ -127,7 +220,7 @@ serve(async (req) => {
       try {
         const assumedRole = await sts.assumeRole({
           RoleArn: credentials.roleArn,
-          RoleSessionName: "CloudPilotAISession"
+          RoleSessionName: "CloudPilotAISession",
         }).promise();
 
         awsConfig = {
@@ -146,25 +239,33 @@ serve(async (req) => {
     }
 
     if (!awsConfig.credentials || !awsConfig.credentials.accessKeyId) {
-       throw new Error("Failed to securely resolve AWS credentials.");
+      throw new Error("Failed to securely resolve AWS credentials.");
     }
 
-    // Add credential context to system prompt
-    const credContext = credentials.method === "access_key"
-      ? `User connected via Access Key (${credentials.accessKeyId?.slice(0, 8)}...) in region ${credentials.region}`
-      : `User connected via Assume Role (${credentials.roleArn}) in region ${credentials.region}`;
+    const credContext =
+      credentials.method === "access_key"
+        ? `Connected via Access Key (${credentials.accessKeyId?.slice(0, 8)}...) in region ${credentials.region}`
+        : `Connected via Assume Role (${credentials.roleArn}) in region ${credentials.region}`;
 
     const apiMessages = [
-      { role: "system", content: `${SYSTEM_PROMPT}\n\nCredential context: ${credContext}` },
+      {
+        role: "system",
+        content: `${SYSTEM_PROMPT}\n\nActive session: ${credContext}\nAll execute_aws_api calls will run against this account. Use this context to scope your API calls correctly.`,
+      },
       ...messages,
     ];
 
     let finalResponseText = "";
     let isStreamable = false;
 
-    // Agentic Loop (max 5 iterations to prevent infinite loops)
-    const MAX_ITERATIONS = 5;
+    // Agentic loop — up to 15 iterations for complex multi-step operations
+    const MAX_ITERATIONS = 15;
+
     for (let i = 0; i < MAX_ITERATIONS; i++) {
+      // Force a real tool call on the first iteration to prevent any simulated output.
+      // On subsequent iterations let the model decide when it has enough data.
+      const toolChoice = i === 0 ? "required" : "auto";
+
       const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
         method: "POST",
         headers: {
@@ -175,7 +276,8 @@ serve(async (req) => {
           model: "google/gemini-3-flash-preview",
           messages: apiMessages,
           tools: tools,
-          stream: false, // Don't stream during tool usage loop
+          tool_choice: toolChoice,
+          stream: false,
         }),
       });
 
@@ -188,7 +290,7 @@ serve(async (req) => {
         }
         if (response.status === 402) {
           return new Response(
-            JSON.stringify({ error: "AI usage credits exhausted. Please add credits in Settings → Workspace → Usage." }),
+            JSON.stringify({ error: "AI usage credits exhausted." }),
             { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
           );
         }
@@ -206,23 +308,23 @@ serve(async (req) => {
       apiMessages.push(responseMessage);
 
       if (responseMessage.tool_calls && responseMessage.tool_calls.length > 0) {
+        // Execute all tool calls in this iteration
         for (const toolCall of responseMessage.tool_calls) {
           if (toolCall.function.name === "execute_aws_api") {
             try {
               const args = JSON.parse(toolCall.function.arguments);
-              console.log(`Executing AWS API: ${args.service}.${args.operation}`, args.params);
+              console.log(`[CloudPilot] AWS API: ${args.service}.${args.operation}`, JSON.stringify(args.params ?? {}));
 
               const ServiceClass = (AWS as any)[args.service];
               if (!ServiceClass) {
-                throw new Error(`AWS Service '${args.service}' not found in SDK`);
+                throw new Error(`AWS service '${args.service}' not found in SDK. Check the service name.`);
               }
 
               const client = new ServiceClass(awsConfig);
               if (typeof client[args.operation] !== "function") {
-                throw new Error(`Operation '${args.operation}' not found on AWS service '${args.service}'`);
+                throw new Error(`Operation '${args.operation}' not found on ${args.service}. Check the operation name.`);
               }
 
-              // Promisify the AWS SDK call
               const result = await client[args.operation](args.params || {}).promise();
 
               apiMessages.push({
@@ -231,17 +333,21 @@ serve(async (req) => {
                 content: JSON.stringify(result),
               });
             } catch (err: any) {
-              console.error("AWS SDK Error:", err);
+              console.error("[CloudPilot] AWS SDK Error:", err.message);
               apiMessages.push({
                 role: "tool",
                 tool_call_id: toolCall.id,
-                content: JSON.stringify({ error: err.message }),
+                content: JSON.stringify({
+                  error: err.message,
+                  code: err.code,
+                  statusCode: err.statusCode,
+                }),
               });
             }
           }
         }
       } else {
-        // No tool calls, we have the final text response
+        // Model has finished calling tools — this is the final analysis
         finalResponseText = responseMessage.content || "";
         isStreamable = true;
         break;
@@ -249,29 +355,22 @@ serve(async (req) => {
     }
 
     if (!isStreamable) {
-       finalResponseText = "Agent reached maximum iterations without completing the task.";
+      finalResponseText = "⚠️ Agent reached the maximum number of API iterations. The operation may be too broad — try narrowing your request to a specific service or resource.";
     }
 
-    // Wrap the final response text in an SSE stream to keep frontend compatibility
+    // Stream the final response as SSE
     const stream = new ReadableStream({
       start(controller) {
-        // Send a few chunks for the final message to simulate streaming
-        const chunkSize = 20;
+        const chunkSize = 30;
         let index = 0;
 
         function pushChunk() {
           if (index < finalResponseText.length) {
             const chunk = finalResponseText.slice(index, index + chunkSize);
-            const payload = {
-              choices: [
-                {
-                  delta: { content: chunk }
-                }
-              ]
-            };
+            const payload = { choices: [{ delta: { content: chunk } }] };
             controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(payload)}\n\n`));
             index += chunkSize;
-            setTimeout(pushChunk, 10);
+            setTimeout(pushChunk, 8);
           } else {
             controller.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
             controller.close();
@@ -279,14 +378,14 @@ serve(async (req) => {
         }
 
         pushChunk();
-      }
+      },
     });
 
     return new Response(stream, {
       headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
     });
   } catch (e: any) {
-    console.error("aws-agent error:", e);
+    console.error("[CloudPilot] Fatal error:", e);
     return new Response(
       JSON.stringify({ error: e instanceof Error ? e.message : "Unknown error" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }

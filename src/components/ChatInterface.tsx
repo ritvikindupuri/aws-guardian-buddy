@@ -166,7 +166,7 @@ const ChatInterface = () => {
             <div className="border border-border rounded-lg bg-card p-3 space-y-2">
               <p className="text-[10px] font-mono text-muted-foreground tracking-widest uppercase">CAPABILITIES</p>
               <ul className="space-y-1.5">
-                {["Live AWS API execution", "Compliance scanning", "Incident response", "Remediation guidance"].map(cap => (
+                {["Live AWS API execution", "Attack simulation", "Compliance scanning (CIS/NIST/PCI)", "Incident response & forensics", "Remediation commands"].map(cap => (
                   <li key={cap} className="flex items-center gap-2 text-[11px] text-secondary-foreground">
                     <div className="w-1 h-1 rounded-full bg-primary flex-shrink-0" />
                     {cap}

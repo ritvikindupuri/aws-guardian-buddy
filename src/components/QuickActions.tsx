@@ -1,7 +1,8 @@
 import {
   Shield, Search, AlertTriangle, Lock, Server,
   Database, Globe, Users, FileSearch, Zap,
-  Eye, Activity, Network, HardDrive
+  Eye, Activity, Network, HardDrive, Swords,
+  Key, Radio, GitBranch, Cpu, Fingerprint, Target
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -13,49 +14,173 @@ interface QuickActionsProps {
 const categories = [
   {
     label: "AUDIT",
+    color: "text-blue-400",
     actions: [
-      { icon: Search, label: "S3 Buckets", prompt: "Audit all S3 buckets: check for public access, missing encryption, absent logging, and overly permissive bucket policies. Provide a severity-ranked findings table." },
-      { icon: Lock, label: "IAM Posture", prompt: "Comprehensive IAM audit: check for users without MFA, overly permissive policies (especially AdministratorAccess and *:* wildcards), unused credentials older than 90 days, and access key rotation status." },
-      { icon: AlertTriangle, label: "Security Groups", prompt: "Audit all security groups for dangerous inbound rules: 0.0.0.0/0 on SSH(22), RDP(3389), database ports(3306,5432,1433,27017), and any unrestricted ingress. Rank by severity." },
-      { icon: Server, label: "EC2 Instances", prompt: "Assess all EC2 instances: check for public IPs, IMDSv2 enforcement, unencrypted EBS volumes, missing Systems Manager agent, and instances running without IAM roles." },
+      {
+        icon: Search,
+        label: "S3 Buckets",
+        prompt: "Query all S3 buckets in the account using real AWS API calls. For each bucket check: public access block settings, bucket ACL, bucket policy (identify external principals), default encryption, versioning status, access logging, and replication. Present real findings in a severity-ranked table with the actual bucket names and configurations you retrieved.",
+      },
+      {
+        icon: Lock,
+        label: "IAM Posture",
+        prompt: "Perform a full IAM audit using real AWS API calls. Query: all IAM users and their MFA status, all access keys and last used dates, users/roles with AdministratorAccess or wildcard policies, password policy settings, users with console access but no MFA, unused credentials older than 90 days. Use getAccountAuthorizationDetails for a comprehensive policy dump. Show real account data only.",
+      },
+      {
+        icon: AlertTriangle,
+        label: "Security Groups",
+        prompt: "Audit all EC2 security groups using real AWS API calls. Find every group with inbound rules allowing 0.0.0.0/0 or ::/0, especially on ports: 22 (SSH), 3389 (RDP), 3306 (MySQL), 5432 (Postgres), 1433 (MSSQL), 27017 (MongoDB), 6379 (Redis), 9200 (Elasticsearch), 8080/8443 (alt HTTP). List real group IDs, VPCs, and attached resources.",
+      },
+      {
+        icon: Server,
+        label: "EC2 Instances",
+        prompt: "Audit all EC2 instances with real API calls. Check each instance for: public IP assignment, IMDSv2 enforcement (HttpTokens=required), unencrypted EBS volumes, IAM instance profile presence, running as root (check user data), stopped instances still accruing cost. Also check launch templates for IMDSv1 defaults. Return real instance IDs and states.",
+      },
+      {
+        icon: Database,
+        label: "RDS / Aurora",
+        prompt: "Audit all RDS and Aurora instances using real AWS APIs. Check: publicly accessible flag, storage encryption status, automated backup retention period, deletion protection, IAM database authentication, SSL/TLS enforcement via parameter groups, multi-AZ configuration, and Enhanced Monitoring. List real DB instance identifiers and their configurations.",
+      },
+      {
+        icon: Cpu,
+        label: "Lambda Security",
+        prompt: "Audit all Lambda functions using real AWS API calls. For each function check: execution role permissions (are they overly broad?), environment variables for hardcoded secrets or API keys, function policy for public or cross-account access, VPC configuration (functions that should be VPC-isolated), runtime versions for EOL runtimes, and reserved concurrency. Show real function names and findings.",
+      },
     ],
   },
   {
     label: "COMPLIANCE",
+    color: "text-green-400",
     actions: [
-      { icon: Shield, label: "CIS Benchmark", prompt: "Run a CIS AWS Foundations Benchmark v3.0 assessment covering: IAM, logging, monitoring, networking, and storage controls. Report pass/fail status for each control." },
-      { icon: Eye, label: "CloudTrail", prompt: "Verify CloudTrail configuration: multi-region trail enabled, log file validation, S3 bucket access logging, KMS encryption, and CloudWatch integration. Check for any logging gaps." },
-      { icon: Database, label: "RDS Security", prompt: "Audit all RDS instances: public accessibility, encryption at rest and in transit, automated backups, deletion protection, and IAM authentication status." },
-      { icon: Activity, label: "GuardDuty Status", prompt: "Check GuardDuty status across all regions. List any active findings sorted by severity. Verify S3 protection and EKS protection are enabled." },
+      {
+        icon: Shield,
+        label: "CIS Benchmark",
+        prompt: "Run a real CIS AWS Foundations Benchmark v3.0 assessment. Query the actual account configuration for each control: IAM password policy, root account MFA and access keys, CloudTrail multi-region status, Config recorder, VPC default security group rules, S3 Block Public Access at account level, GuardDuty enablement, Security Hub enablement. Report real pass/fail for each control with evidence.",
+      },
+      {
+        icon: Eye,
+        label: "CloudTrail",
+        prompt: "Verify CloudTrail configuration using real API calls. Check: multi-region trail enabled, log file validation enabled, S3 bucket logging, KMS encryption of logs, CloudWatch Logs integration, event selectors (management events, data events for S3/Lambda), trail status (is logging active?), and S3 bucket policy on the logging bucket. Show the real trail ARNs and their configuration.",
+      },
+      {
+        icon: Activity,
+        label: "GuardDuty",
+        prompt: "Check GuardDuty status and findings using real AWS API calls. Query: detector status in the current region, all active findings sorted by severity (CRITICAL/HIGH first), S3 protection status, EKS audit log protection, Lambda protection, RDS login protection, and malware scan settings. List real finding IDs, types, and affected resources.",
+      },
+      {
+        icon: Radio,
+        label: "Security Hub",
+        prompt: "Query AWS Security Hub using real API calls. Get: enabled security standards (CIS, PCI-DSS, NIST, AWS Foundational), failed controls sorted by severity, critical and high findings, suppressed vs active findings breakdown, and cross-region aggregation status. Show real finding counts and the top 10 most critical controls failing in the account.",
+      },
+    ],
+  },
+  {
+    label: "ATTACK SIMULATION",
+    color: "text-red-400",
+    actions: [
+      {
+        icon: Swords,
+        label: "Privilege Escalation",
+        prompt: "Perform a real IAM privilege escalation assessment. Use AWS API calls to: enumerate all IAM users, roles, and their attached/inline policies, then identify every escalation path — CreatePolicyVersion, SetDefaultPolicyVersion, AttachUserPolicy, AttachRolePolicy, PutUserPolicy, PutRolePolicy, CreateAccessKey on other users, UpdateAssumeRolePolicy, AddUserToGroup, PassRole to Lambda/EC2/CloudFormation, iam:CreateLoginProfile. For each path found, show the exact policy that enables it and the real principal that has the permission.",
+      },
+      {
+        icon: Key,
+        label: "Secrets Exposure",
+        prompt: "Run a real secrets exposure scan. Use AWS API calls to: check all Lambda function environment variables for credentials patterns, query EC2 instance user data for secrets (describe instances), list all SSM Parameter Store parameters and identify plaintext vs SecureString, check Secrets Manager for resource policies allowing broad access, check EC2 metadata service enforcement (IMDSv2) to assess SSRF-to-credential-theft risk. Report real findings from actual API responses.",
+      },
+      {
+        icon: Target,
+        label: "S3 Exfil Paths",
+        prompt: "Map real S3 data exfiltration paths. Use AWS API calls to: list all buckets and test their GetBucketAcl and GetBucketPolicy, identify buckets with public read/write/list access, find buckets with cross-account policies (external AWS account principals), check for S3 replication rules sending data to external buckets, identify overly permissive bucket policies granting s3:GetObject or s3:* to '*'. Report real bucket names and the actual policy statements that enable exfiltration.",
+      },
+      {
+        icon: GitBranch,
+        label: "Lateral Movement",
+        prompt: "Map real lateral movement paths in the account. Use AWS API calls to: enumerate VPC peering connections and route tables, list EC2 instances with IAM roles that have cross-service permissions (e.g., ec2 instance with s3:* or iam:PassRole), enumerate ECS task definitions with privileged containers or host networking, map Lambda execution roles with permissions to assume other roles, identify trust relationships in IAM roles enabling cross-service pivoting. Show real resource IDs and the exact permissions enabling each movement path.",
+      },
+      {
+        icon: Fingerprint,
+        label: "Detection Gaps",
+        prompt: "Assess real detection and monitoring gaps. Use AWS API calls to: check GuardDuty detector status in ALL regions (list regions, check each), verify CloudTrail is logging in all regions (not just the primary), identify AWS services with no CloudWatch alarms on critical API calls (DeleteTrail, PutBucketPolicy, CreateUser, AttachUserPolicy), check if CloudTrail S3 data events are enabled, verify Config recorder is active, check if root account activity generates alerts. Show the real gaps found.",
+      },
+      {
+        icon: Network,
+        label: "Network Exposure",
+        prompt: "Map the real external network attack surface. Use AWS API calls to: enumerate all security groups with 0.0.0.0/0 inbound rules across all VPCs, find EC2 instances with public IPs AND sensitive IAM roles (SSRF-to-privilege-escalation), check for publicly accessible RDS instances, find load balancers with HTTP (non-HTTPS) listeners, enumerate API Gateways without WAF or without authentication, check for VPC endpoints missing policies. Show real resource identifiers and the exact exposure.",
+      },
     ],
   },
   {
     label: "INCIDENT RESPONSE",
+    color: "text-orange-400",
     actions: [
-      { icon: Zap, label: "Isolate Instance", prompt: "Guide me through isolating a potentially compromised EC2 instance: create quarantine security group, snapshot volumes for forensics, disable instance metadata, and preserve CloudTrail logs." },
-      { icon: FileSearch, label: "Credential Audit", prompt: "Emergency credential audit: list all active IAM access keys, their last used dates, and associated permissions. Identify any keys that should be immediately rotated or deactivated." },
-      { icon: Network, label: "Network Forensics", prompt: "Analyze VPC Flow Logs for suspicious patterns: unusual outbound connections, data exfiltration indicators, lateral movement between subnets, and communication with known-bad IP ranges." },
-      { icon: HardDrive, label: "Snapshot Forensics", prompt: "Create forensic snapshots: guide me through capturing EBS snapshots, memory dumps, and metadata preservation for a compromised instance while maintaining chain of custody." },
+      {
+        icon: Zap,
+        label: "Isolate Instance",
+        prompt: "Guide me through isolating a potentially compromised EC2 instance using real AWS API calls. Steps: (1) Query running instances to identify the target, (2) Create a quarantine security group with no inbound/outbound rules, (3) Remove existing security groups and apply quarantine group, (4) Create EBS snapshots for forensic preservation, (5) Disable IMDS on the instance, (6) Tag the instance as quarantined with timestamp. Execute each step with real API calls and show the results.",
+      },
+      {
+        icon: FileSearch,
+        label: "Credential Audit",
+        prompt: "Perform an emergency credential audit using real AWS API calls. Query: all IAM users and their access key status and last-used dates, all active console sessions via IAM, CloudTrail events in the last 24 hours for credential-related API calls (CreateAccessKey, GetSecretAccessKey), any new IAM users or roles created recently, access keys that have never been used or haven't been used in 90+ days. Return real user names, key IDs, and timestamps.",
+      },
+      {
+        icon: HardDrive,
+        label: "Forensic Snapshot",
+        prompt: "Create forensic snapshots using real AWS API calls. Query all EC2 instances to identify target instances, then for each compromised instance: create EBS snapshots of all attached volumes with forensic tags (Reason, Timestamp, IncidentID), capture instance metadata (instance type, AMI, network config, IAM role), check if CloudTrail logs are being delivered to S3. Show real snapshot IDs and preservation commands.",
+      },
+      {
+        icon: Users,
+        label: "Blast Radius",
+        prompt: "Assess the blast radius of a potential compromise using real AWS API calls. Query: all IAM roles with trust policies allowing ec2.amazonaws.com or lambda.amazonaws.com (potential pivot targets), all cross-account role assumptions in CloudTrail last 7 days, all S3 buckets accessible by the potentially compromised identity, RDS instances accessible from the VPC, secrets accessible via the identity's permissions. Show real resources at risk.",
+      },
     ],
   },
   {
     label: "REMEDIATION",
+    color: "text-yellow-400",
     actions: [
-      { icon: Globe, label: "Close Public Access", prompt: "Generate remediation commands to close all public access: restrict S3 bucket policies, remove 0.0.0.0/0 security group rules, enable S3 Block Public Access at account level, and disable public RDS endpoints." },
-      { icon: Users, label: "Enforce MFA", prompt: "Generate a remediation plan to enforce MFA: create IAM policy denying actions without MFA, list all users without MFA enabled, and provide step-by-step enrollment commands." },
-      { icon: Lock, label: "Encrypt Everything", prompt: "Audit and remediate encryption: enable default EBS encryption, encrypt unencrypted RDS instances, enable S3 default encryption with KMS, and enforce TLS for all services." },
-      { icon: Shield, label: "Harden Config", prompt: "Generate a hardening checklist: enable AWS Config rules, set up Security Hub, configure access analyzer, enable EBS default encryption, enforce IMDSv2, and restrict root account usage." },
+      {
+        icon: Globe,
+        label: "Close Public Access",
+        prompt: "Identify and remediate all public access vectors using real AWS API calls. Query: S3 buckets with public access (get real bucket names), security groups with 0.0.0.0/0 (get real group IDs and rule details), RDS instances with PubliclyAccessible=true (get real DB identifiers), EC2 instances with public IPs attached to sensitive roles. For each real finding, provide the exact AWS CLI remediation command targeting that specific resource ID.",
+      },
+      {
+        icon: Shield,
+        label: "Enable GuardDuty",
+        prompt: "Check GuardDuty status across regions and generate enablement commands. Use real AWS API calls to: query GuardDuty detector status in the current region and adjacent regions (us-east-1, us-west-2, eu-west-1), check if S3 protection, EKS protection, Lambda protection, and RDS protection are enabled on existing detectors. For each gap found, provide the exact AWS CLI command to enable that protection.",
+      },
+      {
+        icon: Lock,
+        label: "Enforce MFA",
+        prompt: "Enforce MFA across all IAM users using real API calls. Query: all IAM users, list which have MFA devices (ListMFADevices), identify users with console access and no MFA. Generate: an IAM policy that denies all actions except MFA enrollment unless MFA is present (with exact JSON), and the AWS CLI commands to attach that policy. Show real usernames from the account that need MFA enforcement.",
+      },
+      {
+        icon: Cpu,
+        label: "Harden IMDSv2",
+        prompt: "Enforce IMDSv2 across all EC2 instances using real API calls. Query all instances and their MetadataOptions (HttpTokens setting). For each instance with HttpTokens=optional (IMDSv1 enabled), provide the exact AWS CLI command to enforce IMDSv2: aws ec2 modify-instance-metadata-options. Also check launch templates for IMDSv1 defaults and provide the commands to update them. Show real instance IDs.",
+      },
     ],
   },
 ];
 
+const categoryBorderColors: Record<string, string> = {
+  "AUDIT": "border-blue-500/20",
+  "COMPLIANCE": "border-green-500/20",
+  "ATTACK SIMULATION": "border-red-500/20",
+  "INCIDENT RESPONSE": "border-orange-500/20",
+  "REMEDIATION": "border-yellow-500/20",
+};
+
 const QuickActions = ({ onAction, disabled }: QuickActionsProps) => {
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       {categories.map((cat) => (
-        <div key={cat.label}>
-          <p className="text-[10px] font-mono text-muted-foreground tracking-widest uppercase mb-2 px-1">{cat.label}</p>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+        <div key={cat.label} className={`rounded-lg border ${categoryBorderColors[cat.label] ?? "border-border"} bg-card/40 p-3`}>
+          <p className={`text-[10px] font-mono tracking-widest uppercase mb-2.5 px-0.5 font-semibold ${cat.color}`}>
+            {cat.label}
+          </p>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
             {cat.actions.map((action) => (
               <Button
                 key={action.label}
@@ -63,7 +188,7 @@ const QuickActions = ({ onAction, disabled }: QuickActionsProps) => {
                 size="xs"
                 onClick={() => onAction(action.prompt)}
                 disabled={disabled}
-                className="flex items-center gap-1.5 justify-start h-auto py-2 px-2.5"
+                className="flex items-center gap-1.5 justify-start h-auto py-2 px-2.5 text-left"
               >
                 <action.icon className="w-3 h-3 flex-shrink-0" />
                 <span className="truncate">{action.label}</span>
