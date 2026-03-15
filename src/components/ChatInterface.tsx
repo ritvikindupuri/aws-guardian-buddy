@@ -1,31 +1,83 @@
 import { useState, useRef, useEffect } from "react";
-import { Send, Trash2, PanelRightOpen, PanelRightClose } from "lucide-react";
+import { Send, Plus, PanelRightOpen, PanelRightClose, LogOut, History } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import ChatMessage from "@/components/ChatMessage";
 import QuickActions from "@/components/QuickActions";
 import AwsCredentialsPanel, { type AwsCredentials } from "@/components/AwsCredentialsPanel";
 import FindingsPanel, { type Finding } from "@/components/FindingsPanel";
 import StatusBar from "@/components/StatusBar";
-import { useChat } from "@/hooks/useChat";
+import ChatHistoryPanel from "@/components/ChatHistoryPanel";
 import CloudPilotLogo from "@/components/CloudPilotLogo";
+import { useChat } from "@/hooks/useChat";
+import { useAuth } from "@/hooks/useAuth";
+import { useChatHistory } from "@/hooks/useChatHistory";
 
 const ChatInterface = () => {
   const [input, setInput] = useState("");
   const [credentials, setCredentials] = useState<AwsCredentials | null>(null);
   const [showSidebar, setShowSidebar] = useState(true);
+  const [currentConvId, setCurrentConvId] = useState<string | null>(null);
   const [findings] = useState<Finding[]>([]);
-  const { messages, isLoading, sendMessage, clearMessages } = useChat();
+
+  const { user, signOut } = useAuth();
+  const {
+    conversations,
+    loading: historyLoading,
+    createConversation,
+    deleteConversation,
+    clearAllHistory,
+  } = useChatHistory(user);
+
+  const { messages, isLoading, sendMessage, clearMessages } = useChat(currentConvId);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const handleSend = () => {
+  const startNewChat = () => {
+    setCurrentConvId(null);
+    clearMessages();
+  };
+
+  const handleSelectConversation = (id: string) => {
+    setCurrentConvId(id);
+  };
+
+  const handleDeleteConversation = async (id: string) => {
+    await deleteConversation(id);
+    if (currentConvId === id) {
+      setCurrentConvId(null);
+      clearMessages();
+    }
+  };
+
+  const handleClearAll = async () => {
+    await clearAllHistory();
+    setCurrentConvId(null);
+    clearMessages();
+  };
+
+  const handleSend = async () => {
     const trimmed = input.trim();
     if (!trimmed || isLoading || !credentials) return;
     setInput("");
-    sendMessage(trimmed, credentials);
+
+    let convId = currentConvId;
+
+    // Create a new conversation if none is active
+    if (!convId && user) {
+      const title = trimmed.length > 65 ? trimmed.slice(0, 65) + "…" : trimmed;
+      try {
+        const conv = await createConversation(title);
+        convId = conv?.id ?? null;
+        setCurrentConvId(convId);
+      } catch {
+        // If DB unavailable, continue without persistence
+      }
+    }
+
+    sendMessage(trimmed, credentials, convId);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -35,7 +87,27 @@ const ChatInterface = () => {
     }
   };
 
+  const handleQuickAction = async (prompt: string) => {
+    if (!credentials) return;
+
+    let convId = currentConvId;
+    if (!convId && user) {
+      const title = prompt.length > 65 ? prompt.slice(0, 65) + "…" : prompt;
+      try {
+        const conv = await createConversation(title);
+        convId = conv?.id ?? null;
+        setCurrentConvId(convId);
+      } catch {
+        // continue without persistence
+      }
+    }
+
+    sendMessage(prompt, credentials, convId);
+  };
+
   const hasMessages = messages.length > 0;
+  const userEmail = user?.email ?? "";
+  const userLabel = userEmail.includes("@") ? userEmail.split("@")[0] : userEmail;
 
   return (
     <div className="flex flex-col h-screen max-h-screen bg-background">
@@ -53,13 +125,40 @@ const ChatInterface = () => {
             <p className="text-[10px] text-muted-foreground">AWS Cloud Security Intelligence</p>
           </div>
         </div>
+
         <div className="flex items-center gap-1.5">
-          {hasMessages && (
-            <Button variant="ghost" size="icon" onClick={clearMessages} className="text-muted-foreground hover:text-destructive h-8 w-8">
-              <Trash2 className="w-3.5 h-3.5" />
-            </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={startNewChat}
+            className="hidden sm:flex items-center gap-1.5 text-muted-foreground hover:text-foreground h-8 px-2.5 text-xs"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            New Chat
+          </Button>
+
+          {userLabel && (
+            <span className="hidden md:block text-[11px] text-muted-foreground px-2 font-mono">
+              {userLabel}
+            </span>
           )}
-          <Button variant="ghost" size="icon" onClick={() => setShowSidebar(!showSidebar)} className="text-muted-foreground h-8 w-8">
+
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={signOut}
+            className="text-muted-foreground hover:text-foreground h-8 w-8"
+            title="Sign out"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+          </Button>
+
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setShowSidebar(!showSidebar)}
+            className="text-muted-foreground h-8 w-8"
+          >
             {showSidebar ? <PanelRightClose className="w-3.5 h-3.5" /> : <PanelRightOpen className="w-3.5 h-3.5" />}
           </Button>
         </div>
@@ -92,7 +191,7 @@ const ChatInterface = () => {
 
                 {credentials && (
                   <div className="w-full animate-fade-in-up">
-                    <QuickActions onAction={(prompt) => sendMessage(prompt, credentials)} disabled={isLoading} />
+                    <QuickActions onAction={handleQuickAction} disabled={isLoading} />
                   </div>
                 )}
               </div>
@@ -147,26 +246,66 @@ const ChatInterface = () => {
 
         {/* Sidebar */}
         {showSidebar && (
-          <aside className="w-72 border-l border-border bg-card/30 overflow-y-auto scrollbar-thin p-3 space-y-3 hidden lg:block">
+          <aside className="w-72 border-l border-border bg-card/30 overflow-y-auto scrollbar-thin p-3 space-y-3 hidden lg:flex lg:flex-col">
+
+            {/* New Chat button */}
+            <Button
+              variant="action"
+              size="sm"
+              onClick={startNewChat}
+              className="w-full flex items-center gap-2 justify-center border-primary/20 text-primary hover:bg-primary/10"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              New Chat
+            </Button>
+
+            {/* Chat History */}
+            <div className="border border-border rounded-lg bg-card p-3">
+              <div className="flex items-center gap-1.5 mb-2.5">
+                <History className="w-3 h-3 text-muted-foreground" />
+                <p className="text-[10px] font-mono text-muted-foreground tracking-widest uppercase">History</p>
+              </div>
+              <ChatHistoryPanel
+                conversations={conversations}
+                currentConversationId={currentConvId}
+                loading={historyLoading}
+                onSelect={handleSelectConversation}
+                onDelete={handleDeleteConversation}
+                onClearAll={handleClearAll}
+              />
+            </div>
+
+            {/* AWS Credentials */}
             <AwsCredentialsPanel credentials={credentials} onSave={setCredentials} compact />
 
+            {/* Findings */}
             <FindingsPanel
               findings={findings}
               onClear={() => {}}
-              onInvestigate={(f) => sendMessage(`Investigate finding: ${f.title} on resource ${f.resource}`, credentials!)}
+              onInvestigate={(f) =>
+                handleQuickAction(`Investigate finding: ${f.title} on resource ${f.resource}`)
+              }
             />
 
-            {credentials && hasMessages && (
+            {/* Quick Actions in sidebar */}
+            {credentials && (
               <div>
                 <p className="text-[10px] font-mono text-muted-foreground tracking-widest uppercase mb-2 px-1">QUICK ACTIONS</p>
-                <QuickActions onAction={(prompt) => sendMessage(prompt, credentials)} disabled={isLoading} />
+                <QuickActions onAction={handleQuickAction} disabled={isLoading} />
               </div>
             )}
 
+            {/* Capabilities */}
             <div className="border border-border rounded-lg bg-card p-3 space-y-2">
               <p className="text-[10px] font-mono text-muted-foreground tracking-widest uppercase">CAPABILITIES</p>
               <ul className="space-y-1.5">
-                {["Live AWS API execution", "Attack simulation", "Compliance scanning (CIS/NIST/PCI)", "Incident response & forensics", "Remediation commands"].map(cap => (
+                {[
+                  "Live AWS API execution",
+                  "Attack simulation",
+                  "Compliance scanning (CIS/NIST/PCI)",
+                  "Incident response & forensics",
+                  "Remediation commands",
+                ].map((cap) => (
                   <li key={cap} className="flex items-center gap-2 text-[11px] text-secondary-foreground">
                     <div className="w-1 h-1 rounded-full bg-primary flex-shrink-0" />
                     {cap}

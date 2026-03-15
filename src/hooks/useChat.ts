@@ -1,15 +1,47 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import type { ChatMessageData } from "@/components/ChatMessage";
+import type { ChatMessageData, MessageRole, MessageStatus } from "@/components/ChatMessage";
 import type { AwsCredentials } from "@/components/AwsCredentialsPanel";
 
-export const useChat = () => {
+export const useChat = (conversationId: string | null) => {
   const [messages, setMessages] = useState<ChatMessageData[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
+  // Load messages from DB when active conversation changes
+  useEffect(() => {
+    if (!conversationId) {
+      setMessages([]);
+      return;
+    }
+    supabase
+      .from("messages")
+      .select("*")
+      .eq("conversation_id", conversationId)
+      .order("created_at", { ascending: true })
+      .then(({ data }) => {
+        if (data) {
+          setMessages(
+            data.map((m) => ({
+              id: m.id,
+              role: m.role as MessageRole,
+              content: m.content,
+              status: "complete" as MessageStatus,
+              timestamp: new Date(m.created_at),
+            }))
+          );
+        }
+      });
+  }, [conversationId]);
+
   const sendMessage = useCallback(
-    async (content: string, credentials: AwsCredentials | null) => {
+    async (
+      content: string,
+      credentials: AwsCredentials | null,
+      convId?: string | null
+    ) => {
       if (!credentials) return;
+
+      const targetConvId = convId ?? conversationId;
 
       const userMsg: ChatMessageData = {
         id: crypto.randomUUID(),
@@ -21,6 +53,19 @@ export const useChat = () => {
 
       setMessages((prev) => [...prev, userMsg]);
       setIsLoading(true);
+
+      // Persist user message immediately
+      if (targetConvId) {
+        supabase
+          .from("messages")
+          .insert({
+            id: userMsg.id,
+            conversation_id: targetConvId,
+            role: "user",
+            content,
+          })
+          .then();
+      }
 
       const assistantId = crypto.randomUUID();
       let assistantContent = "";
@@ -61,10 +106,7 @@ export const useChat = () => {
               "Content-Type": "application/json",
               Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
             },
-            body: JSON.stringify({
-              messages: historyForApi,
-              credentials,
-            }),
+            body: JSON.stringify({ messages: historyForApi, credentials }),
           }
         );
 
@@ -115,6 +157,25 @@ export const useChat = () => {
             m.id === assistantId ? { ...m, status: "complete" as const } : m
           )
         );
+
+        // Persist completed assistant message
+        if (targetConvId && assistantContent) {
+          supabase
+            .from("messages")
+            .insert({
+              id: assistantId,
+              conversation_id: targetConvId,
+              role: "assistant",
+              content: assistantContent,
+            })
+            .then();
+
+          supabase
+            .from("conversations")
+            .update({ updated_at: new Date().toISOString() })
+            .eq("id", targetConvId)
+            .then();
+        }
       } catch (err: any) {
         const errorContent = `**Error:** ${err.message || "Something went wrong"}`;
         setMessages((prev) => {
@@ -141,7 +202,7 @@ export const useChat = () => {
         setIsLoading(false);
       }
     },
-    [messages]
+    [messages, conversationId]
   );
 
   const clearMessages = useCallback(() => setMessages([]), []);

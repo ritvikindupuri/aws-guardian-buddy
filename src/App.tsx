@@ -1,12 +1,59 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { Loader2 } from "lucide-react";
+import CloudPilotLogo from "@/components/CloudPilotLogo";
 import Index from "./pages/Index.tsx";
+import Auth from "./pages/Auth.tsx";
 import NotFound from "./pages/NotFound.tsx";
+import { useAuth } from "@/hooks/useAuth.ts";
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: { retry: 1, staleTime: 30_000 },
+  },
+});
+
+const LoadingScreen = () => (
+  <div className="min-h-screen bg-background flex items-center justify-center">
+    <div className="flex flex-col items-center gap-4">
+      <div className="w-14 h-14 rounded-2xl bg-primary/10 border border-primary/25 flex items-center justify-center glow-primary">
+        <CloudPilotLogo className="w-9 h-9 text-primary" />
+      </div>
+      <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+    </div>
+  </div>
+);
+
+const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
+  const { user, loading } = useAuth();
+  if (loading) return <LoadingScreen />;
+  if (!user) return <Navigate to="/auth" replace />;
+  return <>{children}</>;
+};
+
+const AppRoutes = () => {
+  const { user, loading } = useAuth();
+
+  if (loading) return <LoadingScreen />;
+
+  return (
+    <Routes>
+      <Route path="/auth" element={user ? <Navigate to="/" replace /> : <Auth />} />
+      <Route
+        path="/"
+        element={
+          <ProtectedRoute>
+            <Index />
+          </ProtectedRoute>
+        }
+      />
+      <Route path="*" element={<NotFound />} />
+    </Routes>
+  );
+};
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
@@ -14,11 +61,7 @@ const App = () => (
       <Toaster />
       <Sonner />
       <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Index />} />
-          {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
-          <Route path="*" element={<NotFound />} />
-        </Routes>
+        <AppRoutes />
       </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>
