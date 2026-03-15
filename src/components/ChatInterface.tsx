@@ -1,18 +1,21 @@
 import { useState, useRef, useEffect } from "react";
-import { Send, Trash2, Terminal } from "lucide-react";
-import { motion } from "framer-motion";
+import { Send, Trash2, PanelRightOpen, PanelRightClose } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import ChatMessage from "@/components/ChatMessage";
 import QuickActions from "@/components/QuickActions";
 import AwsCredentialsPanel, { type AwsCredentials } from "@/components/AwsCredentialsPanel";
+import FindingsPanel, { type Finding } from "@/components/FindingsPanel";
+import StatusBar from "@/components/StatusBar";
 import { useChat } from "@/hooks/useChat";
+import vigilLogo from "@/assets/vigil-logo.png";
 
 const ChatInterface = () => {
   const [input, setInput] = useState("");
   const [credentials, setCredentials] = useState<AwsCredentials | null>(null);
+  const [showSidebar, setShowSidebar] = useState(true);
+  const [findings] = useState<Finding[]>([]);
   const { messages, isLoading, sendMessage, clearMessages } = useChat();
   const bottomRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -32,109 +35,147 @@ const ChatInterface = () => {
     }
   };
 
+  const hasMessages = messages.length > 0;
+
   return (
     <div className="flex flex-col h-screen max-h-screen bg-background">
       {/* Header */}
-      <header className="flex items-center justify-between px-6 py-4 border-b border-border bg-card">
+      <header className="flex items-center justify-between px-5 py-3 border-b border-border bg-card/80 backdrop-blur-sm">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center glow-green-subtle">
-            <Terminal className="w-5 h-5 text-primary" />
+          <div className="w-8 h-8 rounded-lg bg-primary/8 border border-primary/15 flex items-center justify-center overflow-hidden">
+            <img src={vigilLogo} alt="VIGIL" className="w-5 h-5 object-contain" />
           </div>
           <div>
-            <h1 className="text-lg font-semibold text-foreground font-mono">CloudSec Agent</h1>
-            <p className="text-xs text-muted-foreground">AI-powered AWS security operations</p>
+            <div className="flex items-center gap-2">
+              <h1 className="text-sm font-semibold text-foreground tracking-tight">VIGIL</h1>
+              <span className="text-[9px] font-mono text-muted-foreground bg-muted px-1.5 py-0.5 rounded border border-border tracking-wider">v0.1</span>
+            </div>
+            <p className="text-[10px] text-muted-foreground">AWS Security Intelligence Agent</p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          {messages.length > 0 && (
-            <Button variant="ghost" size="sm" onClick={clearMessages} className="text-muted-foreground hover:text-destructive">
-              <Trash2 className="w-4 h-4" />
+        <div className="flex items-center gap-1.5">
+          {hasMessages && (
+            <Button variant="ghost" size="icon" onClick={clearMessages} className="text-muted-foreground hover:text-destructive h-8 w-8">
+              <Trash2 className="w-3.5 h-3.5" />
             </Button>
           )}
+          <Button variant="ghost" size="icon" onClick={() => setShowSidebar(!showSidebar)} className="text-muted-foreground h-8 w-8">
+            {showSidebar ? <PanelRightClose className="w-3.5 h-3.5" /> : <PanelRightOpen className="w-3.5 h-3.5" />}
+          </Button>
         </div>
       </header>
 
-      {/* Main area */}
-      <div className="flex-1 overflow-y-auto scrollbar-thin">
-        {messages.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full px-6 py-10 space-y-8 max-w-2xl mx-auto">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className="text-center space-y-3"
-            >
-              <div className="w-16 h-16 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center mx-auto glow-green">
-                <Terminal className="w-8 h-8 text-primary" />
+      {/* Main content */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Chat area */}
+        <div className="flex-1 flex flex-col min-w-0">
+          <div className="flex-1 overflow-y-auto scrollbar-thin">
+            {!hasMessages ? (
+              <div className="flex flex-col items-center justify-center h-full px-6 py-12 max-w-xl mx-auto">
+                <div className="text-center space-y-5 mb-8">
+                  <div className="w-14 h-14 rounded-2xl bg-primary/8 border border-primary/15 flex items-center justify-center mx-auto glow-primary overflow-hidden">
+                    <img src={vigilLogo} alt="" className="w-8 h-8 object-contain" />
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-semibold text-foreground tracking-tight mb-1">VIGIL</h2>
+                    <p className="text-xs text-muted-foreground leading-relaxed max-w-sm mx-auto">
+                      AI-powered security operations for AWS. Configure your credentials, then audit, investigate, and remediate.
+                    </p>
+                  </div>
+                </div>
+
+                {!credentials && (
+                  <div className="w-full max-w-sm mb-8">
+                    <AwsCredentialsPanel credentials={credentials} onSave={setCredentials} />
+                  </div>
+                )}
+
+                {credentials && (
+                  <div className="w-full animate-fade-in-up">
+                    <QuickActions onAction={(prompt) => sendMessage(prompt, credentials)} disabled={isLoading} />
+                  </div>
+                )}
               </div>
-              <h2 className="text-2xl font-bold text-foreground font-mono">CloudSec Agent</h2>
-              <p className="text-muted-foreground max-w-md">
-                Your AI security operations assistant. Configure AWS credentials below, then ask questions or run security assessments.
-              </p>
-            </motion.div>
-
-            <div className="w-full max-w-lg">
-              <AwsCredentialsPanel credentials={credentials} onSave={setCredentials} />
-            </div>
-
-            {credentials && (
-              <motion.div
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="w-full"
-              >
-                <p className="text-xs text-muted-foreground font-mono mb-3 text-center">QUICK ACTIONS</p>
-                <QuickActions onAction={(prompt) => sendMessage(prompt, credentials)} disabled={isLoading} />
-              </motion.div>
+            ) : (
+              <div className="py-2">
+                {messages.map((msg) => (
+                  <ChatMessage key={msg.id} message={msg} />
+                ))}
+                <div ref={bottomRef} />
+              </div>
             )}
           </div>
-        ) : (
-          <div className="py-4">
-            {messages.map((msg) => (
-              <ChatMessage key={msg.id} message={msg} />
-            ))}
-            <div ref={bottomRef} />
+
+          {/* Input area */}
+          <div className="px-4 py-3 border-t border-border bg-card/50">
+            <div className="flex items-end gap-2 max-w-3xl mx-auto">
+              <div className="flex-1 relative">
+                <textarea
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder={credentials ? "Describe what you want to investigate..." : "Connect AWS credentials to begin"}
+                  disabled={!credentials || isLoading}
+                  rows={1}
+                  className="w-full resize-none rounded-lg bg-muted border border-border px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/30 focus:ring-1 focus:ring-primary/10 disabled:opacity-40"
+                  style={{ minHeight: "40px", maxHeight: "120px" }}
+                  onInput={(e) => {
+                    const target = e.target as HTMLTextAreaElement;
+                    target.style.height = "auto";
+                    target.style.height = Math.min(target.scrollHeight, 120) + "px";
+                  }}
+                />
+              </div>
+              <Button
+                variant="terminal"
+                size="icon"
+                onClick={handleSend}
+                disabled={!input.trim() || !credentials || isLoading}
+                className="h-10 w-10 flex-shrink-0"
+              >
+                <Send className="w-3.5 h-3.5" />
+              </Button>
+            </div>
           </div>
-        )}
-      </div>
 
-      {/* Credentials bar when in chat */}
-      {messages.length > 0 && (
-        <div className="px-4 pt-2">
-          <AwsCredentialsPanel credentials={credentials} onSave={setCredentials} />
+          <StatusBar
+            isConnected={!!credentials}
+            region={credentials?.region || "—"}
+            messageCount={messages.length}
+          />
         </div>
-      )}
 
-      {/* Input */}
-      <div className="px-4 py-4 border-t border-border bg-card">
-        <div className="flex items-end gap-2 max-w-4xl mx-auto">
-          <div className="flex-1 relative">
-            <textarea
-              ref={inputRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={credentials ? "Ask about your AWS security posture..." : "Configure AWS credentials first..."}
-              disabled={!credentials || isLoading}
-              rows={1}
-              className="w-full resize-none rounded-lg bg-muted border border-border px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 disabled:opacity-50 font-sans"
-              style={{ minHeight: "44px", maxHeight: "120px" }}
-              onInput={(e) => {
-                const target = e.target as HTMLTextAreaElement;
-                target.style.height = "auto";
-                target.style.height = Math.min(target.scrollHeight, 120) + "px";
-              }}
+        {/* Sidebar */}
+        {showSidebar && (
+          <aside className="w-72 border-l border-border bg-card/30 overflow-y-auto scrollbar-thin p-3 space-y-3 hidden lg:block">
+            <AwsCredentialsPanel credentials={credentials} onSave={setCredentials} compact />
+
+            <FindingsPanel
+              findings={findings}
+              onClear={() => {}}
+              onInvestigate={(f) => sendMessage(`Investigate finding: ${f.title} on resource ${f.resource}`, credentials!)}
             />
-          </div>
-          <Button
-            variant="terminal"
-            size="icon"
-            onClick={handleSend}
-            disabled={!input.trim() || !credentials || isLoading}
-            className="h-11 w-11 flex-shrink-0"
-          >
-            <Send className="w-4 h-4" />
-          </Button>
-        </div>
+
+            {credentials && hasMessages && (
+              <div>
+                <p className="text-[10px] font-mono text-muted-foreground tracking-widest uppercase mb-2 px-1">QUICK ACTIONS</p>
+                <QuickActions onAction={(prompt) => sendMessage(prompt, credentials)} disabled={isLoading} />
+              </div>
+            )}
+
+            <div className="border border-border rounded-lg bg-card p-3 space-y-2">
+              <p className="text-[10px] font-mono text-muted-foreground tracking-widest uppercase">CAPABILITIES</p>
+              <ul className="space-y-1.5">
+                {["Read-only audit", "Compliance scanning", "Incident response", "Remediation guidance"].map(cap => (
+                  <li key={cap} className="flex items-center gap-2 text-[11px] text-secondary-foreground">
+                    <div className="w-1 h-1 rounded-full bg-primary flex-shrink-0" />
+                    {cap}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </aside>
+        )}
       </div>
     </div>
   );
