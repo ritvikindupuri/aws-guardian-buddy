@@ -1,4 +1,4 @@
-import { Shield, Wifi, WifiOff, Clock, Activity } from "lucide-react";
+import { Activity, Clock, Wifi, WifiOff } from "lucide-react";
 
 interface StatusBarProps {
   isConnected: boolean;
@@ -8,7 +8,7 @@ interface StatusBarProps {
 
 const StatusBar = ({ isConnected, region, messageCount }: StatusBarProps) => {
   return (
-    <div className="flex items-center justify-between px-4 py-1.5 bg-muted/50 border-t border-border text-[10px] font-mono text-muted-foreground">
+    <div className="flex items-center justify-between px-4 py-1.5 bg-muted/40 border-t border-border text-[10px] font-mono text-muted-foreground">
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-1.5">
           {isConnected ? (
@@ -19,7 +19,7 @@ const StatusBar = ({ isConnected, region, messageCount }: StatusBarProps) => {
           ) : (
             <>
               <div className="w-1.5 h-1.5 rounded-full bg-muted-foreground" />
-              <span>disconnected</span>
+              <span>no credentials</span>
             </>
           )}
         </div>
@@ -31,16 +31,13 @@ const StatusBar = ({ isConnected, region, messageCount }: StatusBarProps) => {
         )}
       </div>
       <div className="flex items-center gap-4">
-        <div className="flex items-center gap-1.5">
-          <Shield className="w-3 h-3" />
-          <span>simulation mode</span>
-        </div>
         {messageCount > 0 && (
           <div className="flex items-center gap-1.5">
             <Clock className="w-3 h-3" />
-            <span>{messageCount} msgs</span>
+            <span>{messageCount} msg{messageCount !== 1 ? "s" : ""}</span>
           </div>
         )}
+        <span className="text-muted-foreground/50">CloudPilot AI</span>
       </div>
     </div>
   );

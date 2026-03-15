@@ -7,7 +7,7 @@ import AwsCredentialsPanel, { type AwsCredentials } from "@/components/AwsCreden
 import FindingsPanel, { type Finding } from "@/components/FindingsPanel";
 import StatusBar from "@/components/StatusBar";
 import { useChat } from "@/hooks/useChat";
-import vigilLogo from "@/assets/vigil-logo.png";
+import CloudPilotLogo from "@/components/CloudPilotLogo";
 
 const ChatInterface = () => {
   const [input, setInput] = useState("");
@@ -42,15 +42,15 @@ const ChatInterface = () => {
       {/* Header */}
       <header className="flex items-center justify-between px-5 py-3 border-b border-border bg-card/80 backdrop-blur-sm">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-primary/8 border border-primary/15 flex items-center justify-center overflow-hidden">
-            <img src={vigilLogo} alt="VIGIL" className="w-5 h-5 object-contain" />
+          <div className="w-10 h-10 rounded-xl bg-primary/10 border border-primary/25 flex items-center justify-center flex-shrink-0">
+            <CloudPilotLogo className="w-7 h-7 text-primary" />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-sm font-semibold text-foreground tracking-tight">VIGIL</h1>
-              <span className="text-[9px] font-mono text-muted-foreground bg-muted px-1.5 py-0.5 rounded border border-border tracking-wider">v0.1</span>
+              <h1 className="text-sm font-bold text-foreground tracking-tight">CloudPilot AI</h1>
+              <span className="text-[9px] font-mono text-muted-foreground bg-muted px-1.5 py-0.5 rounded border border-border tracking-wider">v1.0</span>
             </div>
-            <p className="text-[10px] text-muted-foreground">AWS Security Intelligence Agent</p>
+            <p className="text-[10px] text-muted-foreground">AWS Cloud Security Intelligence</p>
           </div>
         </div>
         <div className="flex items-center gap-1.5">
@@ -71,15 +71,15 @@ const ChatInterface = () => {
         <div className="flex-1 flex flex-col min-w-0">
           <div className="flex-1 overflow-y-auto scrollbar-thin">
             {!hasMessages ? (
-              <div className="flex flex-col items-center justify-center h-full px-6 py-12 max-w-xl mx-auto">
+              <div className="flex flex-col items-center justify-center h-full px-6 py-12 max-w-2xl mx-auto">
                 <div className="text-center space-y-5 mb-8">
-                  <div className="w-14 h-14 rounded-2xl bg-primary/8 border border-primary/15 flex items-center justify-center mx-auto glow-primary overflow-hidden">
-                    <img src={vigilLogo} alt="" className="w-8 h-8 object-contain" />
+                  <div className="w-20 h-20 rounded-2xl bg-primary/10 border border-primary/25 flex items-center justify-center mx-auto glow-primary">
+                    <CloudPilotLogo className="w-12 h-12 text-primary" />
                   </div>
                   <div>
-                    <h2 className="text-xl font-semibold text-foreground tracking-tight mb-1">VIGIL</h2>
-                    <p className="text-xs text-muted-foreground leading-relaxed max-w-sm mx-auto">
-                      AI-powered security operations for AWS. Configure your credentials, then audit, investigate, and remediate.
+                    <h2 className="text-2xl font-bold text-foreground tracking-tight mb-2">CloudPilot AI</h2>
+                    <p className="text-sm text-muted-foreground leading-relaxed max-w-sm mx-auto">
+                      Real-time AWS security operations. Connect your credentials to audit, investigate, and remediate cloud infrastructure.
                     </p>
                   </div>
                 </div>
@@ -114,10 +114,10 @@ const ChatInterface = () => {
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder={credentials ? "Describe what you want to investigate..." : "Connect AWS credentials to begin"}
+                  placeholder={credentials ? "Ask about your AWS environment..." : "Connect AWS credentials to begin"}
                   disabled={!credentials || isLoading}
                   rows={1}
-                  className="w-full resize-none rounded-lg bg-muted border border-border px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/30 focus:ring-1 focus:ring-primary/10 disabled:opacity-40"
+                  className="w-full resize-none rounded-lg bg-muted border border-border px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/40 focus:ring-1 focus:ring-primary/15 disabled:opacity-40"
                   style={{ minHeight: "40px", maxHeight: "120px" }}
                   onInput={(e) => {
                     const target = e.target as HTMLTextAreaElement;
@@ -166,7 +166,7 @@ const ChatInterface = () => {
             <div className="border border-border rounded-lg bg-card p-3 space-y-2">
               <p className="text-[10px] font-mono text-muted-foreground tracking-widest uppercase">CAPABILITIES</p>
               <ul className="space-y-1.5">
-                {["Read-only audit", "Compliance scanning", "Incident response", "Remediation guidance"].map(cap => (
+                {["Live AWS API execution", "Compliance scanning", "Incident response", "Remediation guidance"].map(cap => (
                   <li key={cap} className="flex items-center gap-2 text-[11px] text-secondary-foreground">
                     <div className="w-1 h-1 rounded-full bg-primary flex-shrink-0" />
                     {cap}
