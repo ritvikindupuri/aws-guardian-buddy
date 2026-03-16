@@ -71,6 +71,58 @@ sequenceDiagram
 8. **Presentation:**
    The React Frontend receives the streamed response and dynamically renders it using `react-markdown`, providing the User with immediate, actionable security insights.
 
+### Typical User Query Flow
+
+To better understand the internal mechanics of the agentic loop, consider a typical user query: **"Do I have any exposed S3 buckets?"**
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Agent Logic
+    participant AWS S3 API
+
+    User->>Agent Logic: "Do I have any exposed S3 buckets?"
+    Note over Agent Logic: Iteration 1
+    Agent Logic->>AWS S3 API: execute_aws_api(service: "S3", operation: "listBuckets")
+    AWS S3 API-->>Agent Logic: Returns List of Buckets (BucketA, BucketB)
+    Note over Agent Logic: Iteration 2
+    Agent Logic->>AWS S3 API: execute_aws_api(service: "S3", operation: "getBucketAcl", params: {Bucket: "BucketA"})
+    AWS S3 API-->>Agent Logic: Returns ACL for BucketA
+    Note over Agent Logic: Iteration 3
+    Agent Logic->>AWS S3 API: execute_aws_api(service: "S3", operation: "getBucketAcl", params: {Bucket: "BucketB"})
+    AWS S3 API-->>Agent Logic: Returns ACL for BucketB
+    Note over Agent Logic: Iteration 4
+    Agent Logic->>User: Synthesis: Streams analysis of BucketA and BucketB with remediation commands
+```
+
+<div align="center">
+  <em>Figure 2: Typical Agent Iteration Loop for an S3 Security Query</em>
+</div>
+
+#### Flow Explanation
+
+1. **Initial Prompt:** The user asks a natural language question.
+2. **First Iteration (Discovery):** The AI determines it needs a list of buckets first. It requests an `execute_aws_api` call for `S3.listBuckets`. The Edge Function executes this and returns the list to the AI.
+3. **Subsequent Iterations (Deep Inspection):** For every bucket found, the AI realizes it needs to inspect the ACLs and Public Access Blocks to answer the user's specific question about "exposure". It fires off multiple tool calls sequentially (or in parallel batches depending on the model's output) for operations like `S3.getBucketAcl` and `S3.getPublicAccessBlock`.
+4. **Data Aggregation:** The Edge Function executes each of these calls and appends the real AWS responses back into the conversation context.
+5. **Final Synthesis:** Once the AI has gathered the specific configurations for all relevant resources, it stops calling tools. It writes a final Markdown response detailing exactly which buckets are exposed, how they are exposed (based on the real ACL/Policy data), and provides the CLI commands to secure them.
+
+---
+
+## Allowed AWS Services
+
+The AI agent does not have unrestricted access to the AWS environment. To prevent unintended lateral movement or interaction with non-security-related infrastructure, the agent is strictly sandboxed. It is only permitted to interact with the following specifically allowlisted services:
+
+- **Compute & Containers:** EC2, Lambda, EKS, ECS, AutoScaling
+- **Storage & Databases:** S3, RDS, DynamoDB, ElastiCache, Redshift
+- **Networking & Content Delivery:** API Gateway, CloudFront, ELBv2, Route53
+- **Security, Identity, & Compliance:** IAM, STS, KMS, Secrets Manager, SSM, Organizations, WAFv2, Inspector2, Access Analyzer, Macie2, Network Firewall, Shield, ACM, Cognito Identity Service Provider
+- **Management & Governance:** CloudTrail, Config, CloudWatch, CloudWatch Logs, EventBridge, Step Functions
+- **Threat Detection:** GuardDuty, Security Hub
+- **Integration & Analytics:** SNS, SQS, ECR, Athena
+
+If the AI attempts to call a service not on this list, the Edge Function intercepts the call and immediately returns a blocked error to the AI, forcing it to re-evaluate its approach.
+
 ---
 
 ## Detailed Codebase & Feature Breakdown
