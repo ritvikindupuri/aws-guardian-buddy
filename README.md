@@ -2,6 +2,8 @@
 
 Real-time AWS security operations. Connect your credentials to audit, investigate, and remediate cloud infrastructure. An elite AWS cloud security operations agent built exclusively for professional security engineers, featuring zero simulation tolerance (always uses real AWS API calls).
 
+[View Technical Documentation](TECHNICAL_DOCUMENTATION.md)
+
 ---
 
 ## System Architecture
