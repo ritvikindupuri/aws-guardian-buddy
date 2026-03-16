@@ -428,16 +428,29 @@ serve(async (req) => {
           if (toolCall.function.name === "execute_aws_api") {
             try {
               const args = JSON.parse(toolCall.function.arguments);
-              console.log(`[CloudPilot] AWS API: ${args.service}.${args.operation}`, JSON.stringify(args.params ?? {}));
+              const service = sanitizeString(args.service, 64);
+              const operation = sanitizeString(args.operation, 128);
 
-              const ServiceClass = (AWS as any)[args.service];
+              // Security: validate service allowlist
+              if (!ALLOWED_AWS_SERVICES.has(service)) {
+                throw new Error(`AWS service '${service}' is not allowed. Permitted services: ${[...ALLOWED_AWS_SERVICES].join(", ")}`);
+              }
+
+              // Security: block dangerous operations
+              if (BLOCKED_OPERATIONS.has(operation)) {
+                throw new Error(`Operation '${operation}' is blocked for safety. This operation could cause irreversible account-level damage.`);
+              }
+
+              console.log(`[CloudPilot] AWS API: ${service}.${operation}`, JSON.stringify(args.params ?? {}));
+
+              const ServiceClass = (AWS as any)[service];
               if (!ServiceClass) {
-                throw new Error(`AWS service '${args.service}' not found in SDK. Check the service name.`);
+                throw new Error(`AWS service '${service}' not found in SDK. Check the service name.`);
               }
 
               const client = new ServiceClass(awsConfig);
-              if (typeof client[args.operation] !== "function") {
-                throw new Error(`Operation '${args.operation}' not found on ${args.service}. Check the operation name.`);
+              if (typeof client[operation] !== "function") {
+                throw new Error(`Operation '${operation}' not found on ${service}. Check the operation name.`);
               }
 
               const result = await client[args.operation](args.params || {}).promise();
