@@ -13,15 +13,15 @@ export const useChat = (conversationId: string | null) => {
       setMessages([]);
       return;
     }
-    supabase
-      .from("messages")
+    (supabase
+      .from("messages" as any)
       .select("*")
       .eq("conversation_id", conversationId)
-      .order("created_at", { ascending: true })
-      .then(({ data }) => {
+      .order("created_at", { ascending: true }) as any)
+      .then(({ data }: { data: any[] | null }) => {
         if (data) {
           setMessages(
-            data.map((m) => ({
+            data.map((m: any) => ({
               id: m.id,
               role: m.role as MessageRole,
               content: m.content,
@@ -56,15 +56,14 @@ export const useChat = (conversationId: string | null) => {
 
       // Persist user message immediately
       if (targetConvId) {
-        supabase
-          .from("messages")
+        (supabase
+          .from("messages" as any)
           .insert({
             id: userMsg.id,
             conversation_id: targetConvId,
             role: "user",
             content,
-          })
-          .then();
+          } as any) as any).then();
       }
 
       const assistantId = crypto.randomUUID();
@@ -160,21 +159,19 @@ export const useChat = (conversationId: string | null) => {
 
         // Persist completed assistant message
         if (targetConvId && assistantContent) {
-          supabase
-            .from("messages")
+          (supabase
+            .from("messages" as any)
             .insert({
               id: assistantId,
               conversation_id: targetConvId,
               role: "assistant",
               content: assistantContent,
-            })
-            .then();
+            } as any) as any).then();
 
-          supabase
-            .from("conversations")
-            .update({ updated_at: new Date().toISOString() })
-            .eq("id", targetConvId)
-            .then();
+          (supabase
+            .from("conversations" as any)
+            .update({ updated_at: new Date().toISOString() } as any)
+            .eq("id", targetConvId) as any).then();
         }
       } catch (err: any) {
         const errorContent = `**Error:** ${err.message || "Something went wrong"}`;
