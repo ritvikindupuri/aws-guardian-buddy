@@ -82,8 +82,8 @@ Follow these steps to run the application locally.
 
 ```sh
 # Clone the repository
-git clone <YOUR_GIT_URL>
-cd <YOUR_PROJECT_NAME>
+https://github.com/ritvikindupuri/aws-guardian-buddy.git
+cd <aws-guardian-buddy>
 
 # Install the necessary dependencies
 npm install
