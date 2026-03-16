@@ -83,7 +83,7 @@ const ChatMessage = ({ message }: ChatMessageProps) => {
 
             [&_a]:text-primary [&_a]:underline [&_a]:underline-offset-2
           ">
-            <ReactMarkdown>{message.content}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
           </div>
         )}
 
