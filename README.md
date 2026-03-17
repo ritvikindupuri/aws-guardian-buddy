@@ -113,6 +113,21 @@ Open your browser to the local URL provided (usually `http://localhost:8080`).
 
 ---
 
+## IAM Permissions Needed for Automated Actions & Features
+
+While the agent can discover vulnerabilities and format structured reports using read-only credentials, executing automated remediation (Task Automator) or alerting engines requires explicit write permissions in your IAM Role:
+
+| Feature Capability | Required IAM Actions |
+|-------------------|----------------------|
+| **Log Analyst & Threat Detector** | `cloudtrail:LookupEvents`, `cloudwatch:GetMetricData`, `guardduty:GetFindings` |
+| **Block Malicious IPs** | `wafv2:UpdateIPSet`, `ec2:CreateNetworkAclEntry`, `ec2:ReplaceNetworkAclEntry` |
+| **Revoke IAM Credentials** | `iam:UpdateAccessKey`, `iam:DetachUserPolicy`, `iam:DeleteAccessKey` |
+| **Task Automator (Remediation)** | Varies per runbook (e.g., `s3:PutBucketPublicAccessBlock`, `ec2:RevokeSecurityGroupIngress`) |
+| **Email Alert Engine** | `ses:GetIdentityVerificationAttributes`, `ses:SendEmail`, `sns:ListSubscriptionsByTopic` |
+| **Audit Archive Verification** | `dynamodb:DescribeTable`, `s3:GetBucketObjectLockConfiguration` |
+
+---
+
 ## AWS Setup Instructions
 
 To use CloudPilot AI, you need to provide it with access to your AWS account. We recommend creating a dedicated IAM Role or User with **SecurityAudit** or **ReadOnlyAccess** permissions.
