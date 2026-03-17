@@ -483,7 +483,7 @@ serve(async (req) => {
                   code: err.code,
                   statusCode: err.statusCode,
                 }),
-              });
+              } as any);
             }
           }
         }
