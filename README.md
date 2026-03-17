@@ -2,6 +2,8 @@
 
 Real-time AWS security operations. Connect your credentials to audit, investigate, and remediate cloud infrastructure. An elite AWS cloud security operations agent built exclusively for professional security engineers, featuring zero simulation tolerance (always uses real AWS API calls).
 
+
+📚 **Read the full [Technical Documentation](TECHNICAL_DOCUMENTATION.md) for a comprehensive breakdown of the architecture, data flow, and codebase.**
 [View Technical Documentation](TECHNICAL_DOCUMENTATION.md)
 
 ---
@@ -44,6 +46,43 @@ sequenceDiagram
 ## Key Features
 
 - **Live AWS API Execution**: Connect your credentials to audit, investigate, and remediate cloud infrastructure using real AWS API responses.
+- **Attack Simulation**: Authorized testing against your own account to discover privilege escalation paths, credential exposure, and lateral movement vectors.
+- **Compliance Scanning**: Automates mapping against major security frameworks including CIS AWS Foundations Benchmark, NIST 800-53, PCI-DSS v4.0, and ISO 27001.
+- **Incident Response & Forensics**: Tools for live instance isolation, credential revocation, and forensic evidence preservation.
+- **Actionable Remediation Commands**: Generates exact, context-aware AWS CLI commands to remediate findings immediately.
+
+---
+
+## Agent Security & Safety Mechanisms
+
+Given the power of executing live AWS API calls, CloudPilot AI implements multiple layers of security to protect your environment and ensure safe operations:
+
+- **Zero Simulation Tolerance:** The agent is strictly instructed to **never** fabricate or assume resource states. Every finding and analysis must be backed by a real AWS API response. If it doesn't have the data, it must call the API first.
+- **Service Allowlisting:** The agent is restricted to interacting only with a predefined list of security-relevant AWS services (e.g., IAM, S3, EC2, CloudTrail, GuardDuty). Attempting to call an unauthorized service is immediately blocked.
+- **Destructive Operation Blocklist:** Highly sensitive account-level operations—such as `closeAccount`, `leaveOrganization`, or `deleteOrganization`—are explicitly hardcoded to be blocked by the Edge Function, preventing irreversible damage.
+- **Strict Input Validation & Sanitization:** All user prompts, AWS regions, Access Keys, and Role ARNs undergo strict regex formatting checks and length sanitization to prevent prompt injection or buffer overflow attacks.
+- **Ephemeral Compute Isolation:** The agent logic runs securely within Supabase Edge Functions (Deno isolates). AWS SDK clients are instantiated per-request with localized credentials, guaranteeing zero global state pollution or cross-tenant credential exposure.
+- **Mandatory Simulation Cleanup:** If the agent creates test resources during an authorized attack simulation, it is forced to tag them (e.g., `cloudpilot-simulation=true`), track them, and provide the user an explicit prompt to automatically delete and clean up the environment via API calls.
+
+---
+
+## Tech Stack
+
+=======
+
+### Architecture Explanation
+
+1. **User Interaction**: The user accesses the React Frontend, inputs their AWS query (e.g., "Find exposed S3 buckets"), and provides their AWS credentials (either Access Keys or an AssumeRole ARN).
+2. **Request Handling**: The frontend securely sends the prompt and credentials to the Supabase Edge Function (`aws-agent`), which acts as the backend orchestrator.
+3. **AI Evaluation**: The Edge Function builds the system context (enforcing "zero simulation tolerance") and communicates with the AI Gateway powered by Google Gemini 3 Flash Preview.
+4. **AWS Integration**: When the AI determines it needs data, it requests a tool call to `execute_aws_api`. The Edge Function dynamically instantiates an AWS SDK client locally using the user's provided credentials and executes the requested API call against the user's real AWS account.
+5. **Synthesis & Streaming**: The real API responses are passed back to the AI model. The model synthesizes an executive summary, findings table, detailed analysis, and exact CLI remediation commands. The Edge Function then streams this synthesized response back to the React Frontend for real-time display.
+
+---
+
+## Key Features
+
+- **Live AWS API Execution**: Connect your credentials to audit, investigate, and remediate cloud infrastructure using real AWS API responses.
 - **Log Analyst & Threat Detector**: Parses and summarizes CloudTrail and CloudWatch logs while utilizing GuardDuty for anomaly and IOC pattern matching.
 - **IP Safety Checking & Automated Actions**: Identifies untrusted IPs based on WAF and EC2 security settings and automates their blocking, alongside revoking IAM credentials when a compromise is detected.
 - **Attack Simulation**: Authorized testing against your own account to discover privilege escalation paths, credential exposure, and lateral movement vectors.
@@ -68,6 +107,7 @@ Given the power of executing live AWS API calls, CloudPilot AI implements multip
 
 ## Tech Stack
 
+>>>>>>> main
 - **Frontend:** React, TypeScript, Vite, Tailwind CSS, shadcn-ui, Framer Motion
 - **Backend / API:** Supabase Edge Functions (Deno)
 - **AI Model:** Google Gemini 3 Flash Preview (via Lovable AI Gateway)
@@ -88,8 +128,13 @@ Follow these steps to run the application locally.
 
 ```sh
 # Clone the repository
+<<<<<<< update-readme-1987810307218091600
+git clone <YOUR_GIT_URL>
+cd <YOUR_PROJECT_NAME>
+=======
 https://github.com/ritvikindupuri/aws-guardian-buddy.git
 cd <aws-guardian-buddy>
+>>>>>>> main
 
 # Install the necessary dependencies
 npm install
@@ -128,6 +173,7 @@ While the agent can discover vulnerabilities and format structured reports using
 
 ---
 
+
 ## AWS Setup Instructions
 
 To use CloudPilot AI, you need to provide it with access to your AWS account. We recommend creating a dedicated IAM Role or User with **SecurityAudit** or **ReadOnlyAccess** permissions.
@@ -163,6 +209,8 @@ To use CloudPilot AI, you need to provide it with access to your AWS account. We
 9. At the top of the summary page, copy the **ARN** (it will look like `arn:aws:iam::123456789012:role/CloudPilot-AuditRole`).
 10. Ensure the AWS credentials you provide to the application have the `sts:AssumeRole` permission for this specific Role ARN.
 11. Enter the Role ARN into the CloudPilot AI interface under the "Assume Role" tab.
+
+=======
 
 ---
 
