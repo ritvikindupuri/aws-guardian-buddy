@@ -44,10 +44,14 @@ sequenceDiagram
 ## Key Features
 
 - **Live AWS API Execution**: Connect your credentials to audit, investigate, and remediate cloud infrastructure using real AWS API responses.
+- **Log Analyst & Threat Detector**: Parses and summarizes CloudTrail and CloudWatch logs while utilizing GuardDuty for anomaly and IOC pattern matching.
+- **IP Safety Checking & Automated Actions**: Identifies untrusted IPs based on WAF and EC2 security settings and automates their blocking, alongside revoking IAM credentials when a compromise is detected.
 - **Attack Simulation**: Authorized testing against your own account to discover privilege escalation paths, credential exposure, and lateral movement vectors.
 - **Compliance Scanning**: Automates mapping against major security frameworks including CIS AWS Foundations Benchmark, NIST 800-53, PCI-DSS v4.0, and ISO 27001.
 - **Incident Response & Forensics**: Tools for live instance isolation, credential revocation, and forensic evidence preservation.
+- **Task Automator**: Streamlines the execution of standard runbooks for rapid and effective issue remediation using real AWS APIs.
 - **Actionable Remediation Commands**: Generates exact, context-aware AWS CLI commands to remediate findings immediately.
+- **Reporting & Alerts Engine**: Features a comprehensive reporting suite generating HTML/Markdown output alongside checking severity-tiered alerting setups (Critical/High/Medium/Low via SNS/Lambda).
 
 ## Agent Security & Safety Mechanisms
 

@@ -588,15 +588,16 @@ All simulations execute real API calls and follow the mandatory Attack Simulatio
 
 ## Quick Actions — Pre-Built Security Workflows
 
-CloudPilot AI provides **20 pre-built quick action prompts** organized into 5 color-coded categories. Each prompt is carefully engineered with specific API call instructions to ensure Zero Simulation Tolerance—every prompt explicitly instructs the AI to use real AWS API calls and report only real data.
+CloudPilot AI provides **30 pre-built quick action prompts** organized into 6 color-coded categories. Each prompt is carefully engineered with specific API call instructions to ensure Zero Simulation Tolerance—every prompt explicitly instructs the AI to use real AWS API calls and report only real data.
 
 | Category | Color | Actions | Description |
 |----------|-------|---------|-------------|
-| **AUDIT** (6 actions) | Blue | S3 Buckets, IAM Posture, Security Groups, EC2 Instances, RDS/Aurora, Lambda Security | Comprehensive configuration audits with real API calls |
+| **AUDIT** (8 actions) | Blue | S3 Buckets, IAM Posture, Security Groups, EC2 Instances, RDS/Aurora, Lambda Security, IP Safety Check, Log Analyst | Comprehensive configuration audits with real API calls |
 | **COMPLIANCE** (4 actions) | Green | CIS Benchmark, CloudTrail, GuardDuty, Security Hub | Framework-aligned compliance checks |
-| **ATTACK SIMULATION** (6 actions) | Red | Privilege Escalation, Secrets Exposure, S3 Exfil Paths, Lateral Movement, Detection Gaps, Network Exposure | Authorized penetration testing with real API execution |
-| **INCIDENT RESPONSE** (4 actions) | Orange | Isolate Instance, Credential Audit, Forensic Snapshot, Blast Radius | Emergency response procedures using real API calls |
-| **REMEDIATION** (4 actions) | Yellow | Close Public Access, Enable GuardDuty, Enforce MFA, Harden IMDSv2 | Generate exact CLI remediation commands from real findings |
+| **ATTACK SIMULATION** (7 actions) | Red | Privilege Escalation, Secrets Exposure, S3 Exfil Paths, Lateral Movement, Detection Gaps, Network Exposure, Threat Detector | Authorized penetration testing with real API execution |
+| **INCIDENT RESPONSE** (6 actions) | Orange | Isolate Instance, Credential Audit, Forensic Snapshot, Blast Radius, Block IPs, Revoke IAM | Emergency response procedures using real API calls |
+| **REMEDIATION** (5 actions) | Yellow | Close Public Access, Enable GuardDuty, Enforce MFA, Harden IMDSv2, Task Automator | Generate exact CLI remediation commands from real findings |
+| **REPORTING & ALERTS** (4 actions) | Purple | Report Builder, Severity Alerts, Audit Archive, Email Engine | Comprehensive reporting and alert checking |
 
 ---
 

@@ -2,7 +2,9 @@ import {
   Shield, Search, AlertTriangle, Lock, Server,
   Database, Globe, Users, FileSearch, Zap,
   Eye, Activity, Network, HardDrive, Swords,
-  Key, Radio, GitBranch, Cpu, Fingerprint, Target
+  Key, Radio, GitBranch, Cpu, Fingerprint, Target,
+  FileText, Radar, Bot, ClipboardList, Ban,
+  UserX, BellRing, Archive, Mail, ShieldCheck
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -45,6 +47,16 @@ const categories = [
         icon: Cpu,
         label: "Lambda Security",
         prompt: "Audit all Lambda functions using real AWS API calls. For each function check: execution role permissions (are they overly broad?), environment variables for hardcoded secrets or API keys, function policy for public or cross-account access, VPC configuration (functions that should be VPC-isolated), runtime versions for EOL runtimes, and reserved concurrency. Show real function names and findings.",
+      },
+      {
+        icon: ShieldCheck,
+        label: "IP Safety Check",
+        prompt: "Check if the current IP or specific IP ranges are acceptable and safe from cyberattacks for EC2 instances and in general using real AWS APIs. Review security group ingress rules, NACLs, and WAF IP sets. Identify exposing rules allowing dangerous traffic from untrusted IPs.",
+      },
+      {
+        icon: FileText,
+        label: "Log Analyst",
+        prompt: "Parse and summarize CloudTrail and CloudWatch logs. Query recent events related to unauthorized API calls, console logins without MFA, or sensitive resource deletions. Present findings in a structured summary table.",
       },
     ],
   },
@@ -108,6 +120,11 @@ const categories = [
         label: "Network Exposure",
         prompt: "Map the real external network attack surface. Use AWS API calls to: enumerate all security groups with 0.0.0.0/0 inbound rules across all VPCs, find EC2 instances with public IPs AND sensitive IAM roles (SSRF-to-privilege-escalation), check for publicly accessible RDS instances, find load balancers with HTTP (non-HTTPS) listeners, enumerate API Gateways without WAF or without authentication, check for VPC endpoints missing policies. Show real resource identifiers and the exact exposure.",
       },
+      {
+        icon: Radar,
+        label: "Threat Detector",
+        prompt: "Perform anomaly and IOC pattern matching using real AWS API calls. Query GuardDuty findings, WAF sampled requests, and CloudTrail for known indicators of compromise (IOCs) such as anomalous geolocation logins, Tor exit node activity, or cryptocurrency mining patterns.",
+      },
     ],
   },
   {
@@ -133,6 +150,16 @@ const categories = [
         icon: Users,
         label: "Blast Radius",
         prompt: "Assess the blast radius of a potential compromise using real AWS API calls. Query: all IAM roles with trust policies allowing ec2.amazonaws.com or lambda.amazonaws.com (potential pivot targets), all cross-account role assumptions in CloudTrail last 7 days, all S3 buckets accessible by the potentially compromised identity, RDS instances accessible from the VPC, secrets accessible via the identity's permissions. Show real resources at risk.",
+      },
+      {
+        icon: Ban,
+        label: "Block IPs",
+        prompt: "Automate IP blocking using real AWS API calls. Query WAF IP sets and EC2 Network ACLs to identify existing block rules. Generate the exact AWS CLI commands to append newly identified malicious IPs to WAF IP sets or NACL deny rules.",
+      },
+      {
+        icon: UserX,
+        label: "Revoke IAM",
+        prompt: "Automate IAM revocation using real AWS API calls. Query active access keys and attached policies for a specified user or role. Generate the exact AWS CLI commands to deactivate their access keys and detach all associated permissions policies immediately.",
       },
     ],
   },
@@ -160,6 +187,37 @@ const categories = [
         label: "Harden IMDSv2",
         prompt: "Enforce IMDSv2 across all EC2 instances using real API calls. Query all instances and their MetadataOptions (HttpTokens setting). For each instance with HttpTokens=optional (IMDSv1 enabled), provide the exact AWS CLI command to enforce IMDSv2: aws ec2 modify-instance-metadata-options. Also check launch templates for IMDSv1 defaults and provide the commands to update them. Show real instance IDs.",
       },
+      {
+        icon: Bot,
+        label: "Task Automator",
+        prompt: "Automate remediation execution using real AWS API calls. Review findings from Security Hub or GuardDuty, map them to standard runbooks, and provide the exact AWS CLI automation commands to remediate the specific issues identified (e.g., closing public buckets, restricting security groups).",
+      },
+    ],
+  },
+  {
+    label: "REPORTING & ALERTS",
+    color: "text-purple-400",
+    actions: [
+      {
+        icon: ClipboardList,
+        label: "Report Builder",
+        prompt: "Format security findings into detailed payload reports. Query recent assessments from Security Hub and GuardDuty, synthesize the results, and generate a structured HTML/Markdown report summarizing the current security posture.",
+      },
+      {
+        icon: BellRing,
+        label: "Severity Alerts",
+        prompt: "Review severity-tiered alert configurations using real AWS APIs. Check SNS topics and Lambda trigger subscriptions associated with Security Hub or GuardDuty events to ensure Critical/High/Medium/Low alerts are routed correctly.",
+      },
+      {
+        icon: Archive,
+        label: "Audit Archive",
+        prompt: "Check audit reporting infrastructure using real AWS APIs. Verify DynamoDB history tables for security audit logs and check S3 bucket policies for the report archive bucket to ensure write-once-read-many (WORM) or object lock configurations are active.",
+      },
+      {
+        icon: Mail,
+        label: "Email Engine",
+        prompt: "Audit the email alert engine configuration using real AWS APIs. Check AWS SES (Simple Email Service) domain identities, verified email addresses, sending statistics, and review SNS-to-Email subscription configurations for escalation rules.",
+      },
     ],
   },
 ];
@@ -170,6 +228,7 @@ const categoryBorderColors: Record<string, string> = {
   "ATTACK SIMULATION": "border-red-500/20",
   "INCIDENT RESPONSE": "border-orange-500/20",
   "REMEDIATION": "border-yellow-500/20",
+  "REPORTING & ALERTS": "border-purple-500/20",
 };
 
 const QuickActions = ({ onAction, disabled }: QuickActionsProps) => {

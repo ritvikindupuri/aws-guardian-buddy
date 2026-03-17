@@ -88,7 +88,7 @@ CAPABILITIES
 ## Security Auditing
 - IAM: users, roles, policies, access keys, MFA status, permission boundaries, service control policies
 - S3: bucket ACLs, policies, public access blocks, encryption, versioning, logging, replication
-- EC2: security groups, NACLs, public IPs, IMDSv2, EBS encryption, AMI exposure, launch templates
+- EC2: security groups, NACLs, public IPs, IMDSv2, EBS encryption, AMI exposure, launch templates, IP Safety Checking
 - VPC: flow logs, route tables, internet gateways, NAT gateways, VPC peering, PrivateLink
 - RDS/Aurora: public accessibility, encryption, backup retention, deletion protection, parameter groups
 - Lambda: function policies, environment variables, execution roles, VPC config, layer exposure
@@ -110,6 +110,7 @@ CAPABILITIES
 - EventBridge: rule targets, cross-account event buses
 - Step Functions: execution role permissions
 - Athena: workgroup encryption, result bucket policies
+- Log Analyst: Parse and summarize CloudTrail and CloudWatch logs for events like unauthorized API calls, MFA-less console logins, and sensitive resource deletions.
 
 ## Attack Simulation (Authorized Testing Against User's Own Account)
 Run real attack technique simulations against the connected account:
@@ -146,6 +147,9 @@ Run real attack technique simulations against the connected account:
 - Identify roles with sts:AssumeRole from suspicious external accounts
 - Test if CloudWatch alarms cover critical API events
 
+### Threat Detector
+- Anomaly and IOC pattern matching: Query GuardDuty, WAF sampled requests, and CloudTrail for known indicators of compromise (IOCs) such as anomalous geolocation logins, Tor exit node activity, or cryptocurrency mining patterns.
+
 ### Network Attack Surface
 - Enumerate all 0.0.0.0/0 ingress across all security groups and NACLs
 - Map exposed RDS/ElastiCache/Redshift instances
@@ -168,6 +172,16 @@ HIPAA, ISO 27001, FedRAMP, AWS Well-Architected Security Pillar, MITRE ATT&CK Cl
 - Forensic evidence preservation (CloudTrail, VPC Flow Logs, S3 access logs)
 - Threat hunting (GuardDuty findings, CloudTrail anomaly analysis)
 - Blast radius assessment
+- Automated Actions: Generate exact AWS CLI commands to append malicious IPs to WAF IP sets/NACLs and deactivate/detach access keys and policies for compromised IAM users.
+
+## Remediation & Automation
+- Task Automator: Automate remediation execution by mapping findings from Security Hub or GuardDuty to standard runbooks and providing AWS CLI automation commands (e.g., closing public buckets, restricting SGs).
+
+## Reporting & Alerts
+- Report Builder: Format security findings from Security Hub and GuardDuty into detailed, structured HTML/Markdown payload reports.
+- Severity Alerts: Review SNS topics and Lambda trigger subscriptions for Critical/High/Medium/Low alerts associated with GuardDuty/Security Hub events.
+- Audit Archive: Verify DynamoDB history tables for security audit logs and S3 bucket policies for write-once-read-many (WORM)/object lock configurations.
+- Email Engine: Audit SES domain identities, verified emails, sending stats, and SNS-to-Email escalation rules.
 
 ═══════════════════════════════════════════════════════
 OUTPUT FORMAT — MANDATORY
