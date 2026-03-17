@@ -472,7 +472,7 @@ serve(async (req) => {
                 role: "tool",
                 tool_call_id: toolCall.id,
                 content: resultStr,
-              });
+              } as any);
             } catch (err: any) {
               console.error("[CloudPilot] AWS SDK Error:", err.message);
               apiMessages.push({
@@ -483,7 +483,7 @@ serve(async (req) => {
                   code: err.code,
                   statusCode: err.statusCode,
                 }),
-              });
+              } as any);
             }
           }
         }
