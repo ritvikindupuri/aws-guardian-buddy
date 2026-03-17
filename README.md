@@ -151,9 +151,35 @@ To use CloudPilot AI, you need to provide it with access to your AWS account. We
 
 ---
 
-## IAM Permissions Needed for Automated Actions & Features
+## Understanding Agent Capabilities via IAM Roles
 
-While the agent can discover vulnerabilities and format structured reports using read-only credentials, executing automated remediation (Task Automator) or alerting engines requires explicit write permissions in your IAM Role:
+The AI agent's power is strictly limited to the permissions of the AWS credentials you provide. It **cannot bypass** your IAM policy. Here is exactly what the agent can do based on the two most common role configurations:
+
+### Option 1: `SecurityAudit` (Read-Only)
+If you provide credentials with only the `SecurityAudit` managed policy, the agent **can**:
+- Audit S3 buckets, IAM posture, security groups, and EC2 instances.
+- Run CIS Benchmark, CloudTrail, GuardDuty, and Security Hub compliance checks.
+- Discover and map attack paths (e.g., privilege escalation vectors, lateral movement, network exposure).
+- Act as a Log Analyst (parse CloudTrail/CloudWatch) and Threat Detector (query GuardDuty/WAF findings).
+- Generate a Report Builder payload containing security findings.
+
+The agent **cannot** (and will receive an `AccessDenied` error if you ask it to):
+- Block malicious IPs.
+- Revoke IAM credentials.
+- Isolate instances or create forensic snapshots.
+- Execute any task automation or remediation commands that alter infrastructure.
+
+### Option 2: `AdministratorAccess` (Read/Write)
+If you provide credentials with the `AdministratorAccess` managed policy (or a custom policy with explicit write permissions), the agent can perform all the read-only tasks above, **plus it can execute automated actions**:
+- **Block Malicious IPs:** Automatically update WAF IP sets or NACLs.
+- **Revoke IAM:** Deactivate access keys and detach policies for compromised users.
+- **Incident Response:** Isolate EC2 instances by changing security groups and disabling IMDS, or create forensic EBS snapshots.
+- **Task Automator:** Execute exact AWS CLI remediation commands to close public buckets, enforce MFA, or harden IMDSv2.
+- **Email Engine:** Configure and send alerts via AWS SES.
+
+### Specific IAM Permissions for Automated Actions
+
+If you prefer to build a custom least-privilege role instead of using `AdministratorAccess`, executing automated remediation or alerting engines requires explicit write permissions:
 
 | Feature Capability | Required IAM Actions |
 |-------------------|----------------------|
