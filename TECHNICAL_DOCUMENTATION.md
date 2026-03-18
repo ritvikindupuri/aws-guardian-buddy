@@ -30,8 +30,10 @@ By tightly coupling LLM reasoning capabilities with strict, restricted, and audi
 9. [Authentication & User Management](#authentication--user-management)
 10. [Chat History & Persistence](#chat-history--persistence)
 11. [Output Formatting & Markdown Rendering](#output-formatting--markdown-rendering)
-12. [Compliance Frameworks](#compliance-frameworks)
-13. [Conclusion](#conclusion)
+12. [API Limits & Rate Limiting](#api-limits--rate-limiting)
+13. [Email Alerts & Notifications](#email-alerts--notifications)
+14. [Compliance Frameworks](#compliance-frameworks)
+15. [Conclusion](#conclusion)
 
 ### Typical User Query Flow
 
