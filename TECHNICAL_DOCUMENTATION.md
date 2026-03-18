@@ -829,6 +829,86 @@ Severity levels are bolded in output and color-coded in the FindingsPanel:
 
 ---
 
+## API Limits & Rate Limiting
+
+CloudPilot AI enforces strict operational limits to ensure stability, prevent abuse, and protect the AI context window from overflow.
+
+### Edge Function Limits
+
+| Limit | Value | Enforcement Point | Impact When Exceeded |
+|-------|-------|-------------------|---------------------|
+| **Max messages per request** | 100 | Edge function input validation | HTTP 400: "Invalid messages: must be a non-empty array (max 100)." |
+| **Max message content length** | 50,000 characters | Edge function input validation | HTTP 400: "Message content too long (max 50000 chars)." |
+| **Max agentic loop iterations** | 15 | Edge function loop counter | Agent returns warning: "Agent reached the maximum number of API iterations. The operation may be too broad — try narrowing your request." |
+| **Max AWS API response size** | 100,000 characters (100KB) | Post-SDK-call truncation | Response truncated with `[TRUNCATED — response too large, narrow your query]` marker; AI sees partial data and may request a narrower query |
+| **SSE chunk size** | 30 characters | Streaming output | Final response split into 30-char chunks sent at 8ms intervals |
+| **STS AssumeRole session duration** | 3,600 seconds (1 hour) | AWS STS call | Temporary credentials expire after 1 hour; user must reconnect |
+
+### AI Gateway Rate Limits
+
+The Lovable AI Gateway enforces rate limits on model requests:
+
+| HTTP Status | Meaning | User-Facing Error |
+|-------------|---------|-------------------|
+| **429** | Rate limit exceeded | "Rate limit exceeded. Please try again in a moment." |
+| **402** | AI usage credits exhausted | "AI usage credits exhausted." |
+| **500** | AI service internal error | "AI service error" |
+
+When the gateway returns a 429 or 402, the edge function immediately returns the error to the client without retrying. The user must wait and resend their query.
+
+### Input Validation Limits
+
+| Input | Validation Regex / Rule | Max Length |
+|-------|------------------------|------------|
+| AWS Region | `/^[a-z]{2}(-[a-z]+-\d+)?$/` | 30 chars |
+| Access Key ID | `/^[A-Z0-9]{16,128}$/` | 128 chars |
+| Secret Access Key | String sanitization | 256 chars |
+| Session Token | String sanitization | 2,048 chars |
+| Role ARN | `/^arn:aws:iam::\d{12}:role\/[\w+=,.@\/-]+$/` | 256 chars |
+| Message role | Must be `"user"` or `"assistant"` | — |
+
+### Practical Implications
+
+- **Long conversations:** After ~100 back-and-forth messages, the user must start a new conversation. This limit prevents context window overflow in the AI model.
+- **Broad queries:** Queries that touch many resources (e.g., "audit everything") may hit the 15-iteration limit. Users should scope queries to specific services or resource types for best results.
+- **Large AWS environments:** Accounts with thousands of resources may trigger the 100KB response truncation on listing operations. The AI will advise narrowing the query (e.g., filtering by tag, region, or resource type).
+
+---
+
+## Email Alerts & Notifications
+
+### Current State
+
+CloudPilot AI does **not** include a built-in email alerting or notification system. The application does not send emails, push notifications, or webhook callbacks when findings are discovered.
+
+### What the Agent CAN Do
+
+The agent can **audit and report on your existing AWS alerting infrastructure** using real API calls:
+
+| Capability | AWS Services Used | What It Checks |
+|------------|------------------|----------------|
+| **Severity Alerts Audit** | SNS, Lambda, EventBridge | Reviews SNS topics and Lambda trigger subscriptions for Critical/High/Medium/Low alerts tied to GuardDuty and Security Hub events |
+| **Email Engine Audit** | SES | Audits SES domain identities, verified email addresses, sending statistics, and SNS-to-Email escalation rules |
+| **CloudWatch Alarm Review** | CloudWatch | Checks if CloudWatch alarms cover critical API events (e.g., root login, unauthorized API calls, IAM changes) |
+| **EventBridge Rule Audit** | EventBridge | Reviews event rules and targets to ensure security events trigger appropriate notifications |
+
+### What the Agent CANNOT Do
+
+- Send emails from the CloudPilot AI application itself
+- Create SNS subscriptions or SES identities on the user's behalf (unless IAM permissions allow and the user explicitly requests it)
+- Push real-time browser notifications for new findings
+- Trigger webhooks to external systems (Slack, PagerDuty, etc.)
+
+### Recommended Alerting Architecture
+
+For users who want automated alerting based on CloudPilot AI findings, the recommended approach is:
+
+1. **Use the agent to audit your existing alerting setup** — Run the "Severity Alerts" quick action to identify gaps
+2. **Configure AWS-native alerting** — The agent will provide exact CLI commands to set up GuardDuty → SNS → Email pipelines, Security Hub → EventBridge → SNS chains, and CloudWatch Alarms for critical API events
+3. **Run periodic audits** — Use CloudPilot AI as a scheduled analyst tool (manually) to complement your automated alerting
+
+---
+
 ## Compliance Frameworks
 
 CloudPilot AI supports real-time assessment against major compliance frameworks by querying actual account configurations via real AWS API calls:

@@ -46,10 +46,14 @@ sequenceDiagram
 ## Key Features
 
 - **Live AWS API Execution**: Connect your credentials to audit, investigate, and remediate cloud infrastructure using real AWS API responses.
+- **Log Analyst & Threat Detector**: Parses and summarizes CloudTrail and CloudWatch logs while utilizing GuardDuty for anomaly and IOC pattern matching.
+- **IP Safety Checking & Automated Actions**: Identifies untrusted IPs based on WAF and EC2 security settings and automates their blocking, alongside revoking IAM credentials when a compromise is detected.
 - **Attack Simulation**: Authorized testing against your own account to discover privilege escalation paths, credential exposure, and lateral movement vectors.
 - **Compliance Scanning**: Automates mapping against major security frameworks including CIS AWS Foundations Benchmark, NIST 800-53, PCI-DSS v4.0, and ISO 27001.
 - **Incident Response & Forensics**: Tools for live instance isolation, credential revocation, and forensic evidence preservation.
+- **Task Automator**: Streamlines the execution of standard runbooks for rapid and effective issue remediation using real AWS APIs.
 - **Actionable Remediation Commands**: Generates exact, context-aware AWS CLI commands to remediate findings immediately.
+- **Reporting & Alerts Engine**: Features a comprehensive reporting suite generating HTML/Markdown output alongside checking severity-tiered alerting setups (Critical/High/Medium/Low via SNS/Lambda).
 
 ---
 
@@ -64,29 +68,21 @@ Given the power of executing live AWS API calls, CloudPilot AI implements multip
 - **Ephemeral Compute Isolation:** The agent logic runs securely within Supabase Edge Functions (Deno isolates). AWS SDK clients are instantiated per-request with localized credentials, guaranteeing zero global state pollution or cross-tenant credential exposure.
 - **Mandatory Simulation Cleanup:** If the agent creates test resources during an authorized attack simulation, it is forced to tag them (e.g., `cloudpilot-simulation=true`), track them, and provide the user an explicit prompt to automatically delete and clean up the environment via API calls.
 
+---
 
-## Key Features
+## API Limits & Rate Limiting
 
-- **Live AWS API Execution**: Connect your credentials to audit, investigate, and remediate cloud infrastructure using real AWS API responses.
-- **Log Analyst & Threat Detector**: Parses and summarizes CloudTrail and CloudWatch logs while utilizing GuardDuty for anomaly and IOC pattern matching.
-- **IP Safety Checking & Automated Actions**: Identifies untrusted IPs based on WAF and EC2 security settings and automates their blocking, alongside revoking IAM credentials when a compromise is detected.
-- **Attack Simulation**: Authorized testing against your own account to discover privilege escalation paths, credential exposure, and lateral movement vectors.
-- **Compliance Scanning**: Automates mapping against major security frameworks including CIS AWS Foundations Benchmark, NIST 800-53, PCI-DSS v4.0, and ISO 27001.
-- **Incident Response & Forensics**: Tools for live instance isolation, credential revocation, and forensic evidence preservation.
-- **Task Automator**: Streamlines the execution of standard runbooks for rapid and effective issue remediation using real AWS APIs.
-- **Actionable Remediation Commands**: Generates exact, context-aware AWS CLI commands to remediate findings immediately.
-- **Reporting & Alerts Engine**: Features a comprehensive reporting suite generating HTML/Markdown output alongside checking severity-tiered alerting setups (Critical/High/Medium/Low via SNS/Lambda).
+| Limit | Value | Impact When Exceeded |
+|-------|-------|---------------------|
+| Max messages per request | 100 | HTTP 400 error |
+| Max message content length | 50,000 characters | HTTP 400 error |
+| Max agentic loop iterations | 15 | Agent returns warning to narrow the query |
+| Max AWS API response size | 100KB | Response truncated with `[TRUNCATED]` marker |
+| STS AssumeRole session | 1 hour | Temporary credentials expire; must reconnect |
+| AI Gateway rate limit | Per-account | HTTP 429: "Rate limit exceeded" |
+| AI usage credits | Per-account | HTTP 402: "AI usage credits exhausted" |
 
-## Agent Security & Safety Mechanisms
-
-Given the power of executing live AWS API calls, CloudPilot AI implements multiple layers of security to protect your environment and ensure safe operations:
-
-- **Zero Simulation Tolerance:** The agent is strictly instructed to **never** fabricate or assume resource states. Every finding and analysis must be backed by a real AWS API response. If it doesn't have the data, it must call the API first.
-- **Service Allowlisting:** The agent is restricted to interacting only with a predefined list of security-relevant AWS services (e.g., IAM, S3, EC2, CloudTrail, GuardDuty). Attempting to call an unauthorized service is immediately blocked.
-- **Destructive Operation Blocklist:** Highly sensitive account-level operations—such as `closeAccount`, `leaveOrganization`, or `deleteOrganization`—are explicitly hardcoded to be blocked by the Edge Function, preventing irreversible damage.
-- **Strict Input Validation & Sanitization:** All user prompts, AWS regions, Access Keys, and Role ARNs undergo strict regex formatting checks and length sanitization to prevent prompt injection or buffer overflow attacks.
-- **Ephemeral Compute Isolation:** The agent logic runs securely within Supabase Edge Functions (Deno isolates). AWS SDK clients are instantiated per-request with localized credentials, guaranteeing zero global state pollution or cross-tenant credential exposure.
-- **Mandatory Simulation Cleanup:** If the agent creates test resources during an authorized attack simulation, it is forced to tag them (e.g., `cloudpilot-simulation=true`), track them, and provide the user an explicit prompt to automatically delete and clean up the environment via API calls.
+For full details on input validation, rate limiting behavior, and practical implications, see the [Technical Documentation](TECHNICAL_DOCUMENTATION.md#api-limits--rate-limiting).
 
 ---
 
