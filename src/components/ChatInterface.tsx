@@ -214,6 +214,7 @@ const ChatInterface = () => {
             <div className="flex items-end gap-2 max-w-3xl mx-auto">
               <div className="flex-1 relative">
                 <textarea
+                  ref={textareaRef}
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
