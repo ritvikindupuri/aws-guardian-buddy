@@ -31,7 +31,7 @@ By tightly coupling LLM reasoning capabilities with strict, restricted, and audi
 10. [Chat History & Persistence](#chat-history--persistence)
 11. [Output Formatting & Markdown Rendering](#output-formatting--markdown-rendering)
 12. [API Limits & Rate Limiting](#api-limits--rate-limiting)
-13. [Email Alerts & Notifications](#email-alerts--notifications)
+13. [Email Notifications via AWS SNS](#email-notifications-via-aws-sns)
 14. [Compliance Frameworks](#compliance-frameworks)
 15. [Conclusion](#conclusion)
 
@@ -644,6 +644,8 @@ All simulations execute real API calls and follow the mandatory Attack Simulatio
 
 CloudPilot AI provides **30 pre-built quick action prompts** organized into 6 color-coded categories. Each prompt is carefully engineered with specific API call instructions to ensure Zero Simulation Tolerance—every prompt explicitly instructs the AI to use real AWS API calls and report only real data.
 
+**Behavior:** When a user clicks a quick action button, the prompt is **populated into the message input box** rather than being sent immediately. This allows the user to review, modify, or augment the prompt before sending. The textarea auto-focuses and auto-resizes to display the full prompt.
+
 | Category | Color | Actions | Description |
 |----------|-------|---------|-------------|
 | **AUDIT** (8 actions) | Blue | S3 Buckets, IAM Posture, Security Groups, EC2 Instances, RDS/Aurora, Lambda Security, IP Safety Check, Log Analyst | Comprehensive configuration audits with real API calls |
@@ -877,15 +879,87 @@ When the gateway returns a 429 or 402, the edge function immediately returns the
 
 ---
 
-## Email Alerts & Notifications
+## Email Notifications via AWS SNS
 
-### Current State
+### Overview
 
-CloudPilot AI does **not** include a built-in email alerting or notification system. The application does not send emails, push notifications, or webhook callbacks when findings are discovered.
+CloudPilot AI includes an **automatic email notification system** that uses the user's own AWS SNS (Simple Notification Service) to send report summaries after every analysis. This means no external email service is required — the agent leverages the user's existing AWS infrastructure.
 
-### What the Agent CAN Do
+### How It Works
 
-The agent can **audit and report on your existing AWS alerting infrastructure** using real API calls:
+1. **User configures a notification email** in the sidebar settings panel (`NotificationSettings` component). The email is stored in `localStorage` and sent with every request to the edge function.
+
+2. **The AI agent automatically handles SNS setup** using the user's AWS credentials:
+   - Checks for an SNS topic named `CloudPilot-SecurityAlerts`
+   - Creates the topic if it doesn't exist
+   - Subscribes the configured email if not already subscribed
+   - Publishes a report summary after completing the analysis
+
+3. **First-time subscription** requires the user to confirm via the AWS SNS confirmation email sent to their inbox. After confirmation, all subsequent reports are delivered automatically.
+
+### SNS Email Flow
+
+```mermaid
+flowchart TD
+    A[User sends query] --> B[Agent completes security analysis]
+    B --> C{Notification email configured?}
+    C -- No --> D[Skip email notification]
+    C -- Yes --> E[Check for CloudPilot-SecurityAlerts topic]
+    E --> F{Topic exists?}
+    F -- No --> G[Create SNS topic]
+    F -- Yes --> H[Check email subscription]
+    G --> H
+    H --> I{Email subscribed?}
+    I -- No --> J[Subscribe email to topic]
+    I -- Yes --> K[Publish report summary]
+    J --> L[User receives confirmation email from AWS]
+    L --> K
+    K --> M[Report delivered to inbox]
+```
+
+<div align="center">
+  <em>Figure 7: AWS SNS Email Notification Flow</em>
+</div>
+
+**Figure 7 Explanation:**
+
+This flowchart shows how the agent automatically sends email notifications after every analysis:
+
+- **Configuration Check:** The edge function passes the notification email (if configured) to the AI agent via the system prompt context. If no email is configured, the SNS steps are skipped entirely.
+
+- **Topic Management:** The agent checks for an existing `CloudPilot-SecurityAlerts` SNS topic using `SNS.listTopics()`. If the topic doesn't exist, it creates one via `SNS.createTopic()`. This is idempotent — if the topic already exists, it returns the existing ARN.
+
+- **Subscription Management:** The agent checks if the configured email is already subscribed using `SNS.listSubscriptionsByTopic()`. If not, it subscribes the email via `SNS.subscribe()`. AWS sends a confirmation email that the user must click once to activate			the subscription.
+
+- **Report Publishing:** After the main analysis is complete, the agent publishes a concise report summary (executive summary + risk matrix + top findings + remediation priorities) to the SNS topic via `SNS.publish()`. The email arrives in the user's inbox within seconds.
+
+- **Failure Handling:** If any SNS operation fails (typically due to missing IAM permissions), the agent reports the failure at the end of its response and provides the exact IAM actions needed: `sns:ListTopics`, `sns:CreateTopic`, `sns:ListSubscriptionsByTopic`, `sns:Subscribe`, `sns:Publish`.
+
+### Required IAM Permissions
+
+| Permission | Purpose |
+|------------|---------|
+| `sns:ListTopics` | Check if the CloudPilot-SecurityAlerts topic exists |
+| `sns:CreateTopic` | Create the topic on first use |
+| `sns:ListSubscriptionsByTopic` | Check if the email is already subscribed |
+| `sns:Subscribe` | Subscribe the notification email |
+| `sns:Publish` | Send the report summary |
+
+### Automatic Report Generation
+
+Every response from the agent — whether triggered by a quick action, a manual query, or any user prompt — automatically includes an **industry-grade security report** with:
+
+1. **Report Header** — Title, date/time (ISO 8601), scope, AWS account ID
+2. **Executive Summary** — 3–5 sentences on overall security posture
+3. **Findings Table** — Resource, Finding, Severity, Evidence, Remediation Status
+4. **Detailed Analysis** — Per-finding deep dive with real API data
+5. **Risk Matrix** — Count by severity: CRITICAL / HIGH / MEDIUM / LOW / INFO
+6. **Remediation Plan** — Prioritized AWS CLI commands per finding
+7. **Compliance Mapping** — Findings mapped to CIS, NIST, PCI-DSS, SOC2, HIPAA controls
+
+### What the Agent Can Also Audit
+
+In addition to sending its own notifications, the agent can audit your existing AWS alerting infrastructure:
 
 | Capability | AWS Services Used | What It Checks |
 |------------|------------------|----------------|
@@ -893,21 +967,6 @@ The agent can **audit and report on your existing AWS alerting infrastructure** 
 | **Email Engine Audit** | SES | Audits SES domain identities, verified email addresses, sending statistics, and SNS-to-Email escalation rules |
 | **CloudWatch Alarm Review** | CloudWatch | Checks if CloudWatch alarms cover critical API events (e.g., root login, unauthorized API calls, IAM changes) |
 | **EventBridge Rule Audit** | EventBridge | Reviews event rules and targets to ensure security events trigger appropriate notifications |
-
-### What the Agent CANNOT Do
-
-- Send emails from the CloudPilot AI application itself
-- Create SNS subscriptions or SES identities on the user's behalf (unless IAM permissions allow and the user explicitly requests it)
-- Push real-time browser notifications for new findings
-- Trigger webhooks to external systems (Slack, PagerDuty, etc.)
-
-### Recommended Alerting Architecture
-
-For users who want automated alerting based on CloudPilot AI findings, the recommended approach is:
-
-1. **Use the agent to audit your existing alerting setup** — Run the "Severity Alerts" quick action to identify gaps
-2. **Configure AWS-native alerting** — The agent will provide exact CLI commands to set up GuardDuty → SNS → Email pipelines, Security Hub → EventBridge → SNS chains, and CloudWatch Alarms for critical API events
-3. **Run periodic audits** — Use CloudPilot AI as a scheduled analyst tool (manually) to complement your automated alerting
 
 ---
 

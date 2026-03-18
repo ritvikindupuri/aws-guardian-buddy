@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import type { ChatMessageData, MessageRole, MessageStatus } from "@/components/ChatMessage";
 import type { AwsCredentials } from "@/components/AwsCredentialsPanel";
 
-export const useChat = (conversationId: string | null) => {
+export const useChat = (conversationId: string | null, notificationEmail?: string) => {
   const [messages, setMessages] = useState<ChatMessageData[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -105,7 +105,7 @@ export const useChat = (conversationId: string | null) => {
               "Content-Type": "application/json",
               Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
             },
-            body: JSON.stringify({ messages: historyForApi, credentials }),
+            body: JSON.stringify({ messages: historyForApi, credentials, notificationEmail: notificationEmail || null }),
           }
         );
 
@@ -199,7 +199,7 @@ export const useChat = (conversationId: string | null) => {
         setIsLoading(false);
       }
     },
-    [messages, conversationId]
+    [messages, conversationId, notificationEmail]
   );
 
   const clearMessages = useCallback(() => setMessages([]), []);

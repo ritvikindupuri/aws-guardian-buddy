@@ -46,6 +46,8 @@ sequenceDiagram
 ## Key Features
 
 - **Live AWS API Execution**: Connect your credentials to audit, investigate, and remediate cloud infrastructure using real AWS API responses.
+- **Automatic Industry-Grade Reports**: Every query generates a structured security report with executive summary, findings table, risk matrix, remediation plan, and compliance mapping.
+- **Email Notifications via AWS SNS**: Configure a notification email in settings — the agent automatically creates an SNS topic, subscribes your email, and sends report summaries after every analysis using your AWS credentials.
 - **Log Analyst & Threat Detector**: Parses and summarizes CloudTrail and CloudWatch logs while utilizing GuardDuty for anomaly and IOC pattern matching.
 - **IP Safety Checking & Automated Actions**: Identifies untrusted IPs based on WAF and EC2 security settings and automates their blocking, alongside revoking IAM credentials when a compromise is detected.
 - **Attack Simulation**: Authorized testing against your own account to discover privilege escalation paths, credential exposure, and lateral movement vectors.

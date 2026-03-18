@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Send, Plus, PanelRightOpen, PanelRightClose, LogOut, History } from "lucide-react";
+import { Send, Plus, PanelRightOpen, PanelRightClose, LogOut, History, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import ChatMessage from "@/components/ChatMessage";
 import QuickActions from "@/components/QuickActions";
@@ -8,6 +8,7 @@ import FindingsPanel, { type Finding } from "@/components/FindingsPanel";
 import StatusBar from "@/components/StatusBar";
 import ChatHistoryPanel from "@/components/ChatHistoryPanel";
 import CloudPilotLogo from "@/components/CloudPilotLogo";
+import NotificationSettings from "@/components/NotificationSettings";
 import { useChat } from "@/hooks/useChat";
 import { useAuth } from "@/hooks/useAuth";
 import { useChatHistory } from "@/hooks/useChatHistory";
@@ -18,6 +19,10 @@ const ChatInterface = () => {
   const [showSidebar, setShowSidebar] = useState(true);
   const [currentConvId, setCurrentConvId] = useState<string | null>(null);
   const [findings] = useState<Finding[]>([]);
+  const [notificationEmail, setNotificationEmail] = useState<string>(() => {
+    return localStorage.getItem("cloudpilot-notification-email") || "";
+  });
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const { user, signOut } = useAuth();
   const {
@@ -28,7 +33,7 @@ const ChatInterface = () => {
     clearAllHistory,
   } = useChatHistory(user);
 
-  const { messages, isLoading, sendMessage, clearMessages } = useChat(currentConvId);
+  const { messages, isLoading, sendMessage, clearMessages } = useChat(currentConvId, notificationEmail);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -87,22 +92,21 @@ const ChatInterface = () => {
     }
   };
 
-  const handleQuickAction = async (prompt: string) => {
-    if (!credentials) return;
-
-    let convId = currentConvId;
-    if (!convId && user) {
-      const title = prompt.length > 65 ? prompt.slice(0, 65) + "…" : prompt;
-      try {
-        const conv = await createConversation(title);
-        convId = conv?.id ?? null;
-        setCurrentConvId(convId);
-      } catch {
-        // continue without persistence
+  const handleQuickAction = (prompt: string) => {
+    setInput(prompt);
+    // Focus the textarea and auto-resize
+    setTimeout(() => {
+      if (textareaRef.current) {
+        textareaRef.current.focus();
+        textareaRef.current.style.height = "auto";
+        textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 120) + "px";
       }
-    }
+    }, 0);
+  };
 
-    sendMessage(prompt, credentials, convId);
+  const handleSaveNotificationEmail = (email: string) => {
+    setNotificationEmail(email);
+    localStorage.setItem("cloudpilot-notification-email", email);
   };
 
   const hasMessages = messages.length > 0;
@@ -210,6 +214,7 @@ const ChatInterface = () => {
             <div className="flex items-end gap-2 max-w-3xl mx-auto">
               <div className="flex-1 relative">
                 <textarea
+                  ref={textareaRef}
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
@@ -277,6 +282,9 @@ const ChatInterface = () => {
 
             {/* AWS Credentials */}
             <AwsCredentialsPanel credentials={credentials} onSave={setCredentials} compact />
+
+            {/* Notification Email Settings */}
+            <NotificationSettings email={notificationEmail} onSave={handleSaveNotificationEmail} />
 
             {/* Findings */}
             <FindingsPanel
