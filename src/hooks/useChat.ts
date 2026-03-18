@@ -105,7 +105,7 @@ export const useChat = (conversationId: string | null, notificationEmail?: strin
               "Content-Type": "application/json",
               Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
             },
-            body: JSON.stringify({ messages: historyForApi, credentials }),
+            body: JSON.stringify({ messages: historyForApi, credentials, notificationEmail: notificationEmail || null }),
           }
         );
 
