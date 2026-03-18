@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Send, Plus, PanelRightOpen, PanelRightClose, LogOut, History } from "lucide-react";
+import { Send, Plus, PanelRightOpen, PanelRightClose, LogOut, History, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import ChatMessage from "@/components/ChatMessage";
 import QuickActions from "@/components/QuickActions";
@@ -8,6 +8,7 @@ import FindingsPanel, { type Finding } from "@/components/FindingsPanel";
 import StatusBar from "@/components/StatusBar";
 import ChatHistoryPanel from "@/components/ChatHistoryPanel";
 import CloudPilotLogo from "@/components/CloudPilotLogo";
+import NotificationSettings from "@/components/NotificationSettings";
 import { useChat } from "@/hooks/useChat";
 import { useAuth } from "@/hooks/useAuth";
 import { useChatHistory } from "@/hooks/useChatHistory";
