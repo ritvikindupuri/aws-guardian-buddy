@@ -33,7 +33,7 @@ const ChatInterface = () => {
     clearAllHistory,
   } = useChatHistory(user);
 
-  const { messages, isLoading, sendMessage, clearMessages } = useChat(currentConvId);
+  const { messages, isLoading, sendMessage, clearMessages } = useChat(currentConvId, notificationEmail);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
