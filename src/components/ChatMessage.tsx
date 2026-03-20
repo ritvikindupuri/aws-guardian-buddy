@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useState, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { User, Loader2, CheckCircle, AlertOctagon, ExternalLink, Copy, Check } from "lucide-react";
+import { User, Loader2, CheckCircle, AlertOctagon, ExternalLink, Copy, Check, Download } from "lucide-react";
 import CloudPilotLogo from "@/components/CloudPilotLogo";
 
 export type MessageRole = "user" | "assistant" | "system";
@@ -24,7 +24,9 @@ const ChatMessage = ({ message }: ChatMessageProps) => {
   const isUser = message.role === "user";
   const isComplete = message.status === "complete" && !isUser;
   const [copied, setCopied] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const navigate = useNavigate();
+  const contentRef = useRef<HTMLDivElement>(null);
 
   const reportUrl = `${window.location.origin}/report/${message.id}`;
 
@@ -33,6 +35,28 @@ const ChatMessage = ({ message }: ChatMessageProps) => {
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
+
+  const downloadPdf = useCallback(async () => {
+    if (!contentRef.current || downloading) return;
+    setDownloading(true);
+    try {
+      const html2pdf = (await import("html2pdf.js")).default;
+      const timestamp = message.timestamp.toISOString().slice(0, 10);
+      const opt = {
+        margin: [0.5, 0.6, 0.5, 0.6],
+        filename: `CloudPilot-Report-${timestamp}-${message.id.slice(0, 8)}.pdf`,
+        image: { type: "jpeg", quality: 0.95 },
+        html2canvas: { scale: 2, useCORS: true, letterRendering: true },
+        jsPDF: { unit: "in", format: "a4", orientation: "portrait" },
+        pagebreak: { mode: ["avoid-all", "css", "legacy"] },
+      };
+      await html2pdf().set(opt).from(contentRef.current).save();
+    } catch (err) {
+      console.error("PDF generation failed:", err);
+    } finally {
+      setDownloading(false);
+    }
+  }, [message, downloading]);
 
   return (
     <div className={`animate-fade-in-up flex gap-3 px-5 py-3 ${isUser ? "justify-end" : ""}`}>
@@ -52,7 +76,9 @@ const ChatMessage = ({ message }: ChatMessageProps) => {
         {isUser ? (
           <p className="text-foreground text-[13px] leading-6">{message.content}</p>
         ) : (
-          <div className="
+          <div
+            ref={contentRef}
+            className="
             prose max-w-none
 
             [&_p]:text-[13px] [&_p]:leading-[1.75] [&_p]:text-foreground [&_p]:my-2.5
@@ -115,6 +141,15 @@ const ChatMessage = ({ message }: ChatMessageProps) => {
           {/* Report actions — only on completed assistant messages */}
           {isComplete && (
             <div className="flex items-center gap-1">
+              <button
+                onClick={downloadPdf}
+                disabled={downloading}
+                className="flex items-center gap-1 text-[10px] font-mono text-muted-foreground/60 hover:text-primary transition-colors px-1.5 py-1 rounded hover:bg-primary/8 disabled:opacity-40"
+                title="Download as PDF"
+              >
+                {downloading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
+                {downloading ? "Generating..." : "Download PDF"}
+              </button>
               <button
                 onClick={() => navigate(`/report/${message.id}`)}
                 className="flex items-center gap-1 text-[10px] font-mono text-muted-foreground/60 hover:text-primary transition-colors px-1.5 py-1 rounded hover:bg-primary/8"

@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
-import { ArrowLeft, Printer, Clock, AlertCircle, Loader2 } from "lucide-react";
+import { ArrowLeft, Printer, Clock, AlertCircle, Loader2, Download } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { supabase } from "@/integrations/supabase/client";
@@ -27,6 +27,8 @@ const Report = () => {
   const [conversation, setConversation] = useState<ReportConversation | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [downloading, setDownloading] = useState(false);
+  const reportContentRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (authLoading) return;
@@ -67,6 +69,28 @@ const Report = () => {
 
     load();
   }, [messageId, user, authLoading, navigate]);
+
+  const downloadPdf = useCallback(async () => {
+    if (!reportContentRef.current || downloading) return;
+    setDownloading(true);
+    try {
+      const html2pdf = (await import("html2pdf.js")).default;
+      const ts = message ? new Date(message.created_at).toISOString().slice(0, 10) : "report";
+      const opt = {
+        margin: [0.5, 0.6, 0.5, 0.6],
+        filename: `CloudPilot-Report-${ts}-${messageId?.slice(0, 8)}.pdf`,
+        image: { type: "jpeg", quality: 0.95 },
+        html2canvas: { scale: 2, useCORS: true, letterRendering: true },
+        jsPDF: { unit: "in", format: "a4", orientation: "portrait" },
+        pagebreak: { mode: ["avoid-all", "css", "legacy"] },
+      };
+      await html2pdf().set(opt).from(reportContentRef.current).save();
+    } catch (err) {
+      console.error("PDF generation failed:", err);
+    } finally {
+      setDownloading(false);
+    }
+  }, [message, messageId, downloading]);
 
   if (authLoading || loading) {
     return (
@@ -113,17 +137,28 @@ const Report = () => {
             </span>
           </div>
         </div>
-        <button
-          onClick={() => window.print()}
-          className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
-        >
-          <Printer className="w-4 h-4" />
-          Print / Export PDF
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={downloadPdf}
+            disabled={downloading}
+            className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40"
+          >
+            {downloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+            {downloading ? "Generating..." : "Download PDF"}
+          </button>
+          <span className="text-border">|</span>
+          <button
+            onClick={() => window.print()}
+            className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <Printer className="w-4 h-4" />
+            Print
+          </button>
+        </div>
       </header>
 
       {/* Report content */}
-      <main className="max-w-4xl mx-auto px-6 py-10">
+      <main className="max-w-4xl mx-auto px-6 py-10" ref={reportContentRef}>
         <div className="mb-8 pb-6 border-b border-border">
           <div className="flex items-center gap-3 mb-3">
             <div className="w-10 h-10 rounded-xl bg-primary/10 border border-primary/25 flex items-center justify-center print:hidden">
