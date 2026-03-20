@@ -137,13 +137,24 @@ const Report = () => {
             </span>
           </div>
         </div>
-        <button
-          onClick={() => window.print()}
-          className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
-        >
-          <Printer className="w-4 h-4" />
-          Print / Export PDF
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={downloadPdf}
+            disabled={downloading}
+            className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40"
+          >
+            {downloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+            {downloading ? "Generating..." : "Download PDF"}
+          </button>
+          <span className="text-border">|</span>
+          <button
+            onClick={() => window.print()}
+            className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <Printer className="w-4 h-4" />
+            Print
+          </button>
+        </div>
       </header>
 
       {/* Report content */}
