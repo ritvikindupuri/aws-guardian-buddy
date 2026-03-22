@@ -974,6 +974,77 @@ In addition to sending its own notifications, the agent can audit your existing 
 
 ---
 
+## Report Management — S3 Archival, PDF Export & Reports History
+
+CloudPilot AI provides a comprehensive report lifecycle: every agent response is a structured security report that can be downloaded as a PDF, manually archived to S3, or browsed via the Reports History page.
+
+### Add to S3 Button
+
+Each completed assistant message includes an **"Add to S3"** button alongside the existing "Download PDF" button. When clicked:
+
+1. **Request:** The frontend sends the full report content to the `aws-agent` edge function with a special archival prompt.
+2. **Bucket Management:** The agent checks for (or creates) a private, AES-256 encrypted S3 bucket named `cloudpilot-reports-<account-id>` with all public access blocked.
+3. **Upload:** The report is uploaded as a Markdown file to `reports/<YYYY-MM-DD>/<message-id>.md` with metadata tags (generator, report ID, severity).
+4. **Feedback:** A toast notification confirms success or reports the failure with the specific IAM permissions needed.
+
+**Required IAM Permissions:** `s3:HeadBucket`, `s3:CreateBucket`, `s3:PutBucketEncryption`, `s3:PutPublicAccessBlock`, `s3:PutObject`
+
+### PDF Export
+
+Every completed assistant message and the dedicated Report View page (`/report/:id`) include a **"Download PDF"** button. This uses the `html2pdf.js` library to generate a client-side PDF from the rendered Markdown content. PDF settings: A4 portrait, 2x scale, JPEG quality 0.95, automatic page breaks.
+
+### Reports History Page
+
+The Reports History page (`/reports`) provides a centralized view of all past security reports:
+
+| Feature | Implementation |
+|---------|---------------|
+| **Data Source** | Queries all assistant messages from the user's conversations via the `messages` and `conversations` tables |
+| **Search** | Full-text search across report content and conversation titles |
+| **Severity Filter** | Dropdown filter for CRITICAL, HIGH, MEDIUM, LOW, INFO — extracted from report content via regex pattern matching on the Overall Risk Rating |
+| **Date Filter** | Dropdown for Today, Past 7 Days, Past 30 Days, or All Time |
+| **Report Cards** | Each report shows: extracted title (first meaningful heading), conversation title, severity badge (color-coded), timestamp, and a hover-to-reveal "View full report" link |
+| **Navigation** | Click any report card to navigate to the full Report View page |
+| **Header Link** | Accessible via the "Reports" button in the main ChatInterface header |
+
+---
+
+## UX Enhancements — Thinking Indicator & Permission Error Clarity
+
+### Thinking Indicator
+
+When the user sends a message and the agent is processing (executing the agentic loop with AWS API calls), a **"Agent is thinking..."** indicator is displayed in the chat area. This appears between the user's message and the agent's response, providing visual feedback during the processing delay.
+
+**Implementation:**
+- **Component:** `ThinkingIndicator` (`src/components/ThinkingIndicator.tsx`)
+- **Visual:** Three animated bouncing dots with staggered delays (0ms, 150ms, 300ms) alongside the CloudPilot logo (pulsing) and "Agent is thinking..." text
+- **Display Logic:** Shown when `isLoading` is true AND the last message in the chat is from the user (i.e., no assistant response has started streaming yet). Once the first SSE chunk arrives and the assistant message begins streaming, the thinking indicator is replaced by the streaming message with its own "Executing AWS queries..." status.
+
+### Enhanced Permission Error Messages
+
+When the agent attempts an AWS API call that fails due to insufficient IAM permissions (HTTP 403, `AccessDenied`, `AccessDeniedException`, `AuthorizationError`, `UnauthorizedAccess`), the edge function now provides a detailed, actionable error message instead of a generic failure.
+
+**Error Format:**
+```
+PERMISSION DENIED: The configured IAM credentials do not have permission to perform '<service>:<operation>'.
+To resolve this, the IAM user/role needs the following permission added to its policy:
+
+{
+  "Effect": "Allow",
+  "Action": "<service>:<Operation>",
+  "Resource": "*"
+}
+
+Original error: <AWS error message> (Code: <error code>)
+```
+
+**How It Works:**
+1. The edge function's `catch` block in the tool execution loop checks the error code against known permission-denial patterns: `AccessDeniedException`, `AccessDenied`, `UnauthorizedAccess`, `AuthorizationError`, or HTTP status 403.
+2. If matched, it constructs a detailed error message including the exact service and operation that failed, a ready-to-use IAM policy snippet, and the original AWS error for debugging.
+3. This error is fed back to the AI agent as the tool response, allowing the agent to incorporate the permission guidance into its final report — clearly stating which permissions are missing and how to add them.
+
+
+
 ## Compliance Frameworks
 
 CloudPilot AI supports real-time assessment against major compliance frameworks by querying actual account configurations via real AWS API calls:
