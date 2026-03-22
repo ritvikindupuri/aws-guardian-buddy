@@ -414,7 +414,8 @@ The frontend is a Single Page Application (SPA) built with React 18 and Vite.
 |------|-------|------|-------------|
 | Auth | `/auth` | `src/pages/Auth.tsx` | Email/password sign-in and sign-up with email verification |
 | Main Interface | `/` | `src/pages/Index.tsx` | Protected route rendering `ChatInterface` |
-| Report View | `/report/:id` | `src/pages/Report.tsx` | Read-only view of a historical conversation with full Markdown rendering |
+| Report View | `/report/:id` | `src/pages/Report.tsx` | Read-only view of a historical conversation with full Markdown rendering and PDF download |
+| Reports History | `/reports` | `src/pages/ReportsHistory.tsx` | Searchable, filterable list of all past reports with severity badges and date filtering |
 | 404 | `*` | `src/pages/NotFound.tsx` | Fallback for unmatched routes |
 | Loading Screen | (inline in App.tsx) | `src/App.tsx` | Branded loading spinner shown during auth state resolution |
 
