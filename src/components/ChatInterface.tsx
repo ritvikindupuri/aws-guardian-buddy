@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Send, Plus, PanelRightOpen, PanelRightClose, LogOut, History, Settings } from "lucide-react";
+import { Send, Plus, PanelRightOpen, PanelRightClose, LogOut, History, Settings, FileText } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import ChatMessage from "@/components/ChatMessage";
 import ThinkingIndicator from "@/components/ThinkingIndicator";
@@ -16,6 +17,7 @@ import { useChatHistory } from "@/hooks/useChatHistory";
 import { toast } from "sonner";
 
 const ChatInterface = () => {
+  const navigate = useNavigate();
   const [input, setInput] = useState("");
   const [credentials, setCredentials] = useState<AwsCredentials | null>(null);
   const [showSidebar, setShowSidebar] = useState(true);
@@ -189,6 +191,16 @@ const ChatInterface = () => {
           >
             <Plus className="w-3.5 h-3.5" />
             New Chat
+          </Button>
+
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => navigate("/reports")}
+            className="hidden sm:flex items-center gap-1.5 text-muted-foreground hover:text-foreground h-8 px-2.5 text-xs"
+          >
+            <FileText className="w-3.5 h-3.5" />
+            Reports
           </Button>
 
           {userLabel && (

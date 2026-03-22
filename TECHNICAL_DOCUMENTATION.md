@@ -32,8 +32,10 @@ By tightly coupling LLM reasoning capabilities with strict, restricted, and audi
 11. [Output Formatting & Markdown Rendering](#output-formatting--markdown-rendering)
 12. [API Limits & Rate Limiting](#api-limits--rate-limiting)
 13. [Email Notifications via AWS SNS](#email-notifications-via-aws-sns)
-14. [Compliance Frameworks](#compliance-frameworks)
-15. [Conclusion](#conclusion)
+14. [Report Management — S3 Archival, PDF Export & Reports History](#report-management--s3-archival-pdf-export--reports-history)
+15. [UX Enhancements — Thinking Indicator & Permission Error Clarity](#ux-enhancements--thinking-indicator--permission-error-clarity)
+16. [Compliance Frameworks](#compliance-frameworks)
+17. [Conclusion](#conclusion)
 
 ### Typical User Query Flow
 
@@ -412,7 +414,8 @@ The frontend is a Single Page Application (SPA) built with React 18 and Vite.
 |------|-------|------|-------------|
 | Auth | `/auth` | `src/pages/Auth.tsx` | Email/password sign-in and sign-up with email verification |
 | Main Interface | `/` | `src/pages/Index.tsx` | Protected route rendering `ChatInterface` |
-| Report View | `/report/:id` | `src/pages/Report.tsx` | Read-only view of a historical conversation with full Markdown rendering |
+| Report View | `/report/:id` | `src/pages/Report.tsx` | Read-only view of a historical conversation with full Markdown rendering and PDF download |
+| Reports History | `/reports` | `src/pages/ReportsHistory.tsx` | Searchable, filterable list of all past reports with severity badges and date filtering |
 | 404 | `*` | `src/pages/NotFound.tsx` | Fallback for unmatched routes |
 | Loading Screen | (inline in App.tsx) | `src/App.tsx` | Branded loading spinner shown during auth state resolution |
 
@@ -420,8 +423,9 @@ The frontend is a Single Page Application (SPA) built with React 18 and Vite.
 
 | Component | File | Description |
 |-----------|------|-------------|
-| **ChatInterface** | `src/components/ChatInterface.tsx` | Main workspace. Orchestrates the chat layout, input handling, sidebar toggling (credentials, history, findings, quick actions, capabilities list), new chat creation, conversation management, and auto-scroll to latest messages. |
-| **ChatMessage** | `src/components/ChatMessage.tsx` | Renders individual user/assistant messages. Parses Markdown with `react-markdown` and `remark-gfm` for proper table, code block, and inline formatting. Applies distinct styling per role (user messages vs. agent responses). |
+| **ChatInterface** | `src/components/ChatInterface.tsx` | Main workspace. Orchestrates the chat layout, input handling, sidebar toggling (credentials, history, findings, quick actions, capabilities list), new chat creation, conversation management, auto-scroll to latest messages, and S3 report archival. Includes a "Reports" button in the header linking to `/reports`. |
+| **ChatMessage** | `src/components/ChatMessage.tsx` | Renders individual user/assistant messages. Parses Markdown with `react-markdown` and `remark-gfm` for proper table, code block, and inline formatting. Applies distinct styling per role. Includes action buttons on completed assistant messages: **Download PDF**, **Add to S3**, **View Report**, and **Copy Link**. |
+| **ThinkingIndicator** | `src/components/ThinkingIndicator.tsx` | Animated "Agent is thinking..." indicator with three bouncing dots and the CloudPilot logo. Displayed between the user's message and the agent's response while the agentic loop is processing. |
 | **AwsCredentialsPanel** | `src/components/AwsCredentialsPanel.tsx` | Secure form for AWS credential input with animated expand/collapse via framer-motion. Supports two methods: (1) direct Access Key ID + Secret Access Key + optional Session Token, or (2) Assume Role ARN. Includes a region selector dropdown with 16 AWS regions. Displays a security notice: "Credentials are transmitted per-request over TLS. Never persisted." Shows connection status with masked key preview. |
 | **QuickActions** | `src/components/QuickActions.tsx` | Provides 20 pre-built security prompts organized into 5 color-coded categories: Audit (blue), Compliance (green), Attack Simulation (red), Incident Response (orange), and Remediation (yellow). Each prompt is carefully engineered to enforce real API calls. |
 | **FindingsPanel** | `src/components/FindingsPanel.tsx` | Displays a real-time summary of identified security findings with animated expand/collapse via framer-motion. Features color-coded severity badges (CRIT in red, HIGH in orange, MED in yellow, LOW in blue) with aggregate counts in the header. Each finding shows title, resource identifier, and is clickable to send a targeted investigation prompt to the agent. Supports clearing all findings. |
@@ -969,6 +973,77 @@ In addition to sending its own notifications, the agent can audit your existing 
 | **EventBridge Rule Audit** | EventBridge | Reviews event rules and targets to ensure security events trigger appropriate notifications |
 
 ---
+
+## Report Management — S3 Archival, PDF Export & Reports History
+
+CloudPilot AI provides a comprehensive report lifecycle: every agent response is a structured security report that can be downloaded as a PDF, manually archived to S3, or browsed via the Reports History page.
+
+### Add to S3 Button
+
+Each completed assistant message includes an **"Add to S3"** button alongside the existing "Download PDF" button. When clicked:
+
+1. **Request:** The frontend sends the full report content to the `aws-agent` edge function with a special archival prompt.
+2. **Bucket Management:** The agent checks for (or creates) a private, AES-256 encrypted S3 bucket named `cloudpilot-reports-<account-id>` with all public access blocked.
+3. **Upload:** The report is uploaded as a Markdown file to `reports/<YYYY-MM-DD>/<message-id>.md` with metadata tags (generator, report ID, severity).
+4. **Feedback:** A toast notification confirms success or reports the failure with the specific IAM permissions needed.
+
+**Required IAM Permissions:** `s3:HeadBucket`, `s3:CreateBucket`, `s3:PutBucketEncryption`, `s3:PutPublicAccessBlock`, `s3:PutObject`
+
+### PDF Export
+
+Every completed assistant message and the dedicated Report View page (`/report/:id`) include a **"Download PDF"** button. This uses the `html2pdf.js` library to generate a client-side PDF from the rendered Markdown content. PDF settings: A4 portrait, 2x scale, JPEG quality 0.95, automatic page breaks.
+
+### Reports History Page
+
+The Reports History page (`/reports`) provides a centralized view of all past security reports:
+
+| Feature | Implementation |
+|---------|---------------|
+| **Data Source** | Queries all assistant messages from the user's conversations via the `messages` and `conversations` tables |
+| **Search** | Full-text search across report content and conversation titles |
+| **Severity Filter** | Dropdown filter for CRITICAL, HIGH, MEDIUM, LOW, INFO — extracted from report content via regex pattern matching on the Overall Risk Rating |
+| **Date Filter** | Dropdown for Today, Past 7 Days, Past 30 Days, or All Time |
+| **Report Cards** | Each report shows: extracted title (first meaningful heading), conversation title, severity badge (color-coded), timestamp, and a hover-to-reveal "View full report" link |
+| **Navigation** | Click any report card to navigate to the full Report View page |
+| **Header Link** | Accessible via the "Reports" button in the main ChatInterface header |
+
+---
+
+## UX Enhancements — Thinking Indicator & Permission Error Clarity
+
+### Thinking Indicator
+
+When the user sends a message and the agent is processing (executing the agentic loop with AWS API calls), a **"Agent is thinking..."** indicator is displayed in the chat area. This appears between the user's message and the agent's response, providing visual feedback during the processing delay.
+
+**Implementation:**
+- **Component:** `ThinkingIndicator` (`src/components/ThinkingIndicator.tsx`)
+- **Visual:** Three animated bouncing dots with staggered delays (0ms, 150ms, 300ms) alongside the CloudPilot logo (pulsing) and "Agent is thinking..." text
+- **Display Logic:** Shown when `isLoading` is true AND the last message in the chat is from the user (i.e., no assistant response has started streaming yet). Once the first SSE chunk arrives and the assistant message begins streaming, the thinking indicator is replaced by the streaming message with its own "Executing AWS queries..." status.
+
+### Enhanced Permission Error Messages
+
+When the agent attempts an AWS API call that fails due to insufficient IAM permissions (HTTP 403, `AccessDenied`, `AccessDeniedException`, `AuthorizationError`, `UnauthorizedAccess`), the edge function now provides a detailed, actionable error message instead of a generic failure.
+
+**Error Format:**
+```
+PERMISSION DENIED: The configured IAM credentials do not have permission to perform '<service>:<operation>'.
+To resolve this, the IAM user/role needs the following permission added to its policy:
+
+{
+  "Effect": "Allow",
+  "Action": "<service>:<Operation>",
+  "Resource": "*"
+}
+
+Original error: <AWS error message> (Code: <error code>)
+```
+
+**How It Works:**
+1. The edge function's `catch` block in the tool execution loop checks the error code against known permission-denial patterns: `AccessDeniedException`, `AccessDenied`, `UnauthorizedAccess`, `AuthorizationError`, or HTTP status 403.
+2. If matched, it constructs a detailed error message including the exact service and operation that failed, a ready-to-use IAM policy snippet, and the original AWS error for debugging.
+3. This error is fed back to the AI agent as the tool response, allowing the agent to incorporate the permission guidance into its final report — clearly stating which permissions are missing and how to add them.
+
+
 
 ## Compliance Frameworks
 
