@@ -2,7 +2,7 @@ import { useState, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { User, Loader2, CheckCircle, AlertOctagon, ExternalLink, Copy, Check, Download } from "lucide-react";
+import { User, Loader2, CheckCircle, AlertOctagon, ExternalLink, Copy, Check, Download, CloudUpload } from "lucide-react";
 import CloudPilotLogo from "@/components/CloudPilotLogo";
 
 export type MessageRole = "user" | "assistant" | "system";
@@ -18,13 +18,16 @@ export interface ChatMessageData {
 
 interface ChatMessageProps {
   message: ChatMessageData;
+  onAddToS3?: (content: string, messageId: string) => Promise<void>;
 }
 
-const ChatMessage = ({ message }: ChatMessageProps) => {
+const ChatMessage = ({ message, onAddToS3 }: ChatMessageProps) => {
   const isUser = message.role === "user";
   const isComplete = message.status === "complete" && !isUser;
   const [copied, setCopied] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploaded, setUploaded] = useState(false);
   const navigate = useNavigate();
   const contentRef = useRef<HTMLDivElement>(null);
 
@@ -57,6 +60,20 @@ const ChatMessage = ({ message }: ChatMessageProps) => {
       setDownloading(false);
     }
   }, [message, downloading]);
+
+  const handleAddToS3 = useCallback(async () => {
+    if (!onAddToS3 || uploading || uploaded) return;
+    setUploading(true);
+    try {
+      await onAddToS3(message.content, message.id);
+      setUploaded(true);
+      setTimeout(() => setUploaded(false), 5000);
+    } catch (err) {
+      console.error("S3 upload failed:", err);
+    } finally {
+      setUploading(false);
+    }
+  }, [onAddToS3, message, uploading, uploaded]);
 
   return (
     <div className={`animate-fade-in-up flex gap-3 px-5 py-3 ${isUser ? "justify-end" : ""}`}>
@@ -140,7 +157,7 @@ const ChatMessage = ({ message }: ChatMessageProps) => {
 
           {/* Report actions — only on completed assistant messages */}
           {isComplete && (
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1 flex-wrap">
               <button
                 onClick={downloadPdf}
                 disabled={downloading}
@@ -149,6 +166,15 @@ const ChatMessage = ({ message }: ChatMessageProps) => {
               >
                 {downloading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
                 {downloading ? "Generating..." : "Download PDF"}
+              </button>
+              <button
+                onClick={handleAddToS3}
+                disabled={uploading || uploaded}
+                className="flex items-center gap-1 text-[10px] font-mono text-muted-foreground/60 hover:text-primary transition-colors px-1.5 py-1 rounded hover:bg-primary/8 disabled:opacity-40"
+                title="Archive report to S3 bucket"
+              >
+                {uploading ? <Loader2 className="w-3 h-3 animate-spin" /> : <CloudUpload className="w-3 h-3" />}
+                {uploading ? "Uploading..." : uploaded ? "✓ Added to S3" : "Add to S3"}
               </button>
               <button
                 onClick={() => navigate(`/report/${message.id}`)}
