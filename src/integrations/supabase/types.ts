@@ -14,6 +14,54 @@ export type Database = {
   }
   public: {
     Tables: {
+      agent_audit_log: {
+        Row: {
+          aws_operation: string
+          aws_region: string
+          aws_service: string
+          conversation_id: string | null
+          created_at: string
+          error_code: string | null
+          error_message: string | null
+          execution_time_ms: number | null
+          id: string
+          params_hash: string | null
+          status: string
+          user_id: string
+          validator_result: string | null
+        }
+        Insert: {
+          aws_operation: string
+          aws_region: string
+          aws_service: string
+          conversation_id?: string | null
+          created_at?: string
+          error_code?: string | null
+          error_message?: string | null
+          execution_time_ms?: number | null
+          id?: string
+          params_hash?: string | null
+          status?: string
+          user_id: string
+          validator_result?: string | null
+        }
+        Update: {
+          aws_operation?: string
+          aws_region?: string
+          aws_service?: string
+          conversation_id?: string | null
+          created_at?: string
+          error_code?: string | null
+          error_message?: string | null
+          execution_time_ms?: number | null
+          id?: string
+          params_hash?: string | null
+          status?: string
+          user_id?: string
+          validator_result?: string | null
+        }
+        Relationships: []
+      }
       conversations: {
         Row: {
           created_at: string
