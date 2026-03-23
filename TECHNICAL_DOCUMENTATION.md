@@ -782,6 +782,103 @@ AWS credentials are **never persisted** to any database, local storage, or log f
 
 ---
 
+## Privilege Escalation Validator
+
+Between the AI model's tool call requests and actual AWS SDK execution sits a **privilege escalation validator** — a security gate that inspects every operation before it fires.
+
+### Architecture
+
+```mermaid
+flowchart LR
+    A[LLM Tool Call] --> B{Service Allowlist<br/>35+ services}
+    B -->|Blocked| C[❌ Reject + Audit Log]
+    B -->|Allowed| D{Privilege Escalation<br/>Validator}
+    D -->|BLOCKED| C
+    D -->|HIGH_RISK| E[⚠️ Allow + Warn + Audit Log]
+    D -->|ALLOWED| F[✅ Execute AWS SDK Call + Audit Log]
+    E --> F
+```
+
+<div align="center">
+  <em>Figure: Three-stage validation pipeline between LLM and AWS SDK</em>
+</div>
+
+### Monitored Privilege Escalation Patterns
+
+The validator checks against known privilege escalation attack vectors:
+
+| Service | Blocked Operations | Reason |
+|---------|-------------------|--------|
+| **IAM** | `createUser`, `createLoginProfile`, `updateLoginProfile`, `createAccessKey`, `putUserPolicy`, `attachUserPolicy`, `putGroupPolicy`, `attachGroupPolicy`, `putRolePolicy`, `attachRolePolicy`, `createPolicyVersion`, `setDefaultPolicyVersion`, `addUserToGroup`, `updateAssumeRolePolicy`, `createServiceLinkedRole` | Can escalate IAM privileges beyond current scope |
+| **STS** | `assumeRole` | Could escalate privileges via cross-role assumption |
+| **Organizations** | `createPolicy`, `attachPolicy`, `updatePolicy` | Organization-wide policy changes affecting all accounts |
+| **Lambda** | `createFunction`, `updateFunctionCode`, `addPermission` | Execution role attachment enables privilege escalation |
+
+### Risk Classification
+
+- **`BLOCKED`** — Operation is permanently blocked (e.g., `closeAccount`, `deleteOrganization`). The call never executes.
+- **`HIGH_RISK`** — Operation is allowed for authorized security assessments but flagged. A validator warning is prepended to the tool response and the call is logged extensively in the audit trail.
+- **`ALLOWED`** — Standard operation with no escalation risk. Executed normally.
+
+### Behavior on HIGH_RISK Operations
+
+For attack simulations, HIGH_RISK operations are **permitted but heavily instrumented**:
+1. The validator warning is prepended to the AWS API response so the AI model is aware
+2. The audit log records the operation with `validator_result = 'HIGH_RISK'`
+3. The agent's system prompt mandates full cleanup of simulation resources via the 4-phase lifecycle (Tag → Track → Complete → Cleanup)
+
+---
+
+## Agent Audit Log
+
+Every AWS API call the agent makes is recorded in a persistent audit log table (`agent_audit_log`), providing full observability into agent behavior.
+
+### Schema
+
+```sql
+CREATE TABLE public.agent_audit_log (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id       uuid NOT NULL,
+  conversation_id text,
+  aws_service   text NOT NULL,
+  aws_operation text NOT NULL,
+  aws_region    text NOT NULL,
+  params_hash   text,          -- Base64-encoded first 200 chars of params (no sensitive data)
+  status        text NOT NULL,  -- 'success' | 'error' | 'blocked'
+  error_code    text,
+  error_message text,
+  validator_result text,        -- 'ALLOWED' | 'HIGH_RISK' | 'BLOCKED'
+  execution_time_ms integer,
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+```
+
+### What Gets Logged
+
+| Event | `status` | `validator_result` | Details |
+|-------|---------|-------------------|---------|
+| Successful API call | `success` | `ALLOWED` or `HIGH_RISK` | Service, operation, region, execution time |
+| Permission denied | `error` | `ALLOWED` | Includes AWS error code and IAM policy snippet |
+| Validator blocked | `blocked` | `BLOCKED` | Reason for blocking, never reaches AWS |
+| SDK error | `error` | varies | Error code + message (truncated to 2000 chars) |
+
+### Security Properties
+
+- **RLS Protected:** Users can only view their own audit logs (`auth.uid() = user_id`)
+- **Insert restricted:** Only the service role (edge function) can write audit entries
+- **No sensitive data:** Parameters are hashed (Base64 of first 200 chars), never stored in plaintext
+- **Indexed:** Indexes on `user_id`, `created_at DESC`, and `(aws_service, aws_operation)` for fast querying
+- **Realtime enabled:** Supports live audit log streaming via Supabase Realtime
+
+### Use Cases
+
+1. **Compliance Auditing** — Review exactly which AWS APIs the agent called, when, and whether they succeeded
+2. **Incident Investigation** — Trace agent activity during a specific conversation or time window
+3. **Privilege Escalation Detection** — Filter for `validator_result = 'HIGH_RISK'` or `status = 'blocked'` entries
+4. **Performance Monitoring** — Track `execution_time_ms` to identify slow API calls
+
+---
+
 ## Authentication & User Management
 
 ### Implementation
