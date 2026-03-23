@@ -686,25 +686,44 @@ serve(async (req) => {
       apiMessages.push(responseMessage);
 
       if (responseMessage.tool_calls && responseMessage.tool_calls.length > 0) {
-        // Execute all tool calls in this iteration
         for (const toolCall of responseMessage.tool_calls) {
           if (toolCall.function.name === "execute_aws_api") {
+            const startTime = Date.now();
+            let service = "";
+            let operation = "";
+            let validatorResult: ValidatorResult = { allowed: true, riskLevel: "ALLOWED" };
+
             try {
               const args = JSON.parse(toolCall.function.arguments);
-              const service = sanitizeString(args.service, 64);
-              const operation = sanitizeString(args.operation, 128);
+              service = sanitizeString(args.service, 64);
+              operation = sanitizeString(args.operation, 128);
 
               // Security: validate service allowlist
               if (!ALLOWED_AWS_SERVICES.has(service)) {
                 throw new Error(`AWS service '${service}' is not allowed. Permitted services: ${[...ALLOWED_AWS_SERVICES].join(", ")}`);
               }
 
-              // Security: block dangerous operations
-              if (BLOCKED_OPERATIONS.has(operation)) {
-                throw new Error(`Operation '${operation}' is blocked for safety. This operation could cause irreversible account-level damage.`);
+              // ── Privilege Escalation Validator ──────────────────────────────
+              validatorResult = validatePrivilegeEscalation(service, operation, args.params);
+              if (!validatorResult.allowed) {
+                // Log blocked call to audit
+                if (userId) {
+                  supabaseAdmin.from("agent_audit_log").insert({
+                    user_id: userId,
+                    aws_service: service,
+                    aws_operation: operation,
+                    aws_region: awsConfig.region,
+                    params_hash: args.params ? btoa(JSON.stringify(args.params).slice(0, 200)) : null,
+                    status: "blocked",
+                    error_message: validatorResult.reason,
+                    validator_result: validatorResult.riskLevel,
+                    execution_time_ms: Date.now() - startTime,
+                  }).then();
+                }
+                throw new Error(validatorResult.reason);
               }
 
-              console.log(`[CloudPilot] AWS API: ${service}.${operation}`, JSON.stringify(args.params ?? {}));
+              console.log(`[CloudPilot] AWS API: ${service}.${operation} [${validatorResult.riskLevel}]`, JSON.stringify(args.params ?? {}));
 
               const ServiceClass = (AWS as any)[service];
               if (!ServiceClass) {
@@ -717,6 +736,7 @@ serve(async (req) => {
               }
 
               const result = await client[operation](args.params || {}).promise();
+              const execTime = Date.now() - startTime;
               
               // Truncate very large responses to prevent context overflow
               let resultStr = JSON.stringify(result);
@@ -724,12 +744,32 @@ serve(async (req) => {
                 resultStr = resultStr.slice(0, 100000) + '... [TRUNCATED — response too large, narrow your query]';
               }
 
+              // ── Audit log: successful call ──────────────────────────────────
+              if (userId) {
+                supabaseAdmin.from("agent_audit_log").insert({
+                  user_id: userId,
+                  aws_service: service,
+                  aws_operation: operation,
+                  aws_region: awsConfig.region,
+                  params_hash: args.params ? btoa(JSON.stringify(args.params).slice(0, 200)) : null,
+                  status: "success",
+                  validator_result: validatorResult.riskLevel,
+                  execution_time_ms: execTime,
+                }).then();
+              }
+
+              // Prepend validator warning to tool response if HIGH_RISK
+              const prefix = validatorResult.riskLevel === "HIGH_RISK"
+                ? `[VALIDATOR WARNING: ${validatorResult.reason}]\n\n`
+                : "";
+
               apiMessages.push({
                 role: "tool",
                 tool_call_id: toolCall.id,
-                content: resultStr,
+                content: prefix + resultStr,
               } as any);
             } catch (err: any) {
+              const execTime = Date.now() - startTime;
               console.error("[CloudPilot] AWS SDK Error:", err.message);
 
               let errorDetail = err.message;
@@ -740,6 +780,21 @@ serve(async (req) => {
                   `To resolve this, the IAM user/role needs the following permission added to its policy:\n\n` +
                   `{\n  "Effect": "Allow",\n  "Action": "${svc}:${op[0].toUpperCase() + op.slice(1)}",\n  "Resource": "*"\n}\n\n` +
                   `Original error: ${err.message} (Code: ${err.code})`;
+              }
+
+              // ── Audit log: failed call ──────────────────────────────────────
+              if (userId && service) {
+                supabaseAdmin.from("agent_audit_log").insert({
+                  user_id: userId,
+                  aws_service: service || "UNKNOWN",
+                  aws_operation: operation || "UNKNOWN",
+                  aws_region: awsConfig.region,
+                  status: "error",
+                  error_code: err.code || null,
+                  error_message: (errorDetail || "").slice(0, 2000),
+                  validator_result: validatorResult.riskLevel,
+                  execution_time_ms: execTime,
+                }).then();
               }
 
               apiMessages.push({
