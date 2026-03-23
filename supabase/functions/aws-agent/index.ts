@@ -533,6 +533,21 @@ serve(async (req) => {
     const body = await req.json();
     const { messages, credentials, notificationEmail } = body;
 
+    // ── Extract user ID from JWT for audit logging ──────────────────────────
+    const supabaseAdmin = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    );
+    let userId: string | null = null;
+    const authHeader = req.headers.get("Authorization");
+    if (authHeader?.startsWith("Bearer ")) {
+      try {
+        const token = authHeader.replace("Bearer ", "");
+        const { data } = await supabaseAdmin.auth.getClaims(token);
+        userId = (data?.claims as any)?.sub || null;
+      } catch { /* anon access — userId stays null */ }
+    }
+
     // ── Validate messages array ─────────────────────────────────────────────
     if (!Array.isArray(messages) || messages.length === 0 || messages.length > MAX_MESSAGES) {
       return new Response(
