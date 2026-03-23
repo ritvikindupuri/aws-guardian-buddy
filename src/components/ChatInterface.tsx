@@ -113,8 +113,8 @@ const ChatInterface = () => {
   };
 
   const handleAddToS3 = useCallback(async (content: string, messageId: string) => {
-    if (!credentials) {
-      toast.error("AWS credentials required to upload to S3");
+    if (!credentials?.session) {
+      toast.error("AWS session credentials required. Please re-authenticate.");
       return;
     }
 
@@ -134,7 +134,7 @@ const ChatInterface = () => {
                 content: `Archive the following report to the centralized S3 bucket (cloudpilot-reports-<account-id>). Create the bucket if it doesn't exist. Upload as markdown with key "reports/${new Date().toISOString().slice(0, 10)}/${messageId}.md". Only perform the S3 archival — do NOT regenerate the report. Respond with a brief confirmation of the S3 upload location.\n\n---\n\n${content}`,
               },
             ],
-            credentials,
+            credentials: credentials.session,
             notificationEmail: null,
           }),
         }
