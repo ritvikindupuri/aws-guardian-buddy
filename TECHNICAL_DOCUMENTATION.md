@@ -31,7 +31,7 @@ By tightly coupling LLM reasoning capabilities with strict, restricted, and audi
 8. [Quick Actions — Pre-Built Security Workflows](#quick-actions--pre-built-security-workflows)
 9. [Security & Safety Mechanisms](#security--safety-mechanisms)
 10. [Privilege Escalation Validator](#privilege-escalation-validator)
-11. [Agent Audit Log](#agent-audit-log)
+11. [Agent Audit Log — Triple-Sink Architecture (Supabase + CloudWatch + WORM S3)](#agent-audit-log)
 12. [Authentication & User Management](#authentication--user-management)
 13. [Chat History & Persistence](#chat-history--persistence)
 14. [Output Formatting & Markdown Rendering](#output-formatting--markdown-rendering)
@@ -833,9 +833,11 @@ For attack simulations, HIGH_RISK operations are **permitted but heavily instrum
 
 ## Agent Audit Log
 
-Every AWS API call the agent makes is recorded in a persistent audit log table (`agent_audit_log`), providing full observability into agent behavior.
+Every AWS API call the agent makes is recorded across **three independent audit sinks**, providing defense-in-depth observability and enterprise compliance readiness.
 
-### Schema
+### Sink 1: Supabase Audit Table (`agent_audit_log`)
+
+A persistent relational audit log for real-time querying and RLS-protected user access.
 
 ```sql
 CREATE TABLE public.agent_audit_log (
@@ -855,7 +857,58 @@ CREATE TABLE public.agent_audit_log (
 );
 ```
 
-### What Gets Logged
+### Sink 2: AWS CloudWatch Logs (User's Account)
+
+After every tool execution (success or error), the edge function pushes a structured JSON log event to **CloudWatch Logs** in the user's own AWS account.
+
+| Property | Value |
+|----------|-------|
+| **Log Group** | `/cloudpilot/agent-audit` |
+| **Log Stream** | `agent-YYYY-MM-DD` (daily rotation) |
+| **Payload** | JSON: `{timestamp, userId, service, operation, region, params, status, validatorResult, executionTimeMs, errorCode?, errorMessage?}` |
+| **Setup** | Fully automatic — log group and stream are created idempotently on first call |
+| **IAM Permissions Required** | `logs:CreateLogGroup`, `logs:CreateLogStream`, `logs:PutLogEvents`, `logs:DescribeLogStreams` |
+
+**Why CloudWatch?** Enables native AWS-ecosystem integration: CloudWatch Alarms, Anomaly Detection, Log Insights queries, Metric Filters, and cross-account log aggregation — all available for future layering without code changes.
+
+```mermaid
+flowchart LR
+    A[Agent Tool Call] --> B[Execute AWS SDK]
+    B --> C{Success or Error?}
+    C -->|Either| D[Push to CloudWatch Logs]
+    C -->|Either| E[Push to WORM S3]
+    C -->|Either| F[Insert Supabase Audit Table]
+    D --> G["/cloudpilot/agent-audit<br/>Log Group"]
+    E --> H["cloudpilot-audit-worm-{account-id}<br/>Object Lock Bucket"]
+    F --> I["agent_audit_log<br/>RLS-Protected Table"]
+```
+
+<div align="center">
+  <em>Figure: Triple-sink audit architecture — every agent action is recorded to CloudWatch, WORM S3, and the database simultaneously</em>
+</div>
+
+### Sink 3: WORM S3 — Tamper-Proof Object Lock Storage (User's Account)
+
+Every audit entry is also written to an **S3 bucket with Object Lock in Compliance mode**, making logs immutable and tamper-proof for the configured retention period. This provides a forensic-grade evidence chain suitable for SOC 2, PCI-DSS, HIPAA, and FedRAMP compliance audits.
+
+| Property | Value |
+|----------|-------|
+| **Bucket Name** | `cloudpilot-audit-worm-{aws-account-id}` |
+| **Object Lock Mode** | `COMPLIANCE` (cannot be overridden, even by root) |
+| **Default Retention** | 365 days |
+| **Encryption** | AES-256 (SSE-S3) |
+| **Public Access** | Fully blocked (all 4 settings) |
+| **Key Format** | `audit/YYYY-MM-DD/YYYY-MM-DDTHH-mm-ss.sssZ-{uuid}.json` |
+| **Setup** | Fully automatic — bucket + Object Lock + encryption + public access block created on first call |
+| **IAM Permissions Required** | `s3:CreateBucket`, `s3:PutBucketObjectLockConfiguration`, `s3:PutBucketEncryption`, `s3:PutPublicAccessBlock`, `s3:PutObject` |
+
+**Why WORM?** Compliance mode Object Lock ensures that:
+1. **No one** (including AWS root) can delete or modify audit entries during the retention period
+2. Logs constitute legally admissible evidence for incident investigations
+3. Meets SEC Rule 17a-4, FINRA, and CFTC electronic recordkeeping requirements
+4. Provides a verifiable chain of custody for SOC 2 Type II audits
+
+### What Gets Logged (All Three Sinks)
 
 | Event | `status` | `validator_result` | Details |
 |-------|---------|-------------------|---------|
@@ -866,18 +919,21 @@ CREATE TABLE public.agent_audit_log (
 
 ### Security Properties
 
-- **RLS Protected:** Users can only view their own audit logs (`auth.uid() = user_id`)
-- **Insert restricted:** Only the service role (edge function) can write audit entries
-- **No sensitive data:** Parameters are hashed (Base64 of first 200 chars), never stored in plaintext
-- **Indexed:** Indexes on `user_id`, `created_at DESC`, and `(aws_service, aws_operation)` for fast querying
-- **Realtime enabled:** Supports live audit log streaming via Supabase Realtime
+- **RLS Protected (Supabase):** Users can only view their own audit logs (`auth.uid() = user_id`)
+- **Insert restricted (Supabase):** Only the service role (edge function) can write audit entries
+- **Immutable (WORM S3):** Compliance-mode Object Lock — entries cannot be deleted or modified for 365 days
+- **Non-fatal:** CloudWatch/S3 failures are caught and logged but never break the agent flow
+- **No sensitive data:** Parameters are hashed (Base64 of first 200 chars) in Supabase; full params stored only in the user's own WORM bucket
 
-### Use Cases
+### Future Layering (Foundation Ready)
 
-1. **Compliance Auditing** — Review exactly which AWS APIs the agent called, when, and whether they succeeded
-2. **Incident Investigation** — Trace agent activity during a specific conversation or time window
-3. **Privilege Escalation Detection** — Filter for `validator_result = 'HIGH_RISK'` or `status = 'blocked'` entries
-4. **Performance Monitoring** — Track `execution_time_ms` to identify slow API calls
+The CloudWatch + WORM S3 foundation supports layering on:
+- **CloudWatch Alarms** — Alert on HIGH_RISK operations or error rate spikes
+- **CloudWatch Anomaly Detection** — ML-based detection of unusual agent behavior patterns
+- **CloudWatch Log Insights** — SQL-like queries across all agent audit logs
+- **CloudWatch Metric Filters** — Custom metrics for dashboard visualization
+- **S3 Event Notifications** — Trigger Lambda on new audit entries for real-time processing
+- **Athena** — Run SQL queries directly against the WORM S3 audit archive
 
 ---
 

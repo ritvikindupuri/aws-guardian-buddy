@@ -418,6 +418,121 @@ const tools = [
   },
 ];
 
+// ── CloudWatch Logs + WORM S3 Object Lock Audit Trail ───────────────────────
+const CW_LOG_GROUP = "/cloudpilot/agent-audit";
+const WORM_BUCKET_PREFIX = "cloudpilot-audit-worm-";
+
+async function pushAuditToAws(awsConfig: any, payload: Record<string, any>) {
+  try {
+    // ── 1. CloudWatch Logs ──────────────────────────────────────────────────
+    const cwl = new AWS.CloudWatchLogs(awsConfig);
+    const groupName = CW_LOG_GROUP;
+    const streamName = `agent-${new Date().toISOString().slice(0, 10)}`;
+
+    // Ensure log group exists (idempotent)
+    try {
+      await cwl.createLogGroup({ logGroupName: groupName }).promise();
+    } catch (e: any) {
+      if (e.code !== "ResourceAlreadyExistsException") throw e;
+    }
+
+    // Ensure log stream exists (idempotent)
+    try {
+      await cwl.createLogStream({ logGroupName: groupName, logStreamName: streamName }).promise();
+    } catch (e: any) {
+      if (e.code !== "ResourceAlreadyExistsException") throw e;
+    }
+
+    // Get the upload sequence token
+    const desc = await cwl.describeLogStreams({
+      logGroupName: groupName,
+      logStreamNamePrefix: streamName,
+      limit: 1,
+    }).promise();
+    const seqToken = desc.logStreams?.[0]?.uploadSequenceToken;
+
+    const cwParams: any = {
+      logGroupName: groupName,
+      logStreamName: streamName,
+      logEvents: [{
+        timestamp: Date.now(),
+        message: JSON.stringify(payload),
+      }],
+    };
+    if (seqToken) cwParams.sequenceToken = seqToken;
+
+    await cwl.putLogEvents(cwParams).promise();
+
+    // ── 2. WORM S3 (Object Lock — Compliance Mode) ──────────────────────────
+    const sts = new AWS.STS(awsConfig);
+    const identity = await sts.getCallerIdentity().promise();
+    const accountId = identity.Account;
+    const wormBucket = `${WORM_BUCKET_PREFIX}${accountId}`;
+    const s3 = new AWS.S3(awsConfig);
+
+    // Ensure bucket exists with Object Lock enabled (must be set at creation)
+    try {
+      await s3.createBucket({
+        Bucket: wormBucket,
+        ObjectLockEnabledForBucket: true,
+      }).promise();
+
+      // Set default retention — 1 year Compliance mode (immutable)
+      await s3.putObjectLockConfiguration({
+        Bucket: wormBucket,
+        ObjectLockConfiguration: {
+          ObjectLockEnabled: "Enabled",
+          Rule: {
+            DefaultRetention: {
+              Mode: "COMPLIANCE",
+              Days: 365,
+            },
+          },
+        },
+      }).promise();
+
+      // Block all public access
+      await s3.putPublicAccessBlock({
+        Bucket: wormBucket,
+        PublicAccessBlockConfiguration: {
+          BlockPublicAcls: true,
+          IgnorePublicAcls: true,
+          BlockPublicPolicy: true,
+          RestrictPublicBuckets: true,
+        },
+      }).promise();
+
+      // Enable AES-256 encryption
+      await s3.putBucketEncryption({
+        Bucket: wormBucket,
+        ServerSideEncryptionConfiguration: {
+          Rules: [{ ApplyServerSideEncryptionByDefault: { SSEAlgorithm: "AES256" } }],
+        },
+      }).promise();
+    } catch (e: any) {
+      // BucketAlreadyOwnedByYou or BucketAlreadyExists means it's already set up
+      if (e.code !== "BucketAlreadyOwnedByYou" && e.code !== "BucketAlreadyExists") {
+        console.error("[CloudPilot] WORM bucket setup error (non-fatal):", e.code);
+      }
+    }
+
+    // Write the audit entry — Object Lock retention applies automatically
+    const ts = payload.timestamp || new Date().toISOString();
+    const logKey = `audit/${ts.slice(0, 10)}/${ts.replace(/:/g, "-")}-${crypto.randomUUID()}.json`;
+
+    await s3.putObject({
+      Bucket: wormBucket,
+      Key: logKey,
+      Body: JSON.stringify(payload, null, 2),
+      ContentType: "application/json",
+      ServerSideEncryption: "AES256",
+    }).promise();
+  } catch (e: any) {
+    // Audit failures are non-fatal — log but don't break the agent flow
+    console.error("[CloudPilot] Audit push failed (CW/WORM):", e.code || e.message);
+  }
+}
+
 // ── Security: Input validation ──────────────────────────────────────────────
 const ALLOWED_AWS_SERVICES = new Set([
   "S3", "EC2", "IAM", "STS", "GuardDuty", "SecurityHub", "CloudTrail", "Config",
@@ -543,8 +658,8 @@ serve(async (req) => {
     if (authHeader?.startsWith("Bearer ")) {
       try {
         const token = authHeader.replace("Bearer ", "");
-        const { data } = await supabaseAdmin.auth.getClaims(token);
-        userId = (data?.claims as any)?.sub || null;
+        const { data: { user } } = await supabaseAdmin.auth.getUser(token);
+        userId = user?.id || null;
       } catch { /* anon access — userId stays null */ }
     }
 
@@ -758,43 +873,18 @@ serve(async (req) => {
                 }).then();
               }
 
-              // ── WORM Audit Logging (Success) ────────────────────────────────
-              const wormBucketSuccess = Deno.env.get("WORM_S3_BUCKET");
-              if (wormBucketSuccess) {
-                const wormConfig: any = {
-                  region: Deno.env.get("WORM_AWS_REGION") || awsConfig.region,
-                };
-                if (Deno.env.get("WORM_ACCESS_KEY_ID") && Deno.env.get("WORM_SECRET_ACCESS_KEY")) {
-                  wormConfig.credentials = {
-                    accessKeyId: Deno.env.get("WORM_ACCESS_KEY_ID")!,
-                    secretAccessKey: Deno.env.get("WORM_SECRET_ACCESS_KEY")!,
-                  };
-                }
-                const s3Worm = new AWS.S3(wormConfig);
-                const timestamp = new Date().toISOString();
-                const logKey = `audit-logs/${timestamp.replace(/:/g, '-')}-${crypto.randomUUID()}.json`;
-                let argsParams = null;
-                try {
-                  argsParams = JSON.parse(toolCall.function.arguments).params;
-                } catch (e) {}
-                const payload = {
-                  timestamp,
-                  userId,
-                  service: service || "UNKNOWN",
-                  operation: operation || "UNKNOWN",
-                  region: awsConfig.region,
-                  params: argsParams,
-                  status: "success",
-                  validatorResult: validatorResult.riskLevel,
-                  executionTimeMs: execTime,
-                };
-                s3Worm.putObject({
-                  Bucket: wormBucketSuccess,
-                  Key: logKey,
-                  Body: JSON.stringify(payload),
-                  ContentType: "application/json",
-                }).promise().catch(e => console.error("Failed to write to WORM bucket:", e));
-              }
+              // ── CloudWatch Logs + WORM S3 Audit Trail (User's Account) ──────────
+              pushAuditToAws(awsConfig, {
+                timestamp: new Date().toISOString(),
+                userId,
+                service,
+                operation,
+                region: awsConfig.region,
+                params: args.params,
+                status: "success",
+                validatorResult: validatorResult.riskLevel,
+                executionTimeMs: execTime,
+              });
 
               // Prepend validator warning to tool response if HIGH_RISK
               const prefix = validatorResult.riskLevel === "HIGH_RISK"
@@ -834,6 +924,20 @@ serve(async (req) => {
                   execution_time_ms: execTime,
                 }).then();
               }
+
+              // ── CloudWatch Logs + WORM S3 Audit Trail (Error) ─────────────
+              pushAuditToAws(awsConfig, {
+                timestamp: new Date().toISOString(),
+                userId,
+                service: service || "UNKNOWN",
+                operation: operation || "UNKNOWN",
+                region: awsConfig.region,
+                status: "error",
+                errorCode: err.code || null,
+                errorMessage: (errorDetail || "").slice(0, 2000),
+                validatorResult: validatorResult.riskLevel,
+                executionTimeMs: execTime,
+              });
 
               apiMessages.push({
                 role: "tool",
