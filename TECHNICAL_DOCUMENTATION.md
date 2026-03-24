@@ -31,7 +31,7 @@ By tightly coupling LLM reasoning capabilities with strict, restricted, and audi
 8. [Quick Actions — Pre-Built Security Workflows](#quick-actions--pre-built-security-workflows)
 9. [Security & Safety Mechanisms](#security--safety-mechanisms)
 10. [Privilege Escalation Validator](#privilege-escalation-validator)
-11. [Agent Audit Log](#agent-audit-log)
+11. [Agent Audit Log — Triple-Sink Architecture (Supabase + CloudWatch + WORM S3)](#agent-audit-log)
 12. [Authentication & User Management](#authentication--user-management)
 13. [Chat History & Persistence](#chat-history--persistence)
 14. [Output Formatting & Markdown Rendering](#output-formatting--markdown-rendering)
