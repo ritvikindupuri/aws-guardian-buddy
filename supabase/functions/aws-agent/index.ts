@@ -72,7 +72,7 @@ PHASE 3 — COMPLETION BLOCK (end of EVERY simulation that created resources):
   |---|---|---|---|---|
   | 1 | [service] | [type] | [id/arn] | [region] |
 
-  ⚠️ **Cleanup Required** — Reply **\`delete simulation resources\`** to permanently
+  **Cleanup Required** — Reply **\`delete simulation resources\`** to permanently
   delete all resources listed above from your account using real AWS API calls.
   I will execute each deletion and confirm with the actual API response.
 
@@ -86,7 +86,7 @@ PHASE 4 — CLEANUP (when user replies "delete simulation resources" or any clea
 
   | Resource | ID / ARN | Status |
   |---|---|---|
-  | [type] | [id] | ✅ Deleted / ❌ Failed |
+  | [type] | [id] | DELETED / FAILED |
 
   NEVER skip cleanup prompting after creating resources.
   NEVER mark a resource as deleted unless the AWS API returned a success response.
@@ -914,7 +914,7 @@ function validatePrivilegeEscalation(service: string, operation: string, params:
       // The agent's system prompt mandates cleanup of simulation resources
       return {
         allowed: true,
-        reason: `⚠️ HIGH-RISK OPERATION: ${service}.${operation} — ${pattern.reason} This call is permitted for authorized security assessments but will be logged to the audit trail.`,
+        reason: `HIGH-RISK OPERATION: ${service}.${operation} — ${pattern.reason} This call is permitted for authorized security assessments but will be logged to the audit trail.`,
         riskLevel: "HIGH_RISK",
       };
     }
@@ -1440,7 +1440,7 @@ serve(async (req) => {
     }
 
     if (!isStreamable) {
-      finalResponseText = "⚠️ Agent reached the maximum number of API iterations. The operation may be too broad — try narrowing your request to a specific service or resource.";
+      finalResponseText = "Agent reached the maximum number of API iterations. The operation may be too broad — try narrowing your request to a specific service or resource.";
     }
 
     // Stream the final response as SSE
