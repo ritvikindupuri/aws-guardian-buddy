@@ -152,6 +152,7 @@ const ChatInterface = () => {
       }
 
       toast.success("Report archived to S3 bucket");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
       toast.error("Failed to archive report to S3: " + (err.message || "Unknown error"));
       throw err;

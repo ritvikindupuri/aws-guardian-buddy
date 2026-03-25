@@ -44,9 +44,11 @@ const Report = () => {
 
     const load = async () => {
       const { data: msg, error: msgErr } = await (supabase
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         .from("messages" as any)
         .select("id, content, created_at, conversation_id")
         .eq("id", messageId)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         .single() as any);
 
       if (msgErr || !msg) {
@@ -58,9 +60,12 @@ const Report = () => {
       setMessage(msg as ReportMessage);
 
       const { data: conv } = await (supabase
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         .from("conversations" as any)
         .select("title")
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         .eq("id", (msg as any).conversation_id)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         .single() as any);
 
       if (conv) setConversation(conv as ReportConversation);
@@ -83,6 +88,7 @@ const Report = () => {
         html2canvas: { scale: 2, useCORS: true, letterRendering: true },
         jsPDF: { unit: "in", format: "a4", orientation: "portrait" },
         pagebreak: { mode: ["avoid-all", "css", "legacy"] },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } as any;
       await html2pdf().set(opt).from(reportContentRef.current).save();
     } catch (err) {

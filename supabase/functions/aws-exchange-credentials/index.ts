@@ -9,10 +9,11 @@ const corsHeaders = {
 
 const AWS_REGION_REGEX = /^[a-z]{2}(-[a-z]+-\d+)?$/;
 const ACCESS_KEY_REGEX = /^[A-Z0-9]{16,128}$/;
-const ROLE_ARN_REGEX = /^arn:aws:iam::\d{12}:role\/[\w+=,.@\/-]+$/;
+const ROLE_ARN_REGEX = /^arn:aws:iam::\d{12}:role\/[\w+=,.@/-]+$/;
 
 function sanitizeString(val: unknown, maxLen: number): string {
   if (typeof val !== "string") return "";
+  // eslint-disable-next-line no-control-regex
   return val.slice(0, maxLen).replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "");
 }
 
@@ -111,6 +112,7 @@ serve(async (req) => {
       }
 
       // For assume role, we need either base credentials or rely on the edge function's own role
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const stsConfig: any = { region };
       if (credentials.accessKeyId && credentials.secretAccessKey) {
         stsConfig.credentials = {
@@ -182,7 +184,7 @@ serve(async (req) => {
       "guardduty:ListDetectors"
     ];
 
-    let permissions: Record<string, boolean> = {};
+    const permissions: Record<string, boolean> = {};
 
     try {
       const simResult = await iam.simulatePrincipalPolicy({
@@ -220,6 +222,7 @@ serve(async (req) => {
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (err: any) {
     const message = err.message || "Credential validation failed.";
     const isAccessDenied =

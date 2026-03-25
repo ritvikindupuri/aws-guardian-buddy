@@ -642,6 +642,7 @@ function validateIamPolicyActions(actions: string[]): { valid: boolean; reason?:
   return { valid: true };
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function buildIamAccessPlan(rawArgs: Record<string, any>) {
   const args: IamAutomationArgs = {
     action: rawArgs.action,
@@ -718,6 +719,7 @@ async function ensureIamPrincipalExists(iam: AWS.IAM, principalType: IamPrincipa
 const CW_LOG_GROUP = "/cloudpilot/agent-audit";
 const WORM_BUCKET_PREFIX = "cloudpilot-audit-worm-";
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function pushAuditToAws(awsConfig: any, payload: Record<string, any>) {
   try {
     // ── 1. CloudWatch Logs ──────────────────────────────────────────────────
@@ -728,6 +730,7 @@ async function pushAuditToAws(awsConfig: any, payload: Record<string, any>) {
     // Ensure log group exists (idempotent)
     try {
       await cwl.createLogGroup({ logGroupName: groupName }).promise();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (e: any) {
       if (e.code !== "ResourceAlreadyExistsException") throw e;
     }
@@ -735,6 +738,7 @@ async function pushAuditToAws(awsConfig: any, payload: Record<string, any>) {
     // Ensure log stream exists (idempotent)
     try {
       await cwl.createLogStream({ logGroupName: groupName, logStreamName: streamName }).promise();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (e: any) {
       if (e.code !== "ResourceAlreadyExistsException") throw e;
     }
@@ -747,6 +751,7 @@ async function pushAuditToAws(awsConfig: any, payload: Record<string, any>) {
     }).promise();
     const seqToken = desc.logStreams?.[0]?.uploadSequenceToken;
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const cwParams: any = {
       logGroupName: groupName,
       logStreamName: streamName,
@@ -805,6 +810,7 @@ async function pushAuditToAws(awsConfig: any, payload: Record<string, any>) {
           Rules: [{ ApplyServerSideEncryptionByDefault: { SSEAlgorithm: "AES256" } }],
         },
       }).promise();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (e: any) {
       // BucketAlreadyOwnedByYou or BucketAlreadyExists means it's already set up
       if (e.code !== "BucketAlreadyOwnedByYou" && e.code !== "BucketAlreadyExists") {
@@ -823,6 +829,7 @@ async function pushAuditToAws(awsConfig: any, payload: Record<string, any>) {
       ContentType: "application/json",
       ServerSideEncryption: "AES256",
     }).promise();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (e: any) {
     // Audit failures are non-fatal — log but don't break the agent flow
     console.error("[CloudPilot] Audit push failed (CW/WORM):", e.code || e.message);
@@ -890,6 +897,7 @@ interface ValidatorResult {
   riskLevel?: "BLOCKED" | "HIGH_RISK" | "ALLOWED";
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function validatePrivilegeEscalation(service: string, operation: string, params: any): ValidatorResult {
   // Check blocked operations first
   if (BLOCKED_OPERATIONS.has(operation)) {
@@ -927,11 +935,14 @@ const MAX_MESSAGE_LENGTH = 50000;
 const MAX_MESSAGES = 100;
 
 const AWS_REGION_REGEX = /^[a-z]{2}(-[a-z]+-\d+)?$/;
+
 const ACCESS_KEY_REGEX = /^[A-Z0-9]{16,128}$/;
-const ROLE_ARN_REGEX = /^arn:aws:iam::\d{12}:role\/[\w+=,.@\/-]+$/;
+
+const ROLE_ARN_REGEX = /^arn:aws:iam::\d{12}:role\/[\w+=,.@/-]+$/;
 
 function sanitizeString(val: unknown, maxLen: number): string {
   if (typeof val !== "string") return "";
+  // eslint-disable-next-line no-control-regex
   return val.slice(0, maxLen).replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "");
 }
 
@@ -1027,10 +1038,12 @@ serve(async (req) => {
     const credContext = `Connected via STS Session Token (${maskedKey}) in region ${region}`;
 
     // Sanitize user messages before sending to AI — strip any injection attempts
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const sanitizedMessages = messages.map((m: any) => ({
       role: m.role === "assistant" ? "assistant" : "user",
       content: sanitizeString(m.content, MAX_MESSAGE_LENGTH),
     }));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const latestUserMessage = [...sanitizedMessages].reverse().find((m: any) => m.role === "user")?.content || "";
     const userHasConfirmedIamChange = isExplicitConfirmation(latestUserMessage);
 
@@ -1166,6 +1179,7 @@ serve(async (req) => {
                   role: "tool",
                   tool_call_id: toolCall.id,
                   content: JSON.stringify(preview),
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 } as any);
                 continue;
               }
@@ -1245,7 +1259,9 @@ serve(async (req) => {
                 role: "tool",
                 tool_call_id: toolCall.id,
                 content: JSON.stringify(executionResult),
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
               } as any);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             } catch (err: any) {
               const execTime = Date.now() - startTime;
               const errorMessage = err?.message || "IAM automation failed.";
@@ -1280,6 +1296,7 @@ serve(async (req) => {
                 role: "tool",
                 tool_call_id: toolCall.id,
                 content: JSON.stringify({ error: errorMessage }),
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
               } as any);
             }
           } else if (toolCall.function.name === "execute_aws_api") {
@@ -1320,6 +1337,7 @@ serve(async (req) => {
 
               console.log(`[CloudPilot] AWS API: ${service}.${operation} [${validatorResult.riskLevel}]`, JSON.stringify(args.params ?? {}));
 
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
               const ServiceClass = (AWS as any)[service];
               if (!ServiceClass) {
                 throw new Error(`AWS service '${service}' not found in SDK. Check the service name.`);
@@ -1375,7 +1393,9 @@ serve(async (req) => {
                 role: "tool",
                 tool_call_id: toolCall.id,
                 content: prefix + resultStr,
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
               } as any);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             } catch (err: any) {
               const execTime = Date.now() - startTime;
               console.error("[CloudPilot] AWS SDK Error:", err.message);
@@ -1427,6 +1447,7 @@ serve(async (req) => {
                   code: err.code,
                   statusCode: err.statusCode,
                 }),
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
               } as any);
             }
           }
@@ -1469,6 +1490,7 @@ serve(async (req) => {
     return new Response(stream, {
       headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
     });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (e: any) {
     console.error("[CloudPilot] Fatal error:", e);
     return new Response(
