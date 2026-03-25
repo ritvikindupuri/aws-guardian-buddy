@@ -46,9 +46,9 @@ const ChatMessage = ({ message, onAddToS3 }: ChatMessageProps) => {
       const html2pdf = (await import("html2pdf.js")).default;
       const timestamp = message.timestamp.toISOString().slice(0, 10);
       const opt = {
-        margin: [0.5, 0.6, 0.5, 0.6] as [number, number, number, number],
+        margin: [0.5, 0.6, 0.5, 0.6],
         filename: `CloudPilot-Report-${timestamp}-${message.id.slice(0, 8)}.pdf`,
-        image: { type: "jpeg" as const, quality: 0.95 },
+        image: { type: "jpeg", quality: 0.95 },
         html2canvas: { scale: 2, useCORS: true, letterRendering: true },
         jsPDF: { unit: "in", format: "a4", orientation: "portrait" },
         pagebreak: { mode: ["avoid-all", "css", "legacy"] },
