@@ -183,6 +183,21 @@ const categories = [
         prompt: "Enforce MFA across all IAM users using real API calls. Query: all IAM users, list which have MFA devices (ListMFADevices), identify users with console access and no MFA. Generate: an IAM policy that denies all actions except MFA enrollment unless MFA is present (with exact JSON), and the AWS CLI commands to attach that policy. Show real usernames from the account that need MFA enforcement.",
       },
       {
+        icon: Key,
+        label: "IAM S3 Preview",
+        prompt: "Give the IAM group dev-team read-only S3 access. Preview the exact IAM policy first, do not apply anything until I confirm.",
+      },
+      {
+        icon: Users,
+        label: "IAM Scoped Preview",
+        prompt: "Prepare a least-privilege IAM policy to give the IAM group contractor-group read-only S3 access to arn:aws:s3:::example-bucket and arn:aws:s3:::example-bucket/* only. Show the preview and wait for confirmation.",
+      },
+      {
+        icon: ShieldCheck,
+        label: "IAM Confirm",
+        prompt: "Confirm",
+      },
+      {
         icon: Cpu,
         label: "Harden IMDSv2",
         prompt: "Enforce IMDSv2 across all EC2 instances using real API calls. Query all instances and their MetadataOptions (HttpTokens setting). For each instance with HttpTokens=optional (IMDSv1 enabled), provide the exact AWS CLI command to enforce IMDSv2: aws ec2 modify-instance-metadata-options. Also check launch templates for IMDSv1 defaults and provide the commands to update them. Show real instance IDs.",
