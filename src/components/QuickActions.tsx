@@ -4,7 +4,8 @@ import {
   Eye, Activity, Network, HardDrive, Swords,
   Key, Radio, GitBranch, Cpu, Fingerprint, Target,
   FileText, Radar, Bot, ClipboardList, Ban,
-  UserX, BellRing, Archive, Mail, ShieldCheck
+  UserX, BellRing, Archive, Mail, ShieldCheck,
+  BarChart3, Bell, Gauge, ScrollText, LayoutDashboard
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -235,6 +236,42 @@ const categories = [
       },
     ],
   },
+  {
+    label: "CLOUDWATCH",
+    color: "text-cyan-400",
+    actions: [
+      {
+        icon: Bell,
+        label: "Security Alarms",
+        prompt: "Create CloudWatch Alarms for critical security events using real AWS API calls. Set up alarms for: unauthorized API calls, root account usage, IAM policy changes, security group modifications, NACL changes, console sign-in failures, S3 bucket policy changes, CloudTrail configuration changes, and KMS key deletion. Create the corresponding metric filters on the CloudTrail log group and link alarms to the configured SNS topic for email notifications.",
+      },
+      {
+        icon: Gauge,
+        label: "Anomaly Detection",
+        prompt: "Configure CloudWatch Anomaly Detection for security monitoring using real AWS API calls. Set up anomaly detectors for: API call volume per principal, EC2 instance launch frequency, IAM user creation rate, S3 data transfer volumes, and cross-region API activity. Create anomaly detection alarms that trigger when metrics exceed the expected band by 2+ standard deviations. Report the current anomaly detection configuration and any active anomalies detected.",
+      },
+      {
+        icon: ScrollText,
+        label: "Log Insights",
+        prompt: "Run CloudWatch Logs Insights queries against CloudTrail logs using real AWS API calls. Execute queries for: top 10 denied API calls in the last 24 hours with source IPs, unusual console logins by geolocation, API calls from previously unseen IP addresses, resource deletion events across all services, and IAM credential usage patterns. Present results in structured tables with timestamps and affected resources.",
+      },
+      {
+        icon: BarChart3,
+        label: "Metric Filters",
+        prompt: "Audit and create CloudWatch Metric Filters on CloudTrail log groups using real AWS API calls. Check existing metric filters and identify gaps. Create filters for: unauthorized access attempts, root account activity, IAM policy modifications, security group changes, S3 bucket exposure events, and failed authentication attempts. Show the filter patterns, metric namespaces, and linked alarms.",
+      },
+      {
+        icon: LayoutDashboard,
+        label: "Security Dashboard",
+        prompt: "Design a CloudWatch Security Dashboard configuration using real AWS API calls. Query current alarms, metrics, and log groups to determine available data sources. Generate a dashboard JSON definition with widgets for: alarm status overview, API call volume trends, unauthorized access attempt graphs, top security findings, geographic API activity distribution, and resource change timeline. Provide the AWS CLI command to create the dashboard.",
+      },
+      {
+        icon: Activity,
+        label: "Alarm Status",
+        prompt: "Query all CloudWatch Alarms related to security monitoring using real AWS API calls. List every alarm with its current state (OK, ALARM, INSUFFICIENT_DATA), the metric it monitors, threshold configuration, evaluation period, and linked SNS actions. Identify any alarms in ALARM state and provide the triggering metric data. Also identify critical security events that lack alarm coverage.",
+      },
+    ],
+  },
 ];
 
 const categoryBorderColors: Record<string, string> = {
@@ -244,6 +281,7 @@ const categoryBorderColors: Record<string, string> = {
   "INCIDENT RESPONSE": "border-orange-500/20",
   "REMEDIATION": "border-yellow-500/20",
   "REPORTING & ALERTS": "border-purple-500/20",
+  "CLOUDWATCH": "border-cyan-500/20",
 };
 
 const QuickActions = ({ onAction, disabled }: QuickActionsProps) => {

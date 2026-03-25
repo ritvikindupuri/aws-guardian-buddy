@@ -40,7 +40,9 @@ By tightly coupling LLM reasoning capabilities with strict, restricted, and audi
 17. [Report Management — S3 Archival, PDF Export & Reports History](#report-management--s3-archival-pdf-export--reports-history)
 18. [UX Enhancements — Thinking Indicator & Permission Error Clarity](#ux-enhancements--thinking-indicator--permission-error-clarity)
 19. [Compliance Frameworks](#compliance-frameworks)
-20. [Conclusion](#conclusion)
+20. [VPC Endpoint Configuration Guide — Fully Private AWS API Routing](#vpc-endpoint-configuration-guide--fully-private-aws-api-routing)
+21. [CloudWatch Automation](#cloudwatch-automation)
+22. [Conclusion](#conclusion)
 
 ### Typical User Query Flow
 
@@ -1285,12 +1287,403 @@ CloudPilot AI supports real-time assessment against major compliance frameworks 
 
 ---
 
+## VPC Endpoint Configuration Guide — Fully Private AWS API Routing
+
+For environments with strict network isolation requirements (FedRAMP, HIPAA, PCI-DSS, financial services), CloudPilot AI supports fully private AWS API routing via VPC Endpoints with Private DNS. When properly configured, all AWS SDK calls from the agent route over the AWS internal backbone — never traversing the public internet.
+
+### How It Works
+
+The AWS SDK v2 used by the agent resolves service endpoints via DNS (e.g., `s3.us-east-1.amazonaws.com`). When a VPC Interface Endpoint is created with **Private DNS enabled**, AWS automatically overrides these DNS records within the VPC so they resolve to the endpoint's private IP addresses. The SDK requires zero code changes — routing is handled transparently at the DNS layer.
+
+```mermaid
+graph LR
+    subgraph "User VPC"
+        A[CloudPilot Agent<br/>SDK Call] --> B[VPC DNS Resolver]
+        B --> C[VPC Endpoint<br/>Private IP]
+    end
+    C --> D[AWS Service API<br/>Internal Backbone]
+
+    style A fill:#1a1a2e,stroke:#00d4ff,color:#fff
+    style B fill:#1a1a2e,stroke:#00d4ff,color:#fff
+    style C fill:#0d2137,stroke:#00d4ff,color:#fff
+    style D fill:#0d2137,stroke:#00ff88,color:#fff
+```
+
+<div align="center">
+  <em>Figure: Private DNS Resolution Flow — SDK calls resolve to VPC Endpoint private IPs, routing traffic entirely over the AWS internal network.</em>
+</div>
+
+### Required VPC Endpoints
+
+The following table lists every AWS service the agent interacts with, the corresponding VPC Endpoint service name, the endpoint type, and whether Private DNS is supported.
+
+| AWS Service | VPC Endpoint Service Name | Type | Private DNS | Priority |
+|-------------|---------------------------|------|-------------|----------|
+| **STS** | `com.amazonaws.<region>.sts` | Interface | Yes | Critical — all credential exchanges |
+| **S3** | `com.amazonaws.<region>.s3` | Gateway + Interface | Yes (Interface) | Critical — report archival, bucket audits |
+| **IAM** | `com.amazonaws.<region>.iam` | Interface | Yes | Critical — all IAM audits |
+| **EC2** | `com.amazonaws.<region>.ec2` | Interface | Yes | High — instance audits, security groups |
+| **Lambda** | `com.amazonaws.<region>.lambda` | Interface | Yes | High — function audits |
+| **RDS** | `com.amazonaws.<region>.rds` | Interface | Yes | High — database audits |
+| **CloudTrail** | `com.amazonaws.<region>.cloudtrail` | Interface | Yes | High — log verification |
+| **CloudWatch Logs** | `com.amazonaws.<region>.logs` | Interface | Yes | High — audit log delivery |
+| **CloudWatch** | `com.amazonaws.<region>.monitoring` | Interface | Yes | High — alarms and metrics |
+| **GuardDuty** | `com.amazonaws.<region>.guardduty` | Interface | Yes | High — threat detection |
+| **Security Hub** | `com.amazonaws.<region>.securityhub` | Interface | Yes | High — findings aggregation |
+| **Config** | `com.amazonaws.<region>.config` | Interface | Yes | Medium — compliance checks |
+| **KMS** | `com.amazonaws.<region>.kms` | Interface | Yes | Medium — encryption audits |
+| **Secrets Manager** | `com.amazonaws.<region>.secretsmanager` | Interface | Yes | Medium — secrets audits |
+| **SNS** | `com.amazonaws.<region>.sns` | Interface | Yes | Medium — email notifications |
+| **SQS** | `com.amazonaws.<region>.sqs` | Interface | Yes | Low — queue policy audits |
+| **ECR** | `com.amazonaws.<region>.ecr.api` | Interface | Yes | Low — container image audits |
+| **EKS** | `com.amazonaws.<region>.eks` | Interface | Yes | Low — Kubernetes audits |
+| **DynamoDB** | `com.amazonaws.<region>.dynamodb` | Gateway | N/A (Gateway) | Low — table audits |
+| **Organizations** | `com.amazonaws.<region>.organizations` | Interface | Yes | Low — SCP audits |
+
+### Step-by-Step Configuration
+
+#### Prerequisites
+
+- A VPC with DNS resolution and DNS hostnames enabled
+- Subnets in at least two Availability Zones (for high availability)
+- An IAM principal with permissions: `ec2:CreateVpcEndpoint`, `ec2:ModifyVpcEndpoint`, `ec2:DescribeVpcEndpoints`
+
+#### Step 1: Enable DNS Settings on the VPC
+
+```bash
+# Verify DNS settings are enabled (both must be true)
+aws ec2 describe-vpc-attribute \
+  --vpc-id vpc-0abc123def456 \
+  --attribute enableDnsSupport
+
+aws ec2 describe-vpc-attribute \
+  --vpc-id vpc-0abc123def456 \
+  --attribute enableDnsHostnames
+
+# Enable if not already active
+aws ec2 modify-vpc-attribute \
+  --vpc-id vpc-0abc123def456 \
+  --enable-dns-support '{"Value": true}'
+
+aws ec2 modify-vpc-attribute \
+  --vpc-id vpc-0abc123def456 \
+  --enable-dns-hostnames '{"Value": true}'
+```
+
+#### Step 2: Create a Security Group for VPC Endpoints
+
+```bash
+# Create a security group that allows HTTPS (443) from the VPC CIDR
+aws ec2 create-security-group \
+  --group-name cloudpilot-vpce-sg \
+  --description "Security group for CloudPilot VPC Endpoints" \
+  --vpc-id vpc-0abc123def456
+
+# Allow inbound HTTPS from the VPC CIDR block
+aws ec2 authorize-security-group-ingress \
+  --group-id sg-0abc123def456 \
+  --protocol tcp \
+  --port 443 \
+  --cidr 10.0.0.0/16
+```
+
+#### Step 3: Create Interface Endpoints (Critical Services First)
+
+```bash
+# STS — Required for all credential exchanges
+aws ec2 create-vpc-endpoint \
+  --vpc-id vpc-0abc123def456 \
+  --service-name com.amazonaws.us-east-1.sts \
+  --vpc-endpoint-type Interface \
+  --subnet-ids subnet-0aaa111 subnet-0bbb222 \
+  --security-group-ids sg-0abc123def456 \
+  --private-dns-enabled
+
+# IAM — Required for all IAM audits
+aws ec2 create-vpc-endpoint \
+  --vpc-id vpc-0abc123def456 \
+  --service-name com.amazonaws.us-east-1.iam \
+  --vpc-endpoint-type Interface \
+  --subnet-ids subnet-0aaa111 subnet-0bbb222 \
+  --security-group-ids sg-0abc123def456 \
+  --private-dns-enabled
+
+# EC2 — Required for instance and security group audits
+aws ec2 create-vpc-endpoint \
+  --vpc-id vpc-0abc123def456 \
+  --service-name com.amazonaws.us-east-1.ec2 \
+  --vpc-endpoint-type Interface \
+  --subnet-ids subnet-0aaa111 subnet-0bbb222 \
+  --security-group-ids sg-0abc123def456 \
+  --private-dns-enabled
+
+# CloudWatch Logs — Required for audit log delivery
+aws ec2 create-vpc-endpoint \
+  --vpc-id vpc-0abc123def456 \
+  --service-name com.amazonaws.us-east-1.logs \
+  --vpc-endpoint-type Interface \
+  --subnet-ids subnet-0aaa111 subnet-0bbb222 \
+  --security-group-ids sg-0abc123def456 \
+  --private-dns-enabled
+
+# CloudWatch Monitoring — Required for alarms and metrics
+aws ec2 create-vpc-endpoint \
+  --vpc-id vpc-0abc123def456 \
+  --service-name com.amazonaws.us-east-1.monitoring \
+  --vpc-endpoint-type Interface \
+  --subnet-ids subnet-0aaa111 subnet-0bbb222 \
+  --security-group-ids sg-0abc123def456 \
+  --private-dns-enabled
+
+# Repeat for remaining services as needed (SNS, Lambda, RDS, etc.)
+# Use the same pattern, replacing the --service-name value
+```
+
+#### Step 4: Create Gateway Endpoints (S3 and DynamoDB)
+
+```bash
+# S3 Gateway Endpoint (no cost, recommended for all VPCs)
+aws ec2 create-vpc-endpoint \
+  --vpc-id vpc-0abc123def456 \
+  --service-name com.amazonaws.us-east-1.s3 \
+  --vpc-endpoint-type Gateway \
+  --route-table-ids rtb-0abc123def456
+
+# DynamoDB Gateway Endpoint
+aws ec2 create-vpc-endpoint \
+  --vpc-id vpc-0abc123def456 \
+  --service-name com.amazonaws.us-east-1.dynamodb \
+  --vpc-endpoint-type Gateway \
+  --route-table-ids rtb-0abc123def456
+```
+
+#### Step 5: Verify Private DNS Resolution
+
+```bash
+# After creating endpoints, verify DNS resolves to private IPs
+# Run this from within the VPC (e.g., from an EC2 instance)
+nslookup sts.us-east-1.amazonaws.com
+# Expected: Should resolve to 10.x.x.x (VPC CIDR) instead of public IPs
+
+nslookup s3.us-east-1.amazonaws.com
+# Expected: Should resolve to private IP ranges
+
+nslookup ec2.us-east-1.amazonaws.com
+# Expected: Should resolve to private IP ranges
+```
+
+#### Step 6: Apply VPC Endpoint Policies (Optional — Least Privilege)
+
+```bash
+# Restrict the STS endpoint to only allow AssumeRole for CloudPilot sessions
+aws ec2 modify-vpc-endpoint \
+  --vpc-endpoint-id vpce-0abc123def456 \
+  --policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [{
+      "Effect": "Allow",
+      "Principal": "*",
+      "Action": "sts:AssumeRole",
+      "Resource": "arn:aws:iam::*:role/CloudPilot*"
+    }]
+  }'
+```
+
+### Verification Checklist
+
+| Check | Command | Expected Result |
+|-------|---------|-----------------|
+| VPC DNS Support enabled | `aws ec2 describe-vpc-attribute --vpc-id <id> --attribute enableDnsSupport` | `Value: true` |
+| VPC DNS Hostnames enabled | `aws ec2 describe-vpc-attribute --vpc-id <id> --attribute enableDnsHostnames` | `Value: true` |
+| Endpoints created | `aws ec2 describe-vpc-endpoints --filters Name=vpc-id,Values=<id>` | Lists all endpoints |
+| Private DNS active | `nslookup sts.<region>.amazonaws.com` (from inside VPC) | Resolves to 10.x.x.x |
+| Agent traffic private | CloudTrail `vpcEndpointId` field populated | Present on all API calls |
+
+### Cost Considerations
+
+| Endpoint Type | Hourly Cost | Data Processing |
+|---------------|-------------|-----------------|
+| Interface Endpoint | ~$0.01/hr per AZ | $0.01/GB |
+| Gateway Endpoint (S3, DynamoDB) | Free | Free |
+
+**Recommendation:** Start with the Critical and High priority endpoints (STS, S3, IAM, EC2, CloudWatch Logs, CloudWatch, GuardDuty, Security Hub). Add remaining endpoints based on which agent capabilities your team uses most frequently.
+
+---
+
+## CloudWatch Automation
+
+CloudPilot AI integrates with AWS CloudWatch to provide automated monitoring, alerting, and anomaly detection capabilities. The agent can create, manage, and query CloudWatch resources using the user's AWS credentials.
+
+### Capabilities
+
+#### 1. Alarm Management
+
+The agent can create and manage CloudWatch Alarms that trigger on security-relevant metrics:
+
+- **Unauthorized API Calls:** Alarms on `UnauthorizedAttemptCount` metric filters applied to CloudTrail log groups
+- **Root Account Usage:** Alarms triggered when the root account performs any API action
+- **IAM Policy Changes:** Alarms on policy attachment, detachment, or modification events
+- **Security Group Changes:** Alarms on `AuthorizeSecurityGroupIngress`, `RevokeSecurityGroupIngress`, and related events
+- **NACL Changes:** Alarms on Network ACL creation, deletion, or modification
+- **Console Sign-In Failures:** Alarms on repeated `ConsoleLogin` failures indicating brute-force attempts
+- **S3 Bucket Policy Changes:** Alarms on `PutBucketPolicy`, `DeleteBucketPolicy` events
+- **CloudTrail Configuration Changes:** Alarms on `StopLogging`, `DeleteTrail`, `UpdateTrail` events
+- **KMS Key Deletion:** Alarms on `DisableKey`, `ScheduleKeyDeletion` events
+
+#### 2. Metric Filters
+
+The agent creates CloudWatch Metric Filters on CloudTrail log groups to transform log events into actionable metrics:
+
+```
+# Example metric filter pattern for unauthorized API calls
+{ ($.errorCode = "*UnauthorizedAccess*") || ($.errorCode = "AccessDenied*") }
+
+# Example metric filter for root account usage
+{ $.userIdentity.type = "Root" && $.userIdentity.invokedBy NOT EXISTS && $.eventType != "AwsServiceEvent" }
+```
+
+#### 3. Anomaly Detection
+
+The agent leverages CloudWatch Anomaly Detection to identify unusual patterns:
+
+- **API Call Volume Anomalies:** Sudden spikes in API calls from specific principals
+- **Resource Creation Anomalies:** Unusual EC2 instance launches, IAM user creation
+- **Data Transfer Anomalies:** Unexpected S3 data transfer volume increases
+- **Cross-Region Activity:** API calls from regions not normally used by the organization
+
+#### 4. Log Insights Queries
+
+The agent can construct and execute CloudWatch Logs Insights queries for deep investigation:
+
+```
+# Top 10 denied API calls in the last 24 hours
+fields @timestamp, eventName, sourceIPAddress, errorCode
+| filter errorCode like /Denied|Unauthorized/
+| stats count(*) as attempts by eventName, sourceIPAddress
+| sort attempts desc
+| limit 10
+
+# Unusual console logins by geolocation
+fields @timestamp, sourceIPAddress, userIdentity.arn
+| filter eventName = "ConsoleLogin"
+| stats count(*) as logins by sourceIPAddress
+| sort logins desc
+```
+
+#### 5. Dashboard Generation
+
+The agent can describe CloudWatch Dashboard configurations for security monitoring:
+
+- Real-time widget layouts for security metrics
+- Alarm status indicators across all monitored controls
+- API call volume trends with anomaly bands
+- Geographic distribution of API activity
+
+### Required IAM Permissions for CloudWatch Automation
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CloudPilotCloudWatchAutomation",
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:PutMetricAlarm",
+        "cloudwatch:DescribeAlarms",
+        "cloudwatch:DeleteAlarms",
+        "cloudwatch:EnableAlarmActions",
+        "cloudwatch:DisableAlarmActions",
+        "cloudwatch:PutAnomalyDetector",
+        "cloudwatch:DescribeAnomalyDetectors",
+        "cloudwatch:GetMetricData",
+        "cloudwatch:GetMetricStatistics",
+        "cloudwatch:ListMetrics",
+        "cloudwatch:PutDashboard",
+        "cloudwatch:GetDashboard",
+        "cloudwatch:ListDashboards",
+        "logs:PutMetricFilter",
+        "logs:DescribeMetricFilters",
+        "logs:DeleteMetricFilter",
+        "logs:StartQuery",
+        "logs:GetQueryResults",
+        "logs:StopQuery",
+        "logs:DescribeLogGroups",
+        "logs:FilterLogEvents",
+        "sns:CreateTopic",
+        "sns:Subscribe",
+        "sns:Publish"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+### Architecture
+
+```mermaid
+graph TB
+    subgraph "CloudPilot Agent"
+        A[Security Query]
+    end
+
+    subgraph "CloudWatch"
+        B[Metric Filters]
+        C[Alarms]
+        D[Anomaly Detectors]
+        E[Logs Insights]
+        F[Dashboards]
+    end
+
+    subgraph "Notification"
+        G[SNS Topic]
+        H[Email Alert]
+    end
+
+    subgraph "Data Sources"
+        I[CloudTrail Logs]
+        J[VPC Flow Logs]
+        K[AWS Service Metrics]
+    end
+
+    A --> B
+    A --> C
+    A --> D
+    A --> E
+    A --> F
+    I --> B
+    J --> B
+    K --> C
+    K --> D
+    B --> C
+    C --> G
+    G --> H
+
+    style A fill:#1a1a2e,stroke:#00d4ff,color:#fff
+    style B fill:#0d2137,stroke:#00d4ff,color:#fff
+    style C fill:#0d2137,stroke:#ff6b6b,color:#fff
+    style D fill:#0d2137,stroke:#ffd93d,color:#fff
+    style E fill:#0d2137,stroke:#00d4ff,color:#fff
+    style F fill:#0d2137,stroke:#00d4ff,color:#fff
+    style G fill:#1a1a2e,stroke:#ff6b6b,color:#fff
+    style H fill:#1a1a2e,stroke:#ff6b6b,color:#fff
+```
+
+<div align="center">
+  <em>Figure: CloudWatch Automation Architecture — The agent creates metric filters from log sources, configures alarms with anomaly detection, and routes alerts through SNS to the user's configured email.</em>
+</div>
+
+---
+
 ## Conclusion
 
 CloudPilot AI represents a significant advancement in applied generative AI for cloud security operations. By bridging the reasoning capabilities of state-of-the-art large language models with the strict, deterministic execution of real AWS APIs, it eliminates the "hallucination" problem common in standard chat assistants.
 
 The architecture is meticulously designed for security, employing robust input validation, secure credential handling, ephemeral isolated execution, strict operational allowlists, and mandatory simulation cleanup protocols. The agent's capabilities are entirely bounded by the IAM permissions the user configures—providing natural least-privilege enforcement where the user controls exactly what the agent can see and do.
 
-The comprehensive React frontend provides a professional, highly responsive interface tailored for security engineers, incorporating real-time SSE streaming, animated panels, date-grouped chat history, 30 pre-built security workflows across 6 categories, and color-coded severity tracking. The backend edge function implements a robust agentic loop with forced tool calls, 35-service allowlisting, 5-operation blocking, 100KB response truncation, and strict rate limiting with clear user-facing error messages.
+The comprehensive React frontend provides a professional, highly responsive interface tailored for security engineers, incorporating real-time SSE streaming, animated panels, date-grouped chat history, 30+ pre-built security workflows across 7 categories, and color-coded severity tracking. The backend edge function implements a robust agentic loop with forced tool calls, 35-service allowlisting, 5-operation blocking, 100KB response truncation, and strict rate limiting with clear user-facing error messages.
+
+For organizations with strict network isolation requirements, the VPC Endpoint configuration guide provides step-by-step instructions to ensure all AWS API traffic routes exclusively over the AWS internal backbone via PrivateLink, with zero code changes required. Combined with the triple-sink audit architecture (Supabase, CloudWatch Logs, WORM S3) and CloudWatch automation for real-time alerting and anomaly detection, CloudPilot AI delivers an enterprise-grade security operations platform suitable for regulated industries.
 
 Through its uncompromising "Zero Simulation Tolerance" and robust technical foundation, CloudPilot AI delivers highly accurate, contextual, and actionable intelligence—empowering security teams to identify and remediate vulnerabilities faster and more effectively.
