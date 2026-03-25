@@ -174,6 +174,31 @@ const categories = [
         prompt: "Identify and remediate all public access vectors using real AWS API calls. Query: S3 buckets with public access (get real bucket names), security groups with 0.0.0.0/0 (get real group IDs and rule details), RDS instances with PubliclyAccessible=true (get real DB identifiers), EC2 instances with public IPs attached to sensitive roles. For each real finding, provide the exact AWS CLI remediation command targeting that specific resource ID.",
       },
       {
+        icon: AlertTriangle,
+        label: "SG Preview 443",
+        prompt: "Open port 443 to 0.0.0.0/0 on the security group prod-web-sg. Preview the exact rule change and risk level first, and do not apply anything until I confirm.",
+      },
+      {
+        icon: Network,
+        label: "SG-to-SG Preview",
+        prompt: "Allow the security group app-sg to reach db-sg on TCP port 5432. Show the exact security group rule preview and wait for confirmation before applying.",
+      },
+      {
+        icon: Ban,
+        label: "SG Block Test",
+        prompt: "Open port 22 to 0.0.0.0/0 on the security group prod-web-sg.",
+      },
+      {
+        icon: Globe,
+        label: "SG Egress Preview",
+        prompt: "Allow outbound HTTPS traffic to 0.0.0.0/0 from the security group app-sg. Preview the exact egress rule and risk level first, and do not apply anything until I confirm.",
+      },
+      {
+        icon: ShieldCheck,
+        label: "SG Revoke Egress",
+        prompt: "Remove outbound HTTPS access to 0.0.0.0/0 from the security group app-sg. Show the exact egress rule preview and wait for confirmation before applying.",
+      },
+      {
         icon: Shield,
         label: "Enable GuardDuty",
         prompt: "Check GuardDuty status across regions and generate enablement commands. Use real AWS API calls to: query GuardDuty detector status in the current region and adjacent regions (us-east-1, us-west-2, eu-west-1), check if S3 protection, EKS protection, Lambda protection, and RDS protection are enabled on existing detectors. For each gap found, provide the exact AWS CLI command to enable that protection.",

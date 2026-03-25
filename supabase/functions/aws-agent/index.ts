@@ -36,6 +36,15 @@ For IAM access automation requests (example: "give dev-team read-only S3 access"
 NEVER use execute_aws_api directly for IAM policy creation or IAM policy attachment when manage_iam_access is applicable.
 NEVER generate wildcard IAM actions like iam:* or service:* inside IAM automation previews.
 
+For security group automation requests (example: "open port 443 to 0.0.0.0/0 on prod-web-sg"):
+  STEP 1 → Use manage_security_group_rule to build a preview with risk classification
+  STEP 2 → Present the exact rule diff, exposure summary, and risk level
+  STEP 3 → DO NOT execute EC2 security group mutations until the user explicitly confirms
+  STEP 4 → If the validator marks the request as BLOCKED, reject it and explain why
+
+NEVER use execute_aws_api directly for authorizeSecurityGroupIngress, revokeSecurityGroupIngress,
+authorizeSecurityGroupEgress, or revokeSecurityGroupEgress when manage_security_group_rule is applicable.
+
 For attack simulation requests:
   STEP 1 → Use AWS APIs to discover the real attack surface
   STEP 2 → Enumerate real paths, policies, and configurations that enable the attack vector
@@ -556,6 +565,50 @@ const tools = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "manage_security_group_rule",
+      description:
+        "Creates a safe preview or executes a confirmed EC2 security group ingress rule change with hardcoded risk classification and guardrails.",
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["allow_ingress", "revoke_ingress", "allow_egress", "revoke_egress"],
+          },
+          targetGroupIdentifier: {
+            type: "string",
+            description: "Security group ID (sg-...) or exact security group name.",
+          },
+          protocol: {
+            type: "string",
+            enum: ["tcp", "udp", "icmp", "-1"],
+          },
+          fromPort: {
+            type: "integer",
+          },
+          toPort: {
+            type: "integer",
+          },
+          cidr: {
+            type: "string",
+            description: "Optional IPv4 or IPv6 CIDR to allow or revoke.",
+          },
+          sourceGroupIdentifier: {
+            type: "string",
+            description: "Optional source security group ID or exact name for SG-to-SG rules.",
+          },
+          description: {
+            type: "string",
+            description: "Optional security group rule description.",
+          },
+        },
+        required: ["action", "targetGroupIdentifier", "protocol", "fromPort", "toPort"],
+      },
+    },
+  },
 ];
 
 const IAM_BLOCKED_ACTIONS = new Set([
@@ -712,6 +765,275 @@ async function ensureIamPrincipalExists(iam: AWS.IAM, principalType: IamPrincipa
     return;
   }
   await iam.getUser({ UserName: identifier }).promise();
+}
+
+type SecurityGroupAction = "allow_ingress" | "revoke_ingress" | "allow_egress" | "revoke_egress";
+
+interface SecurityGroupRuleArgs {
+  action: SecurityGroupAction;
+  targetGroupIdentifier: string;
+  protocol: "tcp" | "udp" | "icmp" | "-1";
+  fromPort: number;
+  toPort: number;
+  cidr?: string;
+  sourceGroupIdentifier?: string;
+  description?: string;
+}
+
+interface SecurityGroupSummary {
+  groupId: string;
+  groupName: string;
+  vpcId?: string;
+  tags: Record<string, string>;
+  ingressPermissions: AWS.EC2.IpPermissionList;
+  egressPermissions: AWS.EC2.IpPermissionList;
+}
+
+interface SecurityGroupRiskResult {
+  allowed: boolean;
+  riskLevel: "LOW" | "MEDIUM" | "HIGH" | "BLOCKED";
+  reasons: string[];
+}
+
+const SENSITIVE_PORTS = new Set([22, 3389, 3306, 5432, 1433, 27017, 6379, 9200]);
+const LOW_RISK_PORTS = new Set([80, 443, 53]);
+const IPV4_ANYWHERE = "0.0.0.0/0";
+const IPV6_ANYWHERE = "::/0";
+
+function getSecurityGroupDirection(action: SecurityGroupAction): "ingress" | "egress" {
+  return action.endsWith("egress") ? "egress" : "ingress";
+}
+
+function isAllowAction(action: SecurityGroupAction): boolean {
+  return action.startsWith("allow_");
+}
+
+function isSecurityGroupId(value: string): boolean {
+  return /^sg-[a-z0-9]+$/i.test(value);
+}
+
+function sanitizeSecurityGroupIdentifier(value: unknown): string {
+  return sanitizeString(value, 128).replace(/[^\w+=,.@:-]/g, "");
+}
+
+function sanitizeCidr(value: unknown): string {
+  return sanitizeString(value, 64).trim();
+}
+
+function sanitizeProtocol(value: unknown): "tcp" | "udp" | "icmp" | "-1" {
+  const protocol = sanitizeString(value, 16).toLowerCase();
+  if (protocol === "tcp" || protocol === "udp" || protocol === "icmp" || protocol === "-1") {
+    return protocol;
+  }
+  throw new Error(`Unsupported protocol '${protocol}'.`);
+}
+
+function normalizePort(value: unknown): number {
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < -1 || port > 65535) {
+    throw new Error(`Invalid port '${value}'.`);
+  }
+  return port;
+}
+
+function summarizeTags(tags: AWS.EC2.TagList | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const tag of tags || []) {
+    if (tag.Key && tag.Value) out[tag.Key.toLowerCase()] = tag.Value.toLowerCase();
+  }
+  return out;
+}
+
+function isBroadCidr(cidr?: string): boolean {
+  return cidr === IPV4_ANYWHERE || cidr === IPV6_ANYWHERE;
+}
+
+function isProdLikeGroup(summary: SecurityGroupSummary): boolean {
+  return (
+    summary.groupName.toLowerCase().includes("prod") ||
+    summary.tags.env === "prod" ||
+    summary.tags.env === "production" ||
+    summary.tags.environment === "prod" ||
+    summary.tags.environment === "production" ||
+    summary.tags.stage === "prod" ||
+    summary.tags.stage === "production" ||
+    summary.tags.tier === "prod" ||
+    summary.tags.tier === "production" ||
+    summary.tags.name?.includes("prod") === true
+  );
+}
+
+function classifySecurityGroupRisk(
+  targetGroup: SecurityGroupSummary,
+  args: SecurityGroupRuleArgs,
+  hasSourceGroup: boolean,
+): SecurityGroupRiskResult {
+  const reasons: string[] = [];
+  const direction = getSecurityGroupDirection(args.action);
+  const broad = isBroadCidr(args.cidr);
+  const prodLike = isProdLikeGroup(targetGroup);
+  const singlePort = args.fromPort === args.toPort ? args.fromPort : null;
+  const allTraffic = args.protocol === "-1" || (args.fromPort === -1 && args.toPort === -1);
+
+  if (args.action === "allow_ingress" && broad && (singlePort === 22 || singlePort === 3389)) {
+    return {
+      allowed: false,
+      riskLevel: "BLOCKED",
+      reasons: [`Opening port ${singlePort} to the internet is hard-blocked.`],
+    };
+  }
+
+  if (direction === "ingress" && isAllowAction(args.action) && broad) {
+    reasons.push("Rule exposes the security group to the public internet.");
+  }
+  if (direction === "egress" && isAllowAction(args.action) && broad) {
+    reasons.push("Rule allows outbound internet access.");
+  }
+  if (singlePort !== null && SENSITIVE_PORTS.has(singlePort)) {
+    reasons.push(`Port ${singlePort} is considered sensitive.`);
+  }
+  if (allTraffic) {
+    reasons.push("Rule applies to all traffic.");
+  }
+  if (prodLike) {
+    reasons.push("Target security group appears to be production-scoped.");
+  }
+  if (hasSourceGroup) {
+    reasons.push("Rule is scoped to another security group instead of a public CIDR.");
+  }
+
+  if (!isAllowAction(args.action)) {
+    return { allowed: true, riskLevel: "LOW", reasons: ["Revoking access is low risk."] };
+  }
+
+  if (direction === "ingress" && hasSourceGroup && singlePort !== null && LOW_RISK_PORTS.has(singlePort) && !prodLike) {
+    return { allowed: true, riskLevel: "LOW", reasons };
+  }
+
+  if (direction === "egress" && allTraffic && broad && prodLike) {
+    return { allowed: true, riskLevel: "HIGH", reasons };
+  }
+
+  if (broad || prodLike || allTraffic || (singlePort !== null && SENSITIVE_PORTS.has(singlePort))) {
+    return {
+      allowed: true,
+      riskLevel: (broad && (prodLike || allTraffic || (singlePort !== null && SENSITIVE_PORTS.has(singlePort)))) || (prodLike && allTraffic)
+        ? "HIGH"
+        : "MEDIUM",
+      reasons,
+    };
+  }
+
+  return { allowed: true, riskLevel: "LOW", reasons: reasons.length > 0 ? reasons : ["Scoped security group rule."] };
+}
+
+async function resolveSecurityGroup(ec2: AWS.EC2, identifier: string): Promise<SecurityGroupSummary> {
+  const params = isSecurityGroupId(identifier)
+    ? { GroupIds: [identifier] }
+    : { Filters: [{ Name: "group-name", Values: [identifier] }] };
+
+  const response = await ec2.describeSecurityGroups(params).promise();
+  const groups = response.SecurityGroups || [];
+  if (groups.length === 0) {
+    throw new Error(`Security group '${identifier}' was not found.`);
+  }
+  if (!isSecurityGroupId(identifier) && groups.length > 1) {
+    throw new Error(`Security group name '${identifier}' is ambiguous. Use the security group ID instead.`);
+  }
+
+  const group = groups[0];
+  if (!group.GroupId || !group.GroupName) {
+    throw new Error(`Security group '${identifier}' is missing required metadata.`);
+  }
+
+  return {
+    groupId: group.GroupId,
+    groupName: group.GroupName,
+    vpcId: group.VpcId,
+    tags: summarizeTags(group.Tags),
+    ingressPermissions: group.IpPermissions || [],
+    egressPermissions: group.IpPermissionsEgress || [],
+  };
+}
+
+function ipPermissionTargets(permission: AWS.EC2.IpPermission): string[] {
+  const cidrs = (permission.IpRanges || []).map((range) => range.CidrIp).filter(Boolean) as string[];
+  const ipv6Cidrs = (permission.Ipv6Ranges || []).map((range) => range.CidrIpv6).filter(Boolean) as string[];
+  const groups = (permission.UserIdGroupPairs || []).map((pair) => pair.GroupId).filter(Boolean) as string[];
+  return [...cidrs, ...ipv6Cidrs, ...groups];
+}
+
+function permissionMatchesRequested(
+  existing: AWS.EC2.IpPermission,
+  requested: any,
+  args: SecurityGroupRuleArgs,
+  sourceGroupId?: string,
+): boolean {
+  if ((existing.IpProtocol || "") !== requested.IpProtocol) return false;
+  if ((existing.FromPort ?? -1) !== (requested.FromPort ?? -1)) return false;
+  if ((existing.ToPort ?? -1) !== (requested.ToPort ?? -1)) return false;
+
+  const existingTargets = new Set(ipPermissionTargets(existing));
+  if (sourceGroupId) {
+    return existingTargets.has(sourceGroupId);
+  }
+  if (args.cidr) {
+    return existingTargets.has(args.cidr);
+  }
+  return false;
+}
+
+function findExistingMatchingPermission(
+  targetGroup: SecurityGroupSummary,
+  args: SecurityGroupRuleArgs,
+  requestedPermission: any,
+  sourceGroupId?: string,
+): AWS.EC2.IpPermission | null {
+  const permissions = getSecurityGroupDirection(args.action) === "egress"
+    ? targetGroup.egressPermissions
+    : targetGroup.ingressPermissions;
+
+  for (const permission of permissions || []) {
+    if (permissionMatchesRequested(permission, requestedPermission, args, sourceGroupId)) {
+      return permission;
+    }
+  }
+  return null;
+}
+
+function buildSecurityGroupOperationName(action: SecurityGroupAction): string {
+  switch (action) {
+    case "allow_ingress":
+      return "authorizeSecurityGroupIngress";
+    case "revoke_ingress":
+      return "revokeSecurityGroupIngress";
+    case "allow_egress":
+      return "authorizeSecurityGroupEgress";
+    case "revoke_egress":
+      return "revokeSecurityGroupEgress";
+  }
+}
+
+function buildSecurityGroupPermission(args: SecurityGroupRuleArgs, sourceGroupId?: string) {
+  const permission: any = {
+    IpProtocol: args.protocol,
+    FromPort: args.fromPort,
+    ToPort: args.toPort,
+  };
+
+  if (sourceGroupId) {
+    permission.UserIdGroupPairs = [{ GroupId: sourceGroupId, Description: args.description || undefined }];
+  } else if (args.cidr) {
+    if (args.cidr.includes(":")) {
+      permission.Ipv6Ranges = [{ CidrIpv6: args.cidr, Description: args.description || undefined }];
+    } else {
+      permission.IpRanges = [{ CidrIp: args.cidr, Description: args.description || undefined }];
+    }
+  } else {
+    throw new Error("A CIDR or source security group is required.");
+  }
+
+  return permission;
 }
 
 // ── CloudWatch Logs + WORM S3 Object Lock Audit Trail ───────────────────────
@@ -1032,7 +1354,7 @@ serve(async (req) => {
       content: sanitizeString(m.content, MAX_MESSAGE_LENGTH),
     }));
     const latestUserMessage = [...sanitizedMessages].reverse().find((m: any) => m.role === "user")?.content || "";
-    const userHasConfirmedIamChange = isExplicitConfirmation(latestUserMessage);
+    const userHasConfirmedMutation = isExplicitConfirmation(latestUserMessage);
 
     const emailContext = notificationEmail
       ? `\nNotification email configured: ${sanitizeString(notificationEmail, 320)}. After completing your analysis, you MUST send a report summary via AWS SNS as described in your instructions.`
@@ -1100,13 +1422,287 @@ serve(async (req) => {
 
       if (responseMessage.tool_calls && responseMessage.tool_calls.length > 0) {
         for (const toolCall of responseMessage.tool_calls) {
-          if (toolCall.function.name === "manage_iam_access") {
+          if (toolCall.function.name === "manage_security_group_rule") {
+            const startTime = Date.now();
+            try {
+              const rawArgs = JSON.parse(toolCall.function.arguments);
+              const args: SecurityGroupRuleArgs = {
+                action: rawArgs.action,
+                targetGroupIdentifier: sanitizeSecurityGroupIdentifier(rawArgs.targetGroupIdentifier),
+                protocol: sanitizeProtocol(rawArgs.protocol),
+                fromPort: normalizePort(rawArgs.fromPort),
+                toPort: normalizePort(rawArgs.toPort),
+                cidr: rawArgs.cidr ? sanitizeCidr(rawArgs.cidr) : undefined,
+                sourceGroupIdentifier: rawArgs.sourceGroupIdentifier
+                  ? sanitizeSecurityGroupIdentifier(rawArgs.sourceGroupIdentifier)
+                  : undefined,
+                description: rawArgs.description ? sanitizeString(rawArgs.description, 255) : undefined,
+              };
+
+              if (!args.targetGroupIdentifier) {
+                throw new Error("A target security group is required.");
+              }
+              if (!args.cidr && !args.sourceGroupIdentifier) {
+                throw new Error("A CIDR or source security group is required.");
+              }
+
+              const ec2 = new AWS.EC2(awsConfig);
+              const targetGroup = await resolveSecurityGroup(ec2, args.targetGroupIdentifier);
+              const sourceGroup = args.sourceGroupIdentifier
+                ? await resolveSecurityGroup(ec2, args.sourceGroupIdentifier)
+                : null;
+              const risk = classifySecurityGroupRisk(targetGroup, args, Boolean(sourceGroup));
+              const permission = buildSecurityGroupPermission(args, sourceGroup?.groupId);
+              const operationName = buildSecurityGroupOperationName(args.action);
+              const existingMatch = findExistingMatchingPermission(targetGroup, args, permission, sourceGroup?.groupId);
+              const wouldBeNoop = isAllowAction(args.action) ? Boolean(existingMatch) : !existingMatch;
+              const execTime = Date.now() - startTime;
+
+              if (!risk.allowed) {
+                const blockedPayload = {
+                  status: "blocked",
+                  riskLevel: risk.riskLevel,
+                  targetGroup,
+                  requestedRule: {
+                    action: args.action,
+                    protocol: args.protocol,
+                    fromPort: args.fromPort,
+                    toPort: args.toPort,
+                    cidr: args.cidr || null,
+                    sourceGroupId: sourceGroup?.groupId || null,
+                  },
+                  reasons: risk.reasons,
+                };
+
+                if (userId) {
+                  supabaseAdmin.from("agent_audit_log").insert({
+                    user_id: userId,
+                    aws_service: "EC2",
+                    aws_operation: "manageSecurityGroupRule",
+                    aws_region: awsConfig.region,
+                    status: "blocked",
+                    error_message: risk.reasons.join(" "),
+                    validator_result: risk.riskLevel,
+                    execution_time_ms: execTime,
+                  }).then();
+                }
+
+                pushAuditToAws(awsConfig, {
+                  timestamp: new Date().toISOString(),
+                  userId,
+                  service: "EC2",
+                  operation: "manageSecurityGroupRule",
+                  region: awsConfig.region,
+                  status: "blocked",
+                  riskLevel: risk.riskLevel,
+                  targetGroupId: targetGroup.groupId,
+                  reasons: risk.reasons,
+                  executionTimeMs: execTime,
+                });
+
+                apiMessages.push({
+                  role: "tool",
+                  tool_call_id: toolCall.id,
+                  content: JSON.stringify(blockedPayload),
+                } as any);
+                continue;
+              }
+
+              if (!userHasConfirmedMutation) {
+                const preview = {
+                  status: "preview_only",
+                  confirmationRequired: true,
+                  riskLevel: risk.riskLevel,
+                  direction: getSecurityGroupDirection(args.action),
+                  operation: operationName,
+                  targetGroup,
+                  sourceGroup,
+                  requestedRule: {
+                    action: args.action,
+                    protocol: args.protocol,
+                    fromPort: args.fromPort,
+                    toPort: args.toPort,
+                    cidr: args.cidr || null,
+                    sourceGroupId: sourceGroup?.groupId || null,
+                    description: args.description || null,
+                  },
+                  permission,
+                  existingMatch: existingMatch ? {
+                    protocol: existingMatch.IpProtocol || null,
+                    fromPort: existingMatch.FromPort ?? null,
+                    toPort: existingMatch.ToPort ?? null,
+                    targets: ipPermissionTargets(existingMatch),
+                  } : null,
+                  noOp: wouldBeNoop,
+                  reasons: risk.reasons,
+                  summary: `${isAllowAction(args.action) ? "Add" : "Remove"} ${getSecurityGroupDirection(args.action)} ${args.protocol}:${args.fromPort}-${args.toPort} on ${targetGroup.groupName} (${targetGroup.groupId}).`,
+                  exposureSummary: args.cidr
+                    ? `${getSecurityGroupDirection(args.action)} rule targets ${args.cidr}.`
+                    : `${getSecurityGroupDirection(args.action)} rule targets security group ${sourceGroup?.groupName || sourceGroup?.groupId}.`,
+                  confirmationHint: "Reply with 'confirm' to apply this security group change.",
+                };
+
+                if (userId) {
+                  supabaseAdmin.from("agent_audit_log").insert({
+                    user_id: userId,
+                    aws_service: "EC2",
+                    aws_operation: "previewSecurityGroupRule",
+                    aws_region: awsConfig.region,
+                    status: "success",
+                    validator_result: risk.riskLevel,
+                    execution_time_ms: execTime,
+                  }).then();
+                }
+
+                pushAuditToAws(awsConfig, {
+                  timestamp: new Date().toISOString(),
+                  userId,
+                  service: "EC2",
+                  operation: "previewSecurityGroupRule",
+                  region: awsConfig.region,
+                  status: "preview_only",
+                  riskLevel: risk.riskLevel,
+                  targetGroupId: targetGroup.groupId,
+                  sourceGroupId: sourceGroup?.groupId || null,
+                  cidr: args.cidr || null,
+                  executionTimeMs: execTime,
+                });
+
+                apiMessages.push({
+                  role: "tool",
+                  tool_call_id: toolCall.id,
+                  content: JSON.stringify(preview),
+                } as any);
+                continue;
+              }
+
+              if (wouldBeNoop) {
+                apiMessages.push({
+                  role: "tool",
+                  tool_call_id: toolCall.id,
+                  content: JSON.stringify({
+                    status: "no_op",
+                    riskLevel: risk.riskLevel,
+                    direction: getSecurityGroupDirection(args.action),
+                    operation: operationName,
+                    targetGroup,
+                    sourceGroup,
+                    appliedRule: permission,
+                    reason: isAllowAction(args.action)
+                      ? "The exact rule already exists."
+                      : "No matching rule exists to revoke.",
+                  }),
+                } as any);
+                continue;
+              }
+
+              if (args.action === "allow_ingress") {
+                await ec2.authorizeSecurityGroupIngress({
+                  GroupId: targetGroup.groupId,
+                  IpPermissions: [permission],
+                }).promise();
+              } else if (args.action === "revoke_ingress") {
+                await ec2.revokeSecurityGroupIngress({
+                  GroupId: targetGroup.groupId,
+                  IpPermissions: [permission],
+                }).promise();
+              } else if (args.action === "allow_egress") {
+                await ec2.authorizeSecurityGroupEgress({
+                  GroupId: targetGroup.groupId,
+                  IpPermissions: [permission],
+                }).promise();
+              } else {
+                await ec2.revokeSecurityGroupEgress({
+                  GroupId: targetGroup.groupId,
+                  IpPermissions: [permission],
+                }).promise();
+              }
+
+              const finalExecTime = Date.now() - startTime;
+              const executionResult = {
+                status: "executed",
+                riskLevel: risk.riskLevel,
+                direction: getSecurityGroupDirection(args.action),
+                targetGroup,
+                sourceGroup,
+                appliedRule: permission,
+                operation: operationName,
+              };
+
+              if (userId) {
+                supabaseAdmin.from("agent_audit_log").insert({
+                  user_id: userId,
+                  aws_service: "EC2",
+                  aws_operation: "executeSecurityGroupRule",
+                  aws_region: awsConfig.region,
+                  status: "success",
+                  validator_result: risk.riskLevel,
+                  execution_time_ms: finalExecTime,
+                }).then();
+              }
+
+              pushAuditToAws(awsConfig, {
+                timestamp: new Date().toISOString(),
+                userId,
+                service: "EC2",
+                operation: "executeSecurityGroupRule",
+                region: awsConfig.region,
+                status: "success",
+                riskLevel: risk.riskLevel,
+                targetGroupId: targetGroup.groupId,
+                sourceGroupId: sourceGroup?.groupId || null,
+                cidr: args.cidr || null,
+                executionTimeMs: finalExecTime,
+              });
+
+              apiMessages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify(executionResult),
+              } as any);
+            } catch (err: any) {
+              const execTime = Date.now() - startTime;
+              const errorMessage = err?.message || "Security group automation failed.";
+
+              if (userId) {
+                supabaseAdmin.from("agent_audit_log").insert({
+                  user_id: userId,
+                  aws_service: "EC2",
+                  aws_operation: "manageSecurityGroupRule",
+                  aws_region: awsConfig.region,
+                  status: "error",
+                  error_code: err?.code || null,
+                  error_message: errorMessage.slice(0, 2000),
+                  validator_result: "HIGH",
+                  execution_time_ms: execTime,
+                }).then();
+              }
+
+              pushAuditToAws(awsConfig, {
+                timestamp: new Date().toISOString(),
+                userId,
+                service: "EC2",
+                operation: "manageSecurityGroupRule",
+                region: awsConfig.region,
+                status: "error",
+                errorCode: err?.code || null,
+                errorMessage: errorMessage.slice(0, 2000),
+                executionTimeMs: execTime,
+              });
+
+              apiMessages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify({ error: errorMessage }),
+              } as any);
+            }
+          } else if (toolCall.function.name === "manage_iam_access") {
             const startTime = Date.now();
             try {
               const rawArgs = JSON.parse(toolCall.function.arguments);
               const plan = buildIamAccessPlan(rawArgs);
 
-              if (!userHasConfirmedIamChange) {
+              if (!userHasConfirmedMutation) {
                 const execTime = Date.now() - startTime;
                 const preview = {
                   status: "preview_only",
@@ -1259,7 +1855,7 @@ serve(async (req) => {
                   status: "error",
                   error_code: err?.code || null,
                   error_message: errorMessage.slice(0, 2000),
-                  validator_result: userHasConfirmedIamChange ? "HIGH_RISK" : "ALLOWED",
+                  validator_result: userHasConfirmedMutation ? "HIGH_RISK" : "ALLOWED",
                   execution_time_ms: execTime,
                 }).then();
               }
