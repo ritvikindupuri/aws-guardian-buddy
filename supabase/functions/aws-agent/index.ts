@@ -182,8 +182,9 @@ Run real attack technique simulations against the connected account:
 - Check CloudFormation stack imports from external sources
 
 ## Compliance Frameworks
-CIS AWS Foundations Benchmark v3.0, NIST 800-53, SOC 2 Type II, PCI-DSS v4.0,
-HIPAA, ISO 27001, FedRAMP, AWS Well-Architected Security Pillar, MITRE ATT&CK Cloud
+CIS AWS Foundations Benchmark v3.0, NIST 800-53 Rev. 5, SOC 2 Type II, PCI-DSS v4.0,
+HIPAA, ISO 27001:2022, FedRAMP, AWS Well-Architected Security Pillar, MITRE ATT&CK Cloud,
+GDPR, CCPA, CMMC 2.0, NIST CSF v2.0, NIS2, DORA, HITRUST CSF, IRAP, and more.
 
 ## Incident Response
 - Live instance isolation (quarantine SG, snapshot, IMDS disable)
@@ -243,7 +244,7 @@ This section must be suitable for presentation to C-level executives and board-l
 | **Services Assessed** | List every AWS service queried with version/API details |
 | **Resources Evaluated** | Total count of discrete resources scanned across all services |
 | **Regions Covered** | All AWS regions included in the assessment |
-| **Frameworks Applied** | CIS AWS Foundations Benchmark v3.0, NIST SP 800-53 Rev. 5, PCI-DSS v4.0, SOC 2 Type II, HIPAA, ISO 27001:2022, MITRE ATT&CK for Cloud |
+| **Frameworks Applied** | CIS AWS v3.0, NIST 800-53 Rev. 5, PCI-DSS v4.0, SOC 2 Type II, HIPAA, ISO 27001:2022, MITRE ATT&CK, GDPR, CCPA, CMMC 2.0, NIST CSF v2.0, NIS2, DORA, FedRAMP, HITRUST CSF, IRAP |
 | **Assessment Date** | <ISO 8601 date range> |
 | **Methodology** | Automated API interrogation with real-time configuration analysis against industry benchmarks |
 
@@ -350,9 +351,9 @@ Describe the expected output that confirms successful remediation.
 
 ## 6. Compliance Mapping Matrix
 
-| Finding Ref | CIS AWS v3.0 | NIST SP 800-53 Rev. 5 | PCI-DSS v4.0 | SOC 2 Type II | HIPAA | ISO 27001:2022 | AWS Well-Architected |
-|-------------|--------------|------------------------|--------------|---------------|-------|----------------|----------------------|
-| F-001 | <Control ID> | <Control ID> | <Requirement> | <Criteria> | <Rule> | <Annex A Control> | <Pillar/Best Practice> |
+| Finding Ref | CIS AWS v3.0 | NIST 800-53 | PCI-DSS v4.0 | SOC 2 Type II | HIPAA | ISO 27001:2022 | GDPR | CCPA | CMMC 2.0 | NIST CSF v2.0 | NIS2 | DORA | FedRAMP | HITRUST CSF | IRAP | AWS Well-Architected |
+|-------------|--------------|-------------|--------------|---------------|-------|----------------|------|------|----------|---------------|------|------|---------|-------------|------|----------------------|
+| F-001 | <ID> | <ID> | <Req> | <Criteria> | <Rule> | <Control> | <Art.> | <Sec.> | <Prac.> | <Cat.> | <Art.> | <Art.> | <ID> | <Req> | <Con.> | <Pillar> |
 
 ### 6.1 Compliance Gap Analysis
 For each framework, summarize the number of controls assessed, controls passing, controls failing,
