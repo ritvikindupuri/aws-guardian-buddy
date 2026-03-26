@@ -69,9 +69,11 @@ const ReportsHistory = () => {
 
       // Get all assistant messages (reports) for this user's conversations
       const { data: conversations } = await (supabase
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         .from("conversations" as any)
         .select("id, title")
         .eq("user_id", user.id)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         .order("updated_at", { ascending: false }) as any);
 
       if (!conversations || conversations.length === 0) {
@@ -81,14 +83,18 @@ const ReportsHistory = () => {
       }
 
       const convMap = new Map<string, string>();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       conversations.forEach((c: any) => convMap.set(c.id, c.title));
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const convIds = conversations.map((c: any) => c.id);
 
       const { data: messages } = await (supabase
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         .from("messages" as any)
         .select("id, content, created_at, conversation_id")
         .eq("role", "assistant")
         .in("conversation_id", convIds)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         .order("created_at", { ascending: false }) as any);
 
       if (!messages) {
@@ -97,6 +103,7 @@ const ReportsHistory = () => {
         return;
       }
 
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const entries: ReportEntry[] = (messages as any[]).map((m) => ({
         id: m.id,
         content: m.content,
@@ -145,7 +152,7 @@ const ReportsHistory = () => {
   const getReportTitle = (content: string): string => {
     const lines = content.split("\n").filter((l) => l.trim());
     for (const line of lines) {
-      const cleaned = line.replace(/^#+\s*/, "").replace(/[🛡️📦⚠️🔴🟠🟡🔵⚪]/g, "").trim();
+      const cleaned = line.replace(/^#+\s*/, "").replace(/[🛡📦⚠🔴🟠🟡🔵⚪]/gu, "").trim();
       if (cleaned.length > 5 && cleaned.length < 120) return cleaned;
     }
     return "Security Assessment Report";

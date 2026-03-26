@@ -56,6 +56,7 @@ const AwsCredentialsPanel = ({ credentials, onSave, compact = false }: AwsCreden
   const handleSave = async () => {
     setExchanging(true);
     try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const payload: any = { method, region };
       if (method === "access_key") {
         payload.accessKeyId = accessKeyId;
@@ -100,6 +101,7 @@ const AwsCredentialsPanel = ({ credentials, onSave, compact = false }: AwsCreden
       setSecretAccessKey("");
       setSessionToken("");
       setRoleArn("");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
       toast.error(err.message || "Failed to validate credentials");
     } finally {

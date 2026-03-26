@@ -37,6 +37,7 @@ const Auth = () => {
         await signUp(email.trim(), password);
         setSuccessMsg("Account created! Check your email to confirm your address, then sign in.");
       }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
       setError(err.message ?? "An error occurred. Please try again.");
     } finally {

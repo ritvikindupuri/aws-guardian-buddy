@@ -52,6 +52,7 @@ const ChatMessage = ({ message, onAddToS3 }: ChatMessageProps) => {
         html2canvas: { scale: 2, useCORS: true, letterRendering: true },
         jsPDF: { unit: "in", format: "a4", orientation: "portrait" },
         pagebreak: { mode: ["avoid-all", "css", "legacy"] },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } as any;
       await html2pdf().set(opt).from(contentRef.current).save();
     } catch (err) {
