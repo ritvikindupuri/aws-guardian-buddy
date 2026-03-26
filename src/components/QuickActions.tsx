@@ -5,7 +5,8 @@ import {
   Key, Radio, GitBranch, Cpu, Fingerprint, Target,
   FileText, Radar, Bot, ClipboardList, Ban,
   UserX, BellRing, Archive, Mail, ShieldCheck,
-  BarChart3, Bell, Gauge, ScrollText, LayoutDashboard
+  BarChart3, Bell, Gauge, ScrollText, LayoutDashboard,
+  Siren, Bug, ShieldAlert, KeyRound, Map
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -165,6 +166,37 @@ const categories = [
     ],
   },
   {
+    label: "GUARDDUTY",
+    color: "text-pink-400",
+    actions: [
+      {
+        icon: Target,
+        label: "Threat Hunting",
+        prompt: "Perform advanced threat hunting using GuardDuty findings via real AWS APIs. Retrieve the top 50 highest-severity active findings across all regions. Group the findings by resource type (EC2, IAM, S3, EKS) and threat purpose (e.g., Backdoor, CryptoCurrency, CredentialAccess). Present the results in a structured table to help identify active attack campaigns.",
+      },
+      {
+        icon: Map,
+        label: "Coverage Gap Analysis",
+        prompt: "Run a full GuardDuty coverage gap analysis across all AWS regions using real AWS API calls. For every region, check if a GuardDuty detector exists and is enabled. For enabled detectors, verify the status of S3 Protection, EKS Protection, RDS Protection, Lambda Network Protection, and Malware Protection. Report any region or feature that is disabled as a security gap.",
+      },
+      {
+        icon: Bug,
+        label: "Malware Scans",
+        prompt: "Audit GuardDuty Malware Protection status using real AWS API calls. Check the malware scanning configuration on the primary detector. Identify any EC2 instances or EBS volumes that have generated 'Execution:EC2/MaliciousFile' or similar malware findings recently. Provide the exact resource IDs and the remediation steps to isolate them.",
+      },
+      {
+        icon: ShieldAlert,
+        label: "EKS & Container Threats",
+        prompt: "Analyze GuardDuty for Kubernetes and container-specific threats using real AWS APIs. Query active findings specifically related to EKS clusters, such as 'PrivilegeEscalation:Kubernetes', 'CredentialAccess:Kubernetes', or 'Execution:Kubernetes'. List the affected cluster names, namespaces, and pod names involved in the suspicious activity.",
+      },
+      {
+        icon: KeyRound,
+        label: "IAM Credential Theft",
+        prompt: "Investigate potential IAM credential compromise using GuardDuty findings via real AWS APIs. Query for findings like 'UnauthorizedAccess:IAMUser/InstanceCredentialExfiltration', 'PenTest:IAMUser/KaliLinux', or 'Stealth:IAMUser/CloudTrailLoggingDisabled'. Identify the specific IAM users or roles involved and generate the CLI commands to immediately revoke their active sessions.",
+      },
+    ],
+  },
+  {
     label: "REMEDIATION",
     color: "text-yellow-400",
     actions: [
@@ -305,6 +337,7 @@ const categoryBorderColors: Record<string, string> = {
   "ATTACK SIMULATION": "border-red-500/20",
   "INCIDENT RESPONSE": "border-orange-500/20",
   "REMEDIATION": "border-yellow-500/20",
+  "GUARDDUTY": "border-pink-500/20",
   "REPORTING & ALERTS": "border-purple-500/20",
   "CLOUDWATCH": "border-cyan-500/20",
 };
