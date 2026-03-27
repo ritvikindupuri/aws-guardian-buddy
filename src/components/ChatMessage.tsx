@@ -49,7 +49,14 @@ const ChatMessage = ({ message, onAddToS3 }: ChatMessageProps) => {
         margin: [0.5, 0.6, 0.5, 0.6],
         filename: `CloudPilot-Report-${timestamp}-${message.id.slice(0, 8)}.pdf`,
         image: { type: "jpeg", quality: 0.95 },
-        html2canvas: { scale: 2, useCORS: true, letterRendering: true },
+        html2canvas: {
+          scale: 2,
+          useCORS: true,
+          letterRendering: true,
+          onclone: (document: Document) => {
+            document.documentElement.classList.remove("dark");
+          },
+        },
         jsPDF: { unit: "in", format: "a4", orientation: "portrait" },
         pagebreak: { mode: ["avoid-all", "css", "legacy"] },
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
