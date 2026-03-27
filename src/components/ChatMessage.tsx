@@ -148,12 +148,20 @@ const ChatMessage = ({ message, onAddToS3 }: ChatMessageProps) => {
                 </span>
               </div>
             )}
-            {message.status === "error" && (
-              <div className="flex items-center gap-1.5 text-destructive">
-                <AlertOctagon className="w-3 h-3" />
-                <span className="text-[10px] font-mono">Error — check credentials and try again</span>
-              </div>
-            )}
+            {message.status === "error" && (() => {
+              let errorText = "Error — check credentials and try again";
+              if (message.content.includes("Rate limit")) {
+                errorText = "Error — rate limit exceeded";
+              } else if (message.content.includes("AI usage credits exhausted")) {
+                errorText = "Error — AI usage credits exhausted";
+              }
+              return (
+                <div className="flex items-center gap-1.5 text-destructive">
+                  <AlertOctagon className="w-3 h-3" />
+                  <span className="text-[10px] font-mono">{errorText}</span>
+                </div>
+              );
+            })()}
           </div>
 
           {/* Report actions — only on completed assistant messages */}
