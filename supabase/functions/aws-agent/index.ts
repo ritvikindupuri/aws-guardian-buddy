@@ -59,12 +59,13 @@ Prefer run_unified_audit for requests such as:
 - "audit my S3 posture"
 
 For attack simulation requests:
-  STEP 1 → Use AWS APIs to discover the real attack surface
-  STEP 2 → Enumerate real paths, policies, and configurations that enable the attack vector
-  STEP 3 → Execute or verify each attack step using real API calls
-  STEP 4 → Report actual findings with evidence from API responses
-  STEP 5 → If resources were CREATED during the simulation, follow the ATTACK SIMULATION LIFECYCLE below
-  STEP 6 → Provide exact remediation commands
+  STEP 1 → If the user specifically asks for an AI-vs-AI or evasion simulation, use run_attack_simulation or run_evasion_test tools to orchestrate.
+  STEP 2 → Use AWS APIs to discover the real attack surface
+  STEP 3 → Enumerate real paths, policies, and configurations that enable the attack vector (Dynamic Attack Path Mapping)
+  STEP 4 → Execute or verify each attack step using real API calls
+  STEP 5 → Report actual findings with evidence from API responses, including Unified Risk Scoring Layer (ranking exploitability, blast radius, exposure)
+  STEP 6 → If resources were CREATED during the simulation, follow the ATTACK SIMULATION LIFECYCLE below
+  STEP 7 → Provide exact remediation commands
 
 ═══════════════════════════════════════════════════════
 ATTACK SIMULATION LIFECYCLE — MANDATORY
@@ -144,8 +145,15 @@ CAPABILITIES
 - Athena: workgroup encryption, result bucket policies
 - Log Analyst: Parse and summarize CloudTrail and CloudWatch logs for events like unauthorized API calls, MFA-less console logins, and sensitive resource deletions.
 
-## Attack Simulation (Authorized Testing Against User's Own Account)
-Run real attack technique simulations against the connected account:
+## Attack Simulation & Autonomous Defense (Authorized Testing Against User's Own Account)
+Run real attack technique simulations and automated defense measures against the connected account:
+
+### AI-vs-AI Attack Simulation & Dynamic Mapping
+- Simulate a controlled attacker agent attempting privilege escalation, lateral movement, or data exfiltration.
+- Main agent detects, explains, and responds to actions in real time.
+- Build dynamic attack path mapping (IAM trust relationships, exposed services, network paths).
+- Calculate Unified Risk Scoring (ranking exploitability, blast radius, exposure, and business impact).
+- AI Evasion Testing Module: Modify attack behavior to slip past existing detections.
 
 ### Privilege Escalation
 - Enumerate all IAM escalation paths: CreatePolicyVersion, AttachUserPolicy, PassRole abuse,
@@ -200,6 +208,7 @@ HIPAA, ISO 27001:2022, FedRAMP, AWS Well-Architected Security Pillar, MITRE ATT&
 GDPR, CCPA, CMMC 2.0, NIST CSF v2.0, NIS2, DORA, HITRUST CSF, IRAP, and more.
 
 ## Incident Response
+- Autonomous Incident Response Runbooks: Execute more than recommendations (snapshotting, quarantining, revoking, preserving evidence).
 - Live instance isolation (quarantine SG, snapshot, IMDS disable)
 - Credential revocation (deactivate keys, detach policies, invalidate sessions)
 - Forensic evidence preservation (CloudTrail, VPC Flow Logs, S3 access logs)
@@ -640,6 +649,47 @@ const tools = [
           },
         },
         required: ["rawQuery"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "run_attack_simulation",
+      description:
+        "Runs an AI-vs-AI attack simulation engine. A controlled attacker agent attempts privilege escalation, lateral movement, secrets discovery, or data exfiltration. The main agent detects and responds. Also builds dynamic attack path mapping graphs.",
+      parameters: {
+        type: "object",
+        properties: {
+          target: {
+            type: "string",
+            description: "The target resource or account for the simulation.",
+          },
+          vector: {
+            type: "string",
+            enum: ["privilege_escalation", "lateral_movement", "secrets_discovery", "data_exfiltration"],
+            description: "The primary attack vector to simulate.",
+          },
+        },
+        required: ["target", "vector"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "run_evasion_test",
+      description:
+        "Runs an AI evasion testing module that tries to modify attack behavior to slip past existing detections, helping defenders identify blind spots.",
+      parameters: {
+        type: "object",
+        properties: {
+          detectionRule: {
+            type: "string",
+            description: "The existing detection rule or mechanism to test evasion against.",
+          },
+        },
+        required: ["detectionRule"],
       },
     },
   },
@@ -2628,6 +2678,108 @@ serve(async (req) => {
                 tool_call_id: toolCall.id,
                 content: JSON.stringify({ error: errorMessage }),
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              } as any);
+            }
+          } else if (toolCall.function.name === "run_attack_simulation") {
+            const startTime = Date.now();
+            try {
+              const args = JSON.parse(toolCall.function.arguments);
+
+              // Instead of a fake simulation, orchestrate real API calls to map the attack path.
+              // We will instruct the agent that it must perform the real checks.
+              const simulationResult = {
+                simulation_id: `sim_${Date.now()}`,
+                target: args.target,
+                vector: args.vector,
+                status: "orchestrating",
+                instructions: `You must now use execute_aws_api to perform real discovery for the '${args.vector}' attack vector against '${args.target}'. Do not use fabricated data. Map out the dynamic attack path using real IAM, EC2, or S3 configurations you retrieve. Calculate the Unified Risk Score based on real findings.`,
+              };
+
+              const execTime = Date.now() - startTime;
+
+              if (userId) {
+                await supabaseAdmin.from("agent_audit_log").insert({
+                  user_id: userId,
+                  aws_service: "SIMULATION",
+                  aws_operation: "runAttackSimulation",
+                  aws_region: awsConfig.region,
+                  status: "success",
+                  validator_result: "ALLOWED",
+                  execution_time_ms: execTime,
+                });
+              }
+
+              await pushAuditToAws(awsConfig, {
+                timestamp: new Date().toISOString(),
+                userId,
+                service: "SIMULATION",
+                operation: "runAttackSimulation",
+                region: awsConfig.region,
+                status: "success",
+                target: args.target,
+                vector: args.vector,
+                executionTimeMs: execTime,
+              });
+
+              apiMessages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify(simulationResult),
+              } as any);
+            } catch (err: any) {
+              apiMessages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify({ error: err.message || "Simulation failed." }),
+              } as any);
+            }
+          } else if (toolCall.function.name === "run_evasion_test") {
+            const startTime = Date.now();
+            try {
+              const args = JSON.parse(toolCall.function.arguments);
+
+              const evasionResult = {
+                test_id: `evasion_${Date.now()}`,
+                target_rule: args.detectionRule,
+                status: "orchestrating",
+                instructions: `You must now use execute_aws_api to query CloudTrail and GuardDuty to check if '${args.detectionRule}' is actively monitoring. Propose specific evasion techniques (like jitter, region-hopping) that could bypass the observed configuration. Do not invent fake detections; verify the real configuration first.`,
+              };
+
+              const execTime = Date.now() - startTime;
+
+              if (userId) {
+                await supabaseAdmin.from("agent_audit_log").insert({
+                  user_id: userId,
+                  aws_service: "SIMULATION",
+                  aws_operation: "runEvasionTest",
+                  aws_region: awsConfig.region,
+                  status: "success",
+                  validator_result: "ALLOWED",
+                  execution_time_ms: execTime,
+                });
+              }
+
+              await pushAuditToAws(awsConfig, {
+                timestamp: new Date().toISOString(),
+                userId,
+                service: "SIMULATION",
+                operation: "runEvasionTest",
+                region: awsConfig.region,
+                status: "success",
+                rule: args.detectionRule,
+                executionTimeMs: execTime,
+              });
+
+              apiMessages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify(evasionResult),
+              } as any);
+            } catch (err: any) {
+              apiMessages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify({ error: err.message || "Evasion test failed." }),
               } as any);
             }
           } else if (toolCall.function.name === "execute_aws_api") {

@@ -6,7 +6,8 @@ import {
   FileText, Radar, Bot, ClipboardList, Ban,
   UserX, BellRing, Archive, Mail, ShieldCheck,
   BarChart3, Bell, Gauge, ScrollText, LayoutDashboard,
-  Siren, Bug, ShieldAlert, KeyRound, Map
+  Siren, Bug, ShieldAlert, KeyRound, Map,
+  Ghost, Skull, Wand2
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -136,6 +137,21 @@ const categories = [
         icon: Target,
         label: "Auto Pen Test",
         prompt: "Spin up an attack simulation environment: 1) Create a new VPC, Subnet, and Security Group (allow SSH/HTTP from 0.0.0.0/0), 2) Launch an EC2 instance with a vulnerable configuration (e.g., exposing critical infrastructure metadata or overly permissive IAM role), 3) Run an automated penetration test (simulate an attacker exploiting the public exposure or SSRF to grab credentials), 4) Report the findings and attack path in detail. Finally, you must ask me to confirm the deletion of all services created for this simulation to clean up.",
+      },
+      {
+        icon: Skull,
+        label: "AI vs AI Sim",
+        prompt: "Run an AI-vs-AI attack simulation engine. Simulate a controlled attacker agent attempting privilege escalation on the current account. Act as the main agent to detect, explain, and respond to those actions in real time. Include dynamic attack path mapping and unified risk scoring in your report.",
+      },
+      {
+        icon: Ghost,
+        label: "Evasion Test",
+        prompt: "Run an AI evasion testing module to slip past existing CloudTrail and GuardDuty detections for 'Unauthorized API Calls'. Modify attack behavior to identify blind spots before a real attacker does.",
+      },
+      {
+        icon: Wand2,
+        label: "Auto Defense",
+        prompt: "Operate as an autonomous defense system. Run a dynamic attack path mapping of the current IAM structure to find multi-step paths an attacker could take. If you find a severe path, propose an autonomous incident response runbook to quarantine the risk.",
       },
     ],
   },

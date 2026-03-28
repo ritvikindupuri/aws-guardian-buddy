@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Send, Plus, PanelRightOpen, PanelRightClose, LogOut, History, FileText, Gauge } from "lucide-react";
+import { Send, Plus, PanelRightOpen, PanelRightClose, LogOut, History, FileText, Gauge, ShieldAlert } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import ChatMessage from "@/components/ChatMessage";
@@ -25,6 +25,8 @@ const ChatInterface = () => {
   const [notificationEmail, setNotificationEmail] = useState<string>(() => {
     return localStorage.getItem("cloudpilot-notification-email") || "";
   });
+  const [showVpcPrompt, setShowVpcPrompt] = useState(false);
+  const [hasPromptedVpcThisSession, setHasPromptedVpcThisSession] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const { user, signOut } = useAuth();
@@ -42,6 +44,23 @@ const ChatInterface = () => {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isLoading]);
+
+  // When credentials are set for the first time in a session, show the VPC prompt
+  useEffect(() => {
+    if (credentials && credentials.session && !hasPromptedVpcThisSession) {
+      setShowVpcPrompt(true);
+      setHasPromptedVpcThisSession(true);
+    }
+  }, [credentials, hasPromptedVpcThisSession]);
+
+  const handleVpcRoutingAccept = () => {
+    setShowVpcPrompt(false);
+    handleQuickAction("Automatically route all of my (the agent's) AWS API traffic through my account's VPC to ensure it never traverses the public internet. Use real AWS APIs to: 1) Find the default VPC (or any active VPC), 2) Ensure DNS support and hostnames are enabled, 3) Create a dedicated Security Group allowing inbound HTTPS (443) from the VPC CIDR, and 4) Create Interface VPC Endpoints with Private DNS enabled for critical services (STS, S3, IAM, EC2, CloudWatch Logs). If you encounter AccessDenied at any step, stop and explicitly list the exact IAM permissions I need to add to my role (e.g., ec2:CreateVpcEndpoint, ec2:ModifyVpcAttribute). Please present the result or errors clearly.");
+  };
+
+  const handleVpcRoutingDecline = () => {
+    setShowVpcPrompt(false);
+  };
 
   const startNewChat = () => {
     setCurrentConvId(null);
@@ -170,6 +189,11 @@ const ChatInterface = () => {
   const userEmail = user?.email ?? "";
   const userLabel = userEmail.includes("@") ? userEmail.split("@")[0] : userEmail;
 
+  // Check if the latest message from the assistant indicates an AccessDenied for VPC setup
+  const lastAssistantMessage = messages.filter(m => m.role === "assistant").pop()?.content || "";
+  const hasVpcPermissionError = lastAssistantMessage.includes("PERMISSION DENIED") &&
+    (lastAssistantMessage.includes("ec2:CreateVpcEndpoint") || lastAssistantMessage.includes("ec2:ModifyVpcAttribute"));
+
   const scoreColor = !auditSummary
     ? "text-muted-foreground"
     : auditSummary.accountHealthScore >= 85
@@ -180,6 +204,31 @@ const ChatInterface = () => {
 
   return (
     <div className="flex flex-col h-screen max-h-screen bg-background">
+      {/* Header */}
+      {showVpcPrompt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
+          <div className="bg-card border border-border rounded-xl shadow-lg max-w-md w-full p-6 animate-fade-in-up">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-lg bg-indigo-500/10 flex items-center justify-center border border-indigo-500/20">
+                <ShieldAlert className="w-5 h-5 text-indigo-400" />
+              </div>
+              <h2 className="text-lg font-bold text-foreground">Secure VPC Routing</h2>
+            </div>
+            <p className="text-sm text-muted-foreground mb-6 leading-relaxed">
+              Do you want to automatically route the agent's API traffic through your AWS VPC? This ensures calls never traverse the public internet via PrivateLink endpoints.
+            </p>
+            <div className="flex items-center justify-end gap-3">
+              <Button variant="outline" onClick={handleVpcRoutingDecline}>
+                Skip for now
+              </Button>
+              <Button variant="default" onClick={handleVpcRoutingAccept}>
+                Yes, Configure VPC
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <header className="flex items-center justify-between px-5 py-3 border-b border-border bg-card/80 backdrop-blur-sm">
         <div className="flex items-center gap-3">
@@ -248,6 +297,21 @@ const ChatInterface = () => {
         {/* Chat area */}
         <div className="flex-1 flex flex-col min-w-0">
           <div className="flex-1 overflow-y-auto scrollbar-thin">
+          {hasVpcPermissionError && (
+            <div className="mx-4 mt-4 p-4 rounded-lg border border-destructive/20 bg-destructive/5 flex items-start gap-3">
+              <ShieldAlert className="w-5 h-5 text-destructive shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-semibold text-destructive">VPC Setup Failed: Missing Permissions</p>
+                <p className="text-xs text-muted-foreground mt-1 mb-3">
+                  The agent requires additional permissions to automate VPC endpoints. Please update your IAM policy with the actions listed in the response below, then re-enter your credentials.
+                </p>
+                <Button variant="outline" size="sm" onClick={() => setCredentials(null)}>
+                  Re-enter Credentials
+                </Button>
+              </div>
+            </div>
+          )}
+
             {!hasMessages ? (
               <div className="flex flex-col items-center justify-center h-full px-6 py-12 max-w-2xl mx-auto">
                 <div className="text-center space-y-5 mb-8">

@@ -687,11 +687,17 @@ Full configuration analysis across all 35 services:
 - **ECR**: Image scanning, repository policies, lifecycle rules
 - **Cognito**: MFA requirements, advanced security, app client settings
 
-#### 2. Attack Simulation (Authorized, Against User's Own Account)
+#### 2. Attack Simulation & Autonomous Defense (Authorized, Against User's Own Account)
 All simulations execute real API calls and follow the mandatory Attack Simulation Lifecycle (Tag → Track → Complete → Cleanup). The agent's ability to execute each simulation depends on the IAM permissions provided—read-only credentials allow enumeration of attack paths, while write credentials enable proof-of-concept execution.
+
+Beyond standard enumeration, the agent supports **AI-vs-AI Attack Simulations** using the dedicated `run_attack_simulation` tool. This orchestrates a controlled attacker agent attempting privilege escalation, lateral movement, or data exfiltration, while the main agent acts as the defender, detecting, explaining, and responding in real-time. This module includes **Dynamic Attack Path Mapping** and a **Unified Risk Scoring Layer**.
+
+An **AI Evasion Testing Module** (`run_evasion_test` tool) is also available to test whether modified attack behavior can slip past existing AWS detections, identifying blind spots before real attackers do.
 
 | Attack Vector | Techniques |
 |--------------|------------|
+| **AI-vs-AI Attack Simulation** | Orchestrated AI attack vs. AI defense simulation with dynamic path mapping and risk scoring. |
+| **Evasion Testing** | Slipping past CloudTrail and GuardDuty detections by modifying attacker behavior (jitter, region-hopping, user-agent spoofing). |
 | **Privilege Escalation** | CreatePolicyVersion, AttachUserPolicy, PassRole abuse, CreateAccessKey on other users, UpdateAssumeRolePolicy, CreateLoginProfile, AddUserToGroup, SetDefaultPolicyVersion, PutUserPolicy, PutRolePolicy, UpdateLoginProfile |
 | **Credential & Secrets Exposure** | EC2 user data scanning, Lambda env var enumeration, SSM Parameter Store audit, Secrets Manager resource policies, stale IAM access keys |
 | **S3 Data Exfiltration** | Public read/write/list testing, cross-account bucket policies, pre-signed URL abuse, replication to untrusted destinations |
@@ -701,6 +707,7 @@ All simulations execute real API calls and follow the mandatory Attack Simulatio
 | **Supply Chain & Third-Party Risk** | Cross-account IAM roles, external S3 bucket policy principals, Lambda layers from external accounts, CloudFormation external imports |
 
 #### 3. Incident Response
+- **Autonomous Incident Response Runbooks:** More than just recommendations, the agent performs automated multi-step containment actions (e.g., snapshotting a suspicious EC2 instance, isolating it with a quarantine security group, revoking credentials, preserving evidence) with an audit pipeline.
 - Live instance isolation (quarantine SG, snapshot, IMDS disable)
 - Credential revocation (deactivate keys, detach policies, invalidate sessions)
 - Forensic evidence preservation (CloudTrail, VPC Flow Logs, S3 access logs)
@@ -725,7 +732,7 @@ CloudPilot AI provides **30 pre-built quick action prompts** organized into 6 co
 |----------|-------|---------|-------------|
 | **AUDIT** (8 actions) | Blue | S3 Buckets, IAM Posture, Security Groups, EC2 Instances, RDS/Aurora, Lambda Security, IP Safety Check, Log Analyst | Comprehensive configuration audits with real API calls |
 | **COMPLIANCE** (4 actions) | Green | CIS Benchmark, CloudTrail, GuardDuty, Security Hub | Framework-aligned compliance checks |
-| **ATTACK SIMULATION** (7 actions) | Red | Privilege Escalation, Secrets Exposure, S3 Exfil Paths, Lateral Movement, Detection Gaps, Network Exposure, Threat Detector | Authorized penetration testing with real API execution |
+| **ATTACK SIMULATION** (10 actions) | Red | Auto Pen Test, AI vs AI Sim, Evasion Test, Auto Defense, Privilege Escalation, Secrets Exposure, S3 Exfil Paths, Lateral Movement, Detection Gaps, Network Exposure, Threat Detector | Authorized penetration testing, AI evasion testing, and dynamic path mapping. |
 | **INCIDENT RESPONSE** (6 actions) | Orange | Isolate Instance, Credential Audit, Forensic Snapshot, Blast Radius, Block IPs, Revoke IAM | Emergency response procedures using real API calls |
 | **REMEDIATION** (5 actions) | Yellow | Close Public Access, Enable GuardDuty, Enforce MFA, Harden IMDSv2, Task Automator | Generate exact CLI remediation commands from real findings |
 | **REPORTING & ALERTS** (4 actions) | Purple | Report Builder, Severity Alerts, Audit Archive, Email Engine | Comprehensive reporting and alert checking |
@@ -1294,6 +1301,8 @@ For environments with strict network isolation requirements (FedRAMP, HIPAA, PCI
 ### How It Works
 
 The AWS SDK v2 used by the agent resolves service endpoints via DNS (e.g., `s3.us-east-1.amazonaws.com`). When a VPC Interface Endpoint is created with **Private DNS enabled**, AWS automatically overrides these DNS records within the VPC so they resolve to the endpoint's private IP addresses. The SDK requires zero code changes — routing is handled transparently at the DNS layer.
+
+**Automated Setup:** Upon connecting AWS credentials in the user interface, a pop-up modal will ask if the user wishes to automatically route the agent's traffic through their VPC. If the user clicks "Yes, Configure VPC", the agent will attempt to execute all the steps below programmatically using the provided AWS credentials. If it encounters missing permissions, the UI will halt, display a specialized error banner detailing the exact IAM actions required to complete the setup, and provide a button to easily re-enter credentials once the user's IAM policy is updated.
 
 ```mermaid
 graph LR
