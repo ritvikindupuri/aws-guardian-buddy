@@ -23,22 +23,34 @@ const ENV = {
 // This eliminates the ~200MB bundle that caused deploy timeouts.
 const _awsModuleCache: Record<string, any> = {};
 
+const _awsSvcMap: Record<string, string> = {
+  IAM: "iam", EC2: "ec2", S3: "s3", STS: "sts",
+  Organizations: "organizations", CloudWatch: "cloudwatch",
+  CostExplorer: "cost-explorer", SNS: "sns",
+  CloudTrail: "cloudtrail", CloudWatchLogs: "cloudwatch-logs",
+  GuardDuty: "guardduty", SecurityHub: "securityhub",
+  Config: "config-service", RDS: "rds", Lambda: "lambda",
+  EKS: "eks", ECS: "ecs", KMS: "kms",
+  SecretsManager: "secrets-manager", SSM: "ssm",
+  WAFv2: "wafv2", CloudFront: "cloudfront", SQS: "sqs",
+  ECR: "ecr", Athena: "athena", Inspector2: "inspector2",
+  AccessAnalyzer: "accessanalyzer", Macie2: "macie2",
+  NetworkFirewall: "network-firewall", Shield: "shield",
+  ACM: "acm", APIGateway: "api-gateway",
+  CognitoIdentityServiceProvider: "cognito-identity-provider",
+  EventBridge: "eventbridge", StepFunctions: "sfn",
+  ElastiCache: "elasticache", Redshift: "redshift",
+  DynamoDB: "dynamodb", Route53: "route53",
+  ELBv2: "elastic-load-balancing-v2", AutoScaling: "auto-scaling",
+};
+
 async function loadAwsModule(service: string): Promise<any> {
   if (_awsModuleCache[service]) return _awsModuleCache[service];
-  let mod: any;
-  switch (service) {
-    case "IAM": mod = await import("npm:@aws-sdk/client-iam@3.744.0"); break;
-    case "EC2": mod = await import("npm:@aws-sdk/client-ec2@3.744.0"); break;
-    case "S3": mod = await import("npm:@aws-sdk/client-s3@3.744.0"); break;
-    case "STS": mod = await import("npm:@aws-sdk/client-sts@3.744.0"); break;
-    case "Organizations": mod = await import("npm:@aws-sdk/client-organizations@3.744.0"); break;
-    case "CloudWatch": mod = await import("npm:@aws-sdk/client-cloudwatch@3.744.0"); break;
-    case "CostExplorer": mod = await import("npm:@aws-sdk/client-cost-explorer@3.744.0"); break;
-    case "SNS": mod = await import("npm:@aws-sdk/client-sns@3.744.0"); break;
-    case "CloudTrail": mod = await import("npm:@aws-sdk/client-cloudtrail@3.744.0"); break;
-    case "CloudWatchLogs": mod = await import("npm:@aws-sdk/client-cloudwatch-logs@3.744.0"); break;
-    default: throw new Error(`Unsupported AWS service: ${service}`);
-  }
+  const pkg = _awsSvcMap[service];
+  if (!pkg) throw new Error(`Unsupported AWS service: ${service}`);
+  // Dynamic specifier prevents bundler from statically resolving all 40 SDK packages
+  const specifier = "npm:@aws-sdk/client-" + pkg + "@3.744.0";
+  const mod = await import(specifier);
   _awsModuleCache[service] = mod;
   return mod;
 }
