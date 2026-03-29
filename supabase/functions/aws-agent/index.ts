@@ -1,34 +1,112 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
-import AWS from "npm:aws-sdk@2.1693.0";
-import { CloudWatchLogsClient, CreateLogGroupCommand, CreateLogStreamCommand, DescribeLogStreamsCommand, PutLogEventsCommand } from "npm:@aws-sdk/client-cloudwatch-logs@3.744.0";
-import { STSClient, GetCallerIdentityCommand } from "npm:@aws-sdk/client-sts@3.744.0";
-import { S3Client, CreateBucketCommand, PutObjectLockConfigurationCommand, PutPublicAccessBlockCommand, PutBucketEncryptionCommand, PutObjectCommand } from "npm:@aws-sdk/client-s3@3.744.0";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
-};
+// ── AWS SDK v3 Dynamic Module Loader ────────────────────────────────────────
+// Replaces the monolithic AWS SDK v2 import with lazy-loaded v3 clients.
+// This eliminates the ~200MB bundle that caused deploy timeouts.
+const _awsModuleCache: Record<string, any> = {};
 
-function requireEnv(name: string): string {
-  const value = Deno.env.get(name);
-  if (!value) {
-    throw new Error(`Missing required environment variable: ${name}`);
+async function loadAwsModule(service: string): Promise<any> {
+  if (_awsModuleCache[service]) return _awsModuleCache[service];
+  let mod: any;
+  switch (service) {
+    case "IAM": mod = await import("npm:@aws-sdk/client-iam@3.744.0"); break;
+    case "EC2": mod = await import("npm:@aws-sdk/client-ec2@3.744.0"); break;
+    case "S3": mod = await import("npm:@aws-sdk/client-s3@3.744.0"); break;
+    case "STS": mod = await import("npm:@aws-sdk/client-sts@3.744.0"); break;
+    case "Organizations": mod = await import("npm:@aws-sdk/client-organizations@3.744.0"); break;
+    case "CloudWatch": mod = await import("npm:@aws-sdk/client-cloudwatch@3.744.0"); break;
+    case "CostExplorer": mod = await import("npm:@aws-sdk/client-cost-explorer@3.744.0"); break;
+    case "SNS": mod = await import("npm:@aws-sdk/client-sns@3.744.0"); break;
+    case "CloudTrail": mod = await import("npm:@aws-sdk/client-cloudtrail@3.744.0"); break;
+    case "CloudWatchLogs": mod = await import("npm:@aws-sdk/client-cloudwatch-logs@3.744.0"); break;
+    case "GuardDuty": mod = await import("npm:@aws-sdk/client-guardduty@3.744.0"); break;
+    case "SecurityHub": mod = await import("npm:@aws-sdk/client-securityhub@3.744.0"); break;
+    case "Config": mod = await import("npm:@aws-sdk/client-config-service@3.744.0"); break;
+    case "RDS": mod = await import("npm:@aws-sdk/client-rds@3.744.0"); break;
+    case "Lambda": mod = await import("npm:@aws-sdk/client-lambda@3.744.0"); break;
+    case "EKS": mod = await import("npm:@aws-sdk/client-eks@3.744.0"); break;
+    case "ECS": mod = await import("npm:@aws-sdk/client-ecs@3.744.0"); break;
+    case "KMS": mod = await import("npm:@aws-sdk/client-kms@3.744.0"); break;
+    case "SecretsManager": mod = await import("npm:@aws-sdk/client-secrets-manager@3.744.0"); break;
+    case "SSM": mod = await import("npm:@aws-sdk/client-ssm@3.744.0"); break;
+    case "WAFv2": mod = await import("npm:@aws-sdk/client-wafv2@3.744.0"); break;
+    case "CloudFront": mod = await import("npm:@aws-sdk/client-cloudfront@3.744.0"); break;
+    case "SQS": mod = await import("npm:@aws-sdk/client-sqs@3.744.0"); break;
+    case "ECR": mod = await import("npm:@aws-sdk/client-ecr@3.744.0"); break;
+    case "Athena": mod = await import("npm:@aws-sdk/client-athena@3.744.0"); break;
+    case "Inspector2": mod = await import("npm:@aws-sdk/client-inspector2@3.744.0"); break;
+    case "AccessAnalyzer": mod = await import("npm:@aws-sdk/client-accessanalyzer@3.744.0"); break;
+    case "Macie2": mod = await import("npm:@aws-sdk/client-macie2@3.744.0"); break;
+    case "NetworkFirewall": mod = await import("npm:@aws-sdk/client-network-firewall@3.744.0"); break;
+    case "Shield": mod = await import("npm:@aws-sdk/client-shield@3.744.0"); break;
+    case "ACM": mod = await import("npm:@aws-sdk/client-acm@3.744.0"); break;
+    case "APIGateway": mod = await import("npm:@aws-sdk/client-api-gateway@3.744.0"); break;
+    case "CognitoIdentityServiceProvider": mod = await import("npm:@aws-sdk/client-cognito-identity-provider@3.744.0"); break;
+    case "EventBridge": mod = await import("npm:@aws-sdk/client-eventbridge@3.744.0"); break;
+    case "StepFunctions": mod = await import("npm:@aws-sdk/client-sfn@3.744.0"); break;
+    case "ElastiCache": mod = await import("npm:@aws-sdk/client-elasticache@3.744.0"); break;
+    case "Redshift": mod = await import("npm:@aws-sdk/client-redshift@3.744.0"); break;
+    case "DynamoDB": mod = await import("npm:@aws-sdk/client-dynamodb@3.744.0"); break;
+    case "Route53": mod = await import("npm:@aws-sdk/client-route53@3.744.0"); break;
+    case "ELBv2": mod = await import("npm:@aws-sdk/client-elastic-load-balancing-v2@3.744.0"); break;
+    case "AutoScaling": mod = await import("npm:@aws-sdk/client-auto-scaling@3.744.0"); break;
+    default: throw new Error(`Unsupported AWS service: ${service}`);
   }
-  return value;
+  _awsModuleCache[service] = mod;
+  return mod;
 }
 
-const REQUIRED_AWS_AGENT_ENVS = {
-  supabaseUrl: requireEnv("SUPABASE_URL"),
-  supabaseServiceRoleKey: requireEnv("SUPABASE_SERVICE_ROLE_KEY"),
-  lovableApiKey: requireEnv("LOVABLE_API_KEY"),
+const V3_CLIENT_NAMES: Record<string, string> = {
+  IAM: "IAMClient", EC2: "EC2Client", S3: "S3Client", STS: "STSClient",
+  Organizations: "OrganizationsClient", CloudWatch: "CloudWatchClient",
+  CostExplorer: "CostExplorerClient", SNS: "SNSClient", CloudTrail: "CloudTrailClient",
+  CloudWatchLogs: "CloudWatchLogsClient", GuardDuty: "GuardDutyClient",
+  SecurityHub: "SecurityHubClient", Config: "ConfigServiceClient",
+  RDS: "RDSClient", Lambda: "LambdaClient", EKS: "EKSClient", ECS: "ECSClient",
+  KMS: "KMSClient", SecretsManager: "SecretsManagerClient", SSM: "SSMClient",
+  WAFv2: "WAFv2Client", CloudFront: "CloudFrontClient", SQS: "SQSClient",
+  ECR: "ECRClient", Athena: "AthenaClient", Inspector2: "Inspector2Client",
+  AccessAnalyzer: "AccessAnalyzerClient", Macie2: "Macie2Client",
+  NetworkFirewall: "NetworkFirewallClient", Shield: "ShieldClient",
+  ACM: "ACMClient", APIGateway: "APIGatewayClient",
+  CognitoIdentityServiceProvider: "CognitoIdentityProviderClient",
+  EventBridge: "EventBridgeClient", StepFunctions: "SFNClient",
+  ElastiCache: "ElastiCacheClient", Redshift: "RedshiftClient",
+  DynamoDB: "DynamoDBClient", Route53: "Route53Client",
+  ELBv2: "ElasticLoadBalancingV2Client", AutoScaling: "AutoScalingClient",
 };
 
-AWS.config.update({
-  maxRetries: 4,
-  retryDelayOptions: { base: 250 },
-});
+// v2-compatible Proxy wrapper: allows `v2Client("IAM", config).listUsers({}).promise()`
+// This preserves all existing .promise() call patterns while using v3 under the hood
+function v2Client(service: string, config: any): any {
+  return new Proxy({}, {
+    get(_target, method: string) {
+      if (method === "then" || method === "catch" || typeof method === "symbol") return undefined;
+      return (params: any = {}) => ({
+        promise: async () => {
+          const mod = await loadAwsModule(service);
+          const clientName = V3_CLIENT_NAMES[service] || `${service}Client`;
+          const client = new mod[clientName]({ ...config, maxAttempts: 4 });
+          const commandName = method.charAt(0).toUpperCase() + method.slice(1) + "Command";
+          const CommandClass = mod[commandName];
+          if (!CommandClass) throw new Error(`Unknown command: ${service}.${commandName}`);
+          return client.send(new CommandClass(params));
+        },
+      });
+    },
+  });
+}
+
+// Direct v3 send helper for pushAuditToAws and other functions that use v3 directly
+async function v3Send(service: string, commandName: string, config: any, params: any): Promise<any> {
+  const mod = await loadAwsModule(service);
+  const clientName = V3_CLIENT_NAMES[service] || `${service}Client`;
+  const client = new mod[clientName](config);
+  const CommandClass = mod[commandName];
+  if (!CommandClass) throw new Error(`Unknown v3 command: ${service}.${commandName}`);
+  return client.send(new CommandClass(params));
+}
 
 type ErrorCategory =
   | "validation"
