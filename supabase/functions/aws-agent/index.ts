@@ -1,34 +1,112 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
-import AWS from "npm:aws-sdk@2.1693.0";
-import { CloudWatchLogsClient, CreateLogGroupCommand, CreateLogStreamCommand, DescribeLogStreamsCommand, PutLogEventsCommand } from "npm:@aws-sdk/client-cloudwatch-logs@3.744.0";
-import { STSClient, GetCallerIdentityCommand } from "npm:@aws-sdk/client-sts@3.744.0";
-import { S3Client, CreateBucketCommand, PutObjectLockConfigurationCommand, PutPublicAccessBlockCommand, PutBucketEncryptionCommand, PutObjectCommand } from "npm:@aws-sdk/client-s3@3.744.0";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
-};
+// ── AWS SDK v3 Dynamic Module Loader ────────────────────────────────────────
+// Replaces the monolithic AWS SDK v2 import with lazy-loaded v3 clients.
+// This eliminates the ~200MB bundle that caused deploy timeouts.
+const _awsModuleCache: Record<string, any> = {};
 
-function requireEnv(name: string): string {
-  const value = Deno.env.get(name);
-  if (!value) {
-    throw new Error(`Missing required environment variable: ${name}`);
+async function loadAwsModule(service: string): Promise<any> {
+  if (_awsModuleCache[service]) return _awsModuleCache[service];
+  let mod: any;
+  switch (service) {
+    case "IAM": mod = await import("npm:@aws-sdk/client-iam@3.744.0"); break;
+    case "EC2": mod = await import("npm:@aws-sdk/client-ec2@3.744.0"); break;
+    case "S3": mod = await import("npm:@aws-sdk/client-s3@3.744.0"); break;
+    case "STS": mod = await import("npm:@aws-sdk/client-sts@3.744.0"); break;
+    case "Organizations": mod = await import("npm:@aws-sdk/client-organizations@3.744.0"); break;
+    case "CloudWatch": mod = await import("npm:@aws-sdk/client-cloudwatch@3.744.0"); break;
+    case "CostExplorer": mod = await import("npm:@aws-sdk/client-cost-explorer@3.744.0"); break;
+    case "SNS": mod = await import("npm:@aws-sdk/client-sns@3.744.0"); break;
+    case "CloudTrail": mod = await import("npm:@aws-sdk/client-cloudtrail@3.744.0"); break;
+    case "CloudWatchLogs": mod = await import("npm:@aws-sdk/client-cloudwatch-logs@3.744.0"); break;
+    case "GuardDuty": mod = await import("npm:@aws-sdk/client-guardduty@3.744.0"); break;
+    case "SecurityHub": mod = await import("npm:@aws-sdk/client-securityhub@3.744.0"); break;
+    case "Config": mod = await import("npm:@aws-sdk/client-config-service@3.744.0"); break;
+    case "RDS": mod = await import("npm:@aws-sdk/client-rds@3.744.0"); break;
+    case "Lambda": mod = await import("npm:@aws-sdk/client-lambda@3.744.0"); break;
+    case "EKS": mod = await import("npm:@aws-sdk/client-eks@3.744.0"); break;
+    case "ECS": mod = await import("npm:@aws-sdk/client-ecs@3.744.0"); break;
+    case "KMS": mod = await import("npm:@aws-sdk/client-kms@3.744.0"); break;
+    case "SecretsManager": mod = await import("npm:@aws-sdk/client-secrets-manager@3.744.0"); break;
+    case "SSM": mod = await import("npm:@aws-sdk/client-ssm@3.744.0"); break;
+    case "WAFv2": mod = await import("npm:@aws-sdk/client-wafv2@3.744.0"); break;
+    case "CloudFront": mod = await import("npm:@aws-sdk/client-cloudfront@3.744.0"); break;
+    case "SQS": mod = await import("npm:@aws-sdk/client-sqs@3.744.0"); break;
+    case "ECR": mod = await import("npm:@aws-sdk/client-ecr@3.744.0"); break;
+    case "Athena": mod = await import("npm:@aws-sdk/client-athena@3.744.0"); break;
+    case "Inspector2": mod = await import("npm:@aws-sdk/client-inspector2@3.744.0"); break;
+    case "AccessAnalyzer": mod = await import("npm:@aws-sdk/client-accessanalyzer@3.744.0"); break;
+    case "Macie2": mod = await import("npm:@aws-sdk/client-macie2@3.744.0"); break;
+    case "NetworkFirewall": mod = await import("npm:@aws-sdk/client-network-firewall@3.744.0"); break;
+    case "Shield": mod = await import("npm:@aws-sdk/client-shield@3.744.0"); break;
+    case "ACM": mod = await import("npm:@aws-sdk/client-acm@3.744.0"); break;
+    case "APIGateway": mod = await import("npm:@aws-sdk/client-api-gateway@3.744.0"); break;
+    case "CognitoIdentityServiceProvider": mod = await import("npm:@aws-sdk/client-cognito-identity-provider@3.744.0"); break;
+    case "EventBridge": mod = await import("npm:@aws-sdk/client-eventbridge@3.744.0"); break;
+    case "StepFunctions": mod = await import("npm:@aws-sdk/client-sfn@3.744.0"); break;
+    case "ElastiCache": mod = await import("npm:@aws-sdk/client-elasticache@3.744.0"); break;
+    case "Redshift": mod = await import("npm:@aws-sdk/client-redshift@3.744.0"); break;
+    case "DynamoDB": mod = await import("npm:@aws-sdk/client-dynamodb@3.744.0"); break;
+    case "Route53": mod = await import("npm:@aws-sdk/client-route53@3.744.0"); break;
+    case "ELBv2": mod = await import("npm:@aws-sdk/client-elastic-load-balancing-v2@3.744.0"); break;
+    case "AutoScaling": mod = await import("npm:@aws-sdk/client-auto-scaling@3.744.0"); break;
+    default: throw new Error(`Unsupported AWS service: ${service}`);
   }
-  return value;
+  _awsModuleCache[service] = mod;
+  return mod;
 }
 
-const REQUIRED_AWS_AGENT_ENVS = {
-  supabaseUrl: requireEnv("SUPABASE_URL"),
-  supabaseServiceRoleKey: requireEnv("SUPABASE_SERVICE_ROLE_KEY"),
-  lovableApiKey: requireEnv("LOVABLE_API_KEY"),
+const V3_CLIENT_NAMES: Record<string, string> = {
+  IAM: "IAMClient", EC2: "EC2Client", S3: "S3Client", STS: "STSClient",
+  Organizations: "OrganizationsClient", CloudWatch: "CloudWatchClient",
+  CostExplorer: "CostExplorerClient", SNS: "SNSClient", CloudTrail: "CloudTrailClient",
+  CloudWatchLogs: "CloudWatchLogsClient", GuardDuty: "GuardDutyClient",
+  SecurityHub: "SecurityHubClient", Config: "ConfigServiceClient",
+  RDS: "RDSClient", Lambda: "LambdaClient", EKS: "EKSClient", ECS: "ECSClient",
+  KMS: "KMSClient", SecretsManager: "SecretsManagerClient", SSM: "SSMClient",
+  WAFv2: "WAFv2Client", CloudFront: "CloudFrontClient", SQS: "SQSClient",
+  ECR: "ECRClient", Athena: "AthenaClient", Inspector2: "Inspector2Client",
+  AccessAnalyzer: "AccessAnalyzerClient", Macie2: "Macie2Client",
+  NetworkFirewall: "NetworkFirewallClient", Shield: "ShieldClient",
+  ACM: "ACMClient", APIGateway: "APIGatewayClient",
+  CognitoIdentityServiceProvider: "CognitoIdentityProviderClient",
+  EventBridge: "EventBridgeClient", StepFunctions: "SFNClient",
+  ElastiCache: "ElastiCacheClient", Redshift: "RedshiftClient",
+  DynamoDB: "DynamoDBClient", Route53: "Route53Client",
+  ELBv2: "ElasticLoadBalancingV2Client", AutoScaling: "AutoScalingClient",
 };
 
-AWS.config.update({
-  maxRetries: 4,
-  retryDelayOptions: { base: 250 },
-});
+// v2-compatible Proxy wrapper: allows `v2Client("IAM", config).listUsers({}).promise()`
+// This preserves all existing .promise() call patterns while using v3 under the hood
+function v2Client(service: string, config: any): any {
+  return new Proxy({}, {
+    get(_target, method: string) {
+      if (method === "then" || method === "catch" || typeof method === "symbol") return undefined;
+      return (params: any = {}) => ({
+        promise: async () => {
+          const mod = await loadAwsModule(service);
+          const clientName = V3_CLIENT_NAMES[service] || `${service}Client`;
+          const client = new mod[clientName]({ ...config, maxAttempts: 4 });
+          const commandName = method.charAt(0).toUpperCase() + method.slice(1) + "Command";
+          const CommandClass = mod[commandName];
+          if (!CommandClass) throw new Error(`Unknown command: ${service}.${commandName}`);
+          return client.send(new CommandClass(params));
+        },
+      });
+    },
+  });
+}
+
+// Direct v3 send helper for pushAuditToAws and other functions that use v3 directly
+async function v3Send(service: string, commandName: string, config: any, params: any): Promise<any> {
+  const mod = await loadAwsModule(service);
+  const clientName = V3_CLIENT_NAMES[service] || `${service}Client`;
+  const client = new mod[clientName](config);
+  const CommandClass = mod[commandName];
+  if (!CommandClass) throw new Error(`Unknown v3 command: ${service}.${commandName}`);
+  return client.send(new CommandClass(params));
+}
 
 type ErrorCategory =
   | "validation"
@@ -1316,7 +1394,7 @@ function buildIamAccessPlan(rawArgs: Record<string, any>) {
   };
 }
 
-async function ensureIamPrincipalExists(iam: AWS.IAM, principalType: IamPrincipalType, identifier: string) {
+async function ensureIamPrincipalExists(iam: any, principalType: IamPrincipalType, identifier: string) {
   if (principalType === "group") {
     await iam.getGroup({ GroupName: identifier }).promise();
     return;
@@ -1346,8 +1424,8 @@ interface SecurityGroupSummary {
   groupName: string;
   vpcId?: string;
   tags: Record<string, string>;
-  ingressPermissions: AWS.EC2.IpPermissionList;
-  egressPermissions: AWS.EC2.IpPermissionList;
+  ingressPermissions: any[];
+  egressPermissions: any[];
 }
 
 interface SecurityGroupRiskResult {
@@ -1397,7 +1475,7 @@ function normalizePort(value: unknown): number {
   return port;
 }
 
-function summarizeTags(tags: AWS.EC2.TagList | undefined): Record<string, string> {
+function summarizeTags(tags: any[] | undefined): Record<string, string> {
   const out: Record<string, string> = {};
   for (const tag of tags || []) {
     if (tag.Key && tag.Value) out[tag.Key.toLowerCase()] = tag.Value.toLowerCase();
@@ -1488,7 +1566,7 @@ function classifySecurityGroupRisk(
   return { allowed: true, riskLevel: "LOW", reasons: reasons.length > 0 ? reasons : ["Scoped security group rule."] };
 }
 
-async function resolveSecurityGroup(ec2: AWS.EC2, identifier: string): Promise<SecurityGroupSummary> {
+async function resolveSecurityGroup(ec2: any, identifier: string): Promise<SecurityGroupSummary> {
   const params = isSecurityGroupId(identifier)
     ? { GroupIds: [identifier] }
     : { Filters: [{ Name: "group-name", Values: [identifier] }] };
@@ -1517,7 +1595,7 @@ async function resolveSecurityGroup(ec2: AWS.EC2, identifier: string): Promise<S
   };
 }
 
-function ipPermissionTargets(permission: AWS.EC2.IpPermission): string[] {
+function ipPermissionTargets(permission: any): string[] {
   const cidrs = (permission.IpRanges || []).map((range) => range.CidrIp).filter(Boolean) as string[];
   const ipv6Cidrs = (permission.Ipv6Ranges || []).map((range) => range.CidrIpv6).filter(Boolean) as string[];
   const groups = (permission.UserIdGroupPairs || []).map((pair) => pair.GroupId).filter(Boolean) as string[];
@@ -1525,7 +1603,7 @@ function ipPermissionTargets(permission: AWS.EC2.IpPermission): string[] {
 }
 
 function permissionMatchesRequested(
-  existing: AWS.EC2.IpPermission,
+  existing: any,
   requested: any,
   args: SecurityGroupRuleArgs,
   sourceGroupId?: string,
@@ -1549,7 +1627,7 @@ function findExistingMatchingPermission(
   args: SecurityGroupRuleArgs,
   requestedPermission: any,
   sourceGroupId?: string,
-): AWS.EC2.IpPermission | null {
+): any | null {
   const permissions = getSecurityGroupDirection(args.action) === "egress"
     ? targetGroup.egressPermissions
     : targetGroup.ingressPermissions;
@@ -1916,7 +1994,7 @@ const ORG_CONFIRM_PATTERNS = [
 
 const ORG_EXTERNAL_ID = Deno.env.get("GUARDIAN_ORG_EXTERNAL_ID") || "";
 const ORG_ROLE_NAME = Deno.env.get("GUARDIAN_EXECUTION_ROLE_NAME") || "GuardianExecutionRole";
-const orgClientCache = new Map<string, { expiresAt: number; config: AWS.ConfigurationOptions }>();
+const orgClientCache = new Map<string, { expiresAt: number; config: Record<string, any> }>();
 
 const ENV_TIERS: Record<string, { confirmation: "single" | "double"; auto_execute: boolean; max_accounts: number; require_mfa: boolean; rollback_plan: "auto" | "manual" | "required" }> = {
   dev: {
@@ -2154,7 +2232,7 @@ function parseOrgConfirmationCount(input: string): number | null {
   return null;
 }
 
-async function getAssumedAwsConfig(accountId: string, region: string, externalId?: string): Promise<AWS.ConfigurationOptions> {
+async function getAssumedAwsConfig(accountId: string, region: string, externalId?: string): Promise<Record<string, any>> {
   const cacheKey = `${accountId}:${region}`;
   const cached = orgClientCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now() + 60_000) {
@@ -2166,7 +2244,7 @@ async function getAssumedAwsConfig(accountId: string, region: string, externalId
     throw new Error("GUARDIAN_ORG_EXTERNAL_ID is not configured for cross-account role assumption.");
   }
 
-  const sts = new AWS.STS({ region });
+  const sts = v2Client("STS", { region });
   const roleArn = `arn:aws:iam::${accountId}:role/${ORG_ROLE_NAME}`;
   const assumed = await sts.assumeRole({
     RoleArn: roleArn,
@@ -2180,7 +2258,7 @@ async function getAssumedAwsConfig(accountId: string, region: string, externalId
     throw new Error(`AssumeRole returned incomplete credentials for account ${accountId}.`);
   }
 
-  const config: AWS.ConfigurationOptions = {
+  const config: Record<string, any> = {
     region,
     accessKeyId: credentials.AccessKeyId,
     secretAccessKey: credentials.SecretAccessKey,
@@ -2193,7 +2271,7 @@ async function getAssumedAwsConfig(accountId: string, region: string, externalId
   return config;
 }
 
-async function getAccountTags(org: AWS.Organizations, accountId: string): Promise<Record<string, string>> {
+async function getAccountTags(org: any, accountId: string): Promise<Record<string, string>> {
   const response = await org.listTagsForResource({ ResourceId: accountId }).promise();
   const tags: Record<string, string> = {};
   for (const tag of response.Tags || []) {
@@ -2204,7 +2282,7 @@ async function getAccountTags(org: AWS.Organizations, accountId: string): Promis
   return tags;
 }
 
-async function resolveParentPath(org: AWS.Organizations, parentId: string): Promise<string> {
+async function resolveParentPath(org: any, parentId: string): Promise<string> {
   if (parentId.startsWith("r-")) {
     return "/root";
   }
@@ -2217,7 +2295,7 @@ async function resolveParentPath(org: AWS.Organizations, parentId: string): Prom
   return `${prefix}/${name}`;
 }
 
-async function getAccountOuPath(org: AWS.Organizations, accountId: string): Promise<string> {
+async function getAccountOuPath(org: any, accountId: string): Promise<string> {
   const parents = await org.listParents({ ChildId: accountId }).promise();
   const parentId = parents.Parents?.[0]?.Id;
   if (!parentId) return "/root";
@@ -2225,7 +2303,7 @@ async function getAccountOuPath(org: AWS.Organizations, accountId: string): Prom
 }
 
 async function listOrgAccounts(awsConfig: any): Promise<OrgAccountSummary[]> {
-  const org = new AWS.Organizations(awsConfig);
+  const org = v2Client("Organizations", awsConfig);
   const accounts: OrgAccountSummary[] = [];
   let nextToken: string | undefined;
 
@@ -2377,7 +2455,7 @@ async function executeOrgSCPRollout(
   template: OrgScpTemplate,
   policyDocument: Record<string, any>,
 ): Promise<{ policyId: string; policyName: string; results: OrgAccountResult[] }> {
-  const org = new AWS.Organizations(awsConfig);
+  const org = v2Client("Organizations", awsConfig);
   const policyName = `guardian-${template}-${Date.now()}`;
   const created = await withAwsRetry("Organizations.createPolicy", () => org.createPolicy({
     Content: JSON.stringify(policyDocument),
@@ -2506,7 +2584,7 @@ async function runAccountsWithoutMfaQuery(scope: string, awsConfig: any): Promis
   for (const account of resolution.accounts) {
     try {
       const assumedConfig = await getAssumedAwsConfig(account.id, awsConfig.region);
-      const iam = new AWS.IAM(assumedConfig);
+      const iam = v2Client("IAM", assumedConfig);
       const users = await iam.listUsers({ MaxItems: 1000 }).promise();
       const nonCompliantUsers: string[] = [];
       for (const user of users.Users || []) {
@@ -2552,7 +2630,7 @@ async function runAccountsWithPublicS3Query(scope: string, awsConfig: any): Prom
   for (const account of resolution.accounts) {
     try {
       const assumedConfig = await getAssumedAwsConfig(account.id, awsConfig.region);
-      const s3 = new AWS.S3(assumedConfig);
+      const s3 = v2Client("S3", assumedConfig);
       const buckets = await s3.listBuckets().promise();
       for (const bucket of buckets.Buckets || []) {
         if (!bucket.Name) continue;
@@ -2601,7 +2679,7 @@ async function runAccountsWithPublicS3Query(scope: string, awsConfig: any): Prom
 }
 
 async function runListOrgScpsQuery(scope: string, awsConfig: any): Promise<OrgQueryResult> {
-  const org = new AWS.Organizations(awsConfig);
+  const org = v2Client("Organizations", awsConfig);
   const policies = await org.listPolicies({ Filter: "SERVICE_CONTROL_POLICY" }).promise();
   const summaries: Array<{ policyId: string; name: string; attachments: string[] }> = [];
   for (const policy of policies.Policies || []) {
@@ -2771,7 +2849,7 @@ function extractBucketName(rawQuery: string): string | null {
 }
 
 async function findPublicBuckets(awsConfig: any): Promise<string[]> {
-  const s3 = new AWS.S3(awsConfig);
+  const s3 = v2Client("S3", awsConfig);
   const buckets = await s3.listBuckets().promise();
   const publicBuckets: string[] = [];
   for (const bucket of buckets.Buckets || []) {
@@ -2790,13 +2868,13 @@ async function findPublicBuckets(awsConfig: any): Promise<string[]> {
 }
 
 async function listActiveIamUsers(awsConfig: any): Promise<string[]> {
-  const iam = new AWS.IAM(awsConfig);
+  const iam = v2Client("IAM", awsConfig);
   const users = await iam.listUsers({ MaxItems: 1000 }).promise();
   return (users.Users || []).map((user) => user.UserName).filter(Boolean) as string[];
 }
 
 async function captureIamSnapshotSummary(awsConfig: any): Promise<Record<string, any>> {
-  const iam = new AWS.IAM(awsConfig);
+  const iam = v2Client("IAM", awsConfig);
   const users = await iam.listUsers({ MaxItems: 1000 }).promise();
   const summary = [];
   for (const user of users.Users || []) {
@@ -2824,7 +2902,7 @@ async function scanPublicResourcesSummary(awsConfig: any): Promise<Record<string
 }
 
 async function getBucketFullConfig(awsConfig: any, bucket: string): Promise<Record<string, any>> {
-  const s3 = new AWS.S3(awsConfig);
+  const s3 = v2Client("S3", awsConfig);
   let publicAccessBlock = null;
   let versioning = null;
   let encryption = null;
@@ -2841,7 +2919,7 @@ async function getBucketFullConfig(awsConfig: any, bucket: string): Promise<Reco
 }
 
 async function listPublicObjectsSummary(awsConfig: any, bucket: string): Promise<Record<string, any>> {
-  const s3 = new AWS.S3(awsConfig);
+  const s3 = v2Client("S3", awsConfig);
   const listed = await s3.listObjectsV2({ Bucket: bucket, MaxKeys: 25 }).promise();
   return {
     bucket,
@@ -2851,7 +2929,7 @@ async function listPublicObjectsSummary(awsConfig: any, bucket: string): Promise
 }
 
 async function queryCloudTrailSummary(awsConfig: any, eventName: string, resourceName: string, hoursBack: number): Promise<Record<string, any>> {
-  const cloudTrail = new AWS.CloudTrail(awsConfig);
+  const cloudTrail = v2Client("CloudTrail", awsConfig);
   const endTime = new Date();
   const startTime = new Date(Date.now() - hoursBack * 60 * 60 * 1000);
   const response = await cloudTrail.lookupEvents({
@@ -2876,7 +2954,7 @@ async function queryCloudTrailSummary(awsConfig: any, eventName: string, resourc
 }
 
 async function verifyCloudTrailEnabledSummary(awsConfig: any): Promise<Record<string, any>> {
-  const cloudTrail = new AWS.CloudTrail(awsConfig);
+  const cloudTrail = v2Client("CloudTrail", awsConfig);
   const trails = await cloudTrail.describeTrails({ includeShadowTrails: true }).promise();
   return {
     trailCount: (trails.trailList || []).length,
@@ -2889,7 +2967,7 @@ async function verifyCloudTrailEnabledSummary(awsConfig: any): Promise<Record<st
 }
 
 async function stopEc2InstancesAction(awsConfig: any, instanceIds: string[]): Promise<Record<string, any>> {
-  const ec2 = new AWS.EC2(awsConfig);
+  const ec2 = v2Client("EC2", awsConfig);
   if (instanceIds.length === 0) {
     return { stoppedInstances: [], note: "No non-production idle instances were identified." };
   }
@@ -2900,7 +2978,7 @@ async function stopEc2InstancesAction(awsConfig: any, instanceIds: string[]): Pr
 }
 
 async function startEc2InstancesAction(awsConfig: any, instanceIds: string[]): Promise<Record<string, any>> {
-  const ec2 = new AWS.EC2(awsConfig);
+  const ec2 = v2Client("EC2", awsConfig);
   if (instanceIds.length === 0) return { startedInstances: [] };
   const result = await ec2.startInstances({ InstanceIds: instanceIds }).promise();
   return {
@@ -2944,7 +3022,7 @@ async function ensureAlertTopicAndSubscription(
   awsConfig: any,
   notificationEmail: string,
 ): Promise<{ topicArn: string; subscriptionStatus: "existing" | "pending_confirmation" }> {
-  const sns = new AWS.SNS(awsConfig);
+  const sns = v2Client("SNS", awsConfig);
   const accountId = await getAwsAccountId(awsConfig);
   const topicName = `cloudpilot-alerts-${accountId}`;
   const topic = await sns.createTopic({ Name: topicName }).promise();
@@ -2984,7 +3062,7 @@ async function sendIncidentNotification(
     return { sent: false, target: "No notification email configured", note: "Notification was skipped because no email is configured." };
   }
 
-  const sns = new AWS.SNS(awsConfig);
+  const sns = v2Client("SNS", awsConfig);
   const { topicArn, subscriptionStatus } = await ensureAlertTopicAndSubscription(awsConfig, notificationEmail);
 
   const publishResult = await sns.publish({
@@ -3003,7 +3081,7 @@ async function sendIncidentNotification(
 }
 
 async function rotateAccessKeysAction(awsConfig: any, users: string[]): Promise<Record<string, any>> {
-  const iam = new AWS.IAM(awsConfig);
+  const iam = v2Client("IAM", awsConfig);
   const rotated: Array<{ user: string; oldKeyIds: string[]; newKeyId?: string }> = [];
   for (const user of users) {
     const keys = await iam.listAccessKeys({ UserName: user }).promise();
@@ -3232,7 +3310,7 @@ async function executeRunbookStep(
     case "get_bucket_full_config":
       return getBucketFullConfig(awsConfig, String(step.params.bucket));
     case "put_public_access_block": {
-      const s3 = new AWS.S3(awsConfig);
+      const s3 = v2Client("S3", awsConfig);
       await s3.putPublicAccessBlock({
         Bucket: String(step.params.bucket),
         PublicAccessBlockConfiguration: {
@@ -3838,7 +3916,7 @@ function eventMatchesPolicy(event: EnrichedEvent, policy: EventResponsePolicyRec
 }
 
 async function fetchCloudTrailEventsForReplay(awsConfig: any, hoursBack: number): Promise<EnrichedEvent[]> {
-  const cloudTrail = new AWS.CloudTrail(awsConfig);
+  const cloudTrail = v2Client("CloudTrail", awsConfig);
   const endTime = new Date();
   const startTime = new Date(endTime.getTime() - hoursBack * 60 * 60 * 1000);
   const events: EnrichedEvent[] = [];
@@ -3997,7 +4075,7 @@ async function computeStateFingerprint(state: Record<string, any>): Promise<stri
 }
 
 async function getAwsAccountId(awsConfig: any): Promise<string> {
-  const sts = new AWS.STS(awsConfig);
+  const sts = v2Client("STS", awsConfig);
   const identity = await sts.getCallerIdentity({}).promise();
   if (!identity.Account) {
     throw new Error("Unable to resolve the AWS account ID for drift detection.");
@@ -4035,7 +4113,7 @@ function toIsoString(value: any): string | null {
 }
 
 async function captureSecurityGroupSnapshots(awsConfig: any, accountId: string): Promise<ResourceSnapshot[]> {
-  const ec2 = new AWS.EC2(awsConfig);
+  const ec2 = v2Client("EC2", awsConfig);
   const snapshots: ResourceSnapshot[] = [];
   const response = await ec2.describeSecurityGroups({ MaxResults: 1000 }).promise();
 
@@ -4060,7 +4138,7 @@ async function captureSecurityGroupSnapshots(awsConfig: any, accountId: string):
 }
 
 async function captureIamUserSnapshots(awsConfig: any, accountId: string): Promise<ResourceSnapshot[]> {
-  const iam = new AWS.IAM(awsConfig);
+  const iam = v2Client("IAM", awsConfig);
   const snapshots: ResourceSnapshot[] = [];
   const response = await iam.listUsers({ MaxItems: 1000 }).promise();
 
@@ -4094,7 +4172,7 @@ async function captureIamUserSnapshots(awsConfig: any, accountId: string): Promi
 }
 
 async function captureS3BucketSnapshots(awsConfig: any, accountId: string): Promise<ResourceSnapshot[]> {
-  const s3 = new AWS.S3(awsConfig);
+  const s3 = v2Client("S3", awsConfig);
   const snapshots: ResourceSnapshot[] = [];
   const response = await s3.listBuckets().promise();
 
@@ -4821,8 +4899,8 @@ function getEc2HourlyCost(instanceType: string | undefined): number {
 }
 
 async function findIdleEc2Instances(awsConfig: any, thresholdCpu = 2.0, lookbackHours = 24) {
-  const ec2 = new AWS.EC2(awsConfig);
-  const cloudWatch = new AWS.CloudWatch(awsConfig);
+  const ec2 = v2Client("EC2", awsConfig);
+  const cloudWatch = v2Client("CloudWatch", awsConfig);
   const idle: Array<{ id: string; type: string; avg_cpu: number; tags: Record<string, string>; hourly_cost: number }> = [];
 
   const response = await ec2.describeInstances({
@@ -4981,7 +5059,7 @@ function dedupeFindings(findings: UnifiedFinding[]): UnifiedFinding[] {
 }
 
 async function scanIam(awsConfig: any): Promise<UnifiedScannerResult> {
-  const iam = new AWS.IAM(awsConfig);
+  const iam = v2Client("IAM", awsConfig);
   const findings: UnifiedFinding[] = [];
   const limitations: string[] = [];
   let resourcesEvaluated = 0;
@@ -5060,7 +5138,7 @@ async function scanIam(awsConfig: any): Promise<UnifiedScannerResult> {
   return { findings, limitations, resourcesEvaluated, servicesAssessed: ["IAM"] };
 }
 
-async function getBucketTags(s3: AWS.S3, bucketName: string): Promise<Record<string, string>> {
+async function getBucketTags(s3: any, bucketName: string): Promise<Record<string, string>> {
   try {
     const tagging = await s3.getBucketTagging({ Bucket: bucketName }).promise();
     const tags: Record<string, string> = {};
@@ -5074,7 +5152,7 @@ async function getBucketTags(s3: AWS.S3, bucketName: string): Promise<Record<str
 }
 
 async function scanS3(awsConfig: any): Promise<UnifiedScannerResult> {
-  const s3 = new AWS.S3(awsConfig);
+  const s3 = v2Client("S3", awsConfig);
   const findings: UnifiedFinding[] = [];
   const limitations: string[] = [];
   let resourcesEvaluated = 0;
@@ -5156,7 +5234,7 @@ async function scanS3(awsConfig: any): Promise<UnifiedScannerResult> {
 }
 
 async function scanSecurityGroups(awsConfig: any): Promise<UnifiedScannerResult> {
-  const ec2 = new AWS.EC2(awsConfig);
+  const ec2 = v2Client("EC2", awsConfig);
   const findings: UnifiedFinding[] = [];
   const limitations: string[] = [];
   let resourcesEvaluated = 0;
@@ -5208,7 +5286,7 @@ async function scanSecurityGroups(awsConfig: any): Promise<UnifiedScannerResult>
 }
 
 async function scanEc2(awsConfig: any): Promise<UnifiedScannerResult> {
-  const ec2 = new AWS.EC2(awsConfig);
+  const ec2 = v2Client("EC2", awsConfig);
   const findings: UnifiedFinding[] = [];
   const limitations: string[] = [];
   let resourcesEvaluated = 0;
@@ -5382,7 +5460,7 @@ function buildUnifiedAuditCacheKey(accountId: string, plan: UnifiedAuditPlan): s
 
 async function runUnifiedAudit(rawQuery: string, awsConfig: any, supabaseAdmin: any, userId: string | null) {
   const plan = planUnifiedAudit(rawQuery);
-  const sts = new AWS.STS(awsConfig);
+  const sts = v2Client("STS", awsConfig);
   const identity = await withAwsRetry("STS.getCallerIdentity", () => sts.getCallerIdentity().promise());
   const accountId = identity.Account || "unknown-account";
   const cacheKey = buildUnifiedAuditCacheKey(accountId, plan);
@@ -5480,13 +5558,12 @@ const WORM_BUCKET_PREFIX = "cloudpilot-audit-worm-";
 async function pushAuditToAws(awsConfig: any, payload: Record<string, any>) {
   try {
     // ── 1. CloudWatch Logs ──────────────────────────────────────────────────
-    const cwl = new CloudWatchLogsClient(awsConfig);
     const groupName = CW_LOG_GROUP;
     const streamName = `agent-${new Date().toISOString().slice(0, 10)}`;
 
     // Ensure log group exists (idempotent)
     try {
-      await cwl.send(new CreateLogGroupCommand({ logGroupName: groupName }));
+      await v3Send("CloudWatchLogs", "CreateLogGroupCommand", awsConfig, { logGroupName: groupName });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (e: any) {
       if (e.name !== "ResourceAlreadyExistsException" && e.code !== "ResourceAlreadyExistsException") throw e;
@@ -5494,18 +5571,18 @@ async function pushAuditToAws(awsConfig: any, payload: Record<string, any>) {
 
     // Ensure log stream exists (idempotent)
     try {
-      await cwl.send(new CreateLogStreamCommand({ logGroupName: groupName, logStreamName: streamName }));
+      await v3Send("CloudWatchLogs", "CreateLogStreamCommand", awsConfig, { logGroupName: groupName, logStreamName: streamName });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (e: any) {
       if (e.name !== "ResourceAlreadyExistsException" && e.code !== "ResourceAlreadyExistsException") throw e;
     }
 
     // Get the upload sequence token
-    const desc = await cwl.send(new DescribeLogStreamsCommand({
+    const desc = await v3Send("CloudWatchLogs", "DescribeLogStreamsCommand", awsConfig, {
       logGroupName: groupName,
       logStreamNamePrefix: streamName,
       limit: 1,
-    }));
+    });
     const seqToken = desc.logStreams?.[0]?.uploadSequenceToken;
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -5519,24 +5596,22 @@ async function pushAuditToAws(awsConfig: any, payload: Record<string, any>) {
     };
     if (seqToken) cwParams.sequenceToken = seqToken;
 
-    await cwl.send(new PutLogEventsCommand(cwParams));
+    await v3Send("CloudWatchLogs", "PutLogEventsCommand", awsConfig, cwParams);
 
     // ── 2. WORM S3 (Object Lock — Compliance Mode) ──────────────────────────
-    const sts = new STSClient(awsConfig);
-    const identity = await sts.send(new GetCallerIdentityCommand({}));
+    const identity = await v3Send("STS", "GetCallerIdentityCommand", awsConfig, {});
     const accountId = identity.Account;
     const wormBucket = `${WORM_BUCKET_PREFIX}${accountId}`;
-    const s3 = new S3Client(awsConfig);
 
     // Ensure bucket exists with Object Lock enabled (must be set at creation)
     try {
-      await s3.send(new CreateBucketCommand({
+      await v3Send("S3", "CreateBucketCommand", awsConfig, {
         Bucket: wormBucket,
         ObjectLockEnabledForBucket: true,
-      }));
+      });
 
       // Set default retention — 1 year Compliance mode (immutable)
-      await s3.send(new PutObjectLockConfigurationCommand({
+      await v3Send("S3", "PutObjectLockConfigurationCommand", awsConfig, {
         Bucket: wormBucket,
         ObjectLockConfiguration: {
           ObjectLockEnabled: "Enabled",
@@ -5547,10 +5622,10 @@ async function pushAuditToAws(awsConfig: any, payload: Record<string, any>) {
             },
           },
         },
-      }));
+      });
 
       // Block all public access
-      await s3.send(new PutPublicAccessBlockCommand({
+      await v3Send("S3", "PutPublicAccessBlockCommand", awsConfig, {
         Bucket: wormBucket,
         PublicAccessBlockConfiguration: {
           BlockPublicAcls: true,
@@ -5558,15 +5633,15 @@ async function pushAuditToAws(awsConfig: any, payload: Record<string, any>) {
           BlockPublicPolicy: true,
           RestrictPublicBuckets: true,
         },
-      }));
+      });
 
       // Enable AES-256 encryption
-      await s3.send(new PutBucketEncryptionCommand({
+      await v3Send("S3", "PutBucketEncryptionCommand", awsConfig, {
         Bucket: wormBucket,
         ServerSideEncryptionConfiguration: {
           Rules: [{ ApplyServerSideEncryptionByDefault: { SSEAlgorithm: "AES256" } }],
         },
-      }));
+      });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (e: any) {
       // BucketAlreadyOwnedByYou or BucketAlreadyExists means it's already set up
@@ -5579,13 +5654,13 @@ async function pushAuditToAws(awsConfig: any, payload: Record<string, any>) {
     const ts = payload.timestamp || new Date().toISOString();
     const logKey = `audit/${ts.slice(0, 10)}/${ts.replace(/:/g, "-")}-${crypto.randomUUID()}.json`;
 
-    await s3.send(new PutObjectCommand({
+    await v3Send("S3", "PutObjectCommand", awsConfig, {
       Bucket: wormBucket,
       Key: logKey,
       Body: JSON.stringify(payload, null, 2),
       ContentType: "application/json",
       ServerSideEncryption: "AES256",
-    }));
+    });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (e: any) {
     // Audit failures are non-fatal — log but don't break the agent flow
@@ -7019,7 +7094,7 @@ serve(async (req) => {
                 throw new Error("A CIDR or source security group is required.");
               }
 
-              const ec2 = new AWS.EC2(awsConfig);
+              const ec2 = v2Client("EC2", awsConfig);
               const targetGroup = await resolveSecurityGroup(ec2, args.targetGroupIdentifier);
               const sourceGroup = args.sourceGroupIdentifier
                 ? await resolveSecurityGroup(ec2, args.sourceGroupIdentifier)
@@ -7294,7 +7369,7 @@ serve(async (req) => {
                       : undefined,
                     description: rawArgs.description ? sanitizeString(rawArgs.description, 255) : undefined,
                   };
-                  const ec2 = new AWS.EC2(awsConfig);
+                  const ec2 = v2Client("EC2", awsConfig);
                   const targetGroup = await resolveSecurityGroup(ec2, args.targetGroupIdentifier);
                   const sourceGroup = args.sourceGroupIdentifier
                     ? await resolveSecurityGroup(ec2, args.sourceGroupIdentifier)
@@ -7461,7 +7536,7 @@ serve(async (req) => {
                 });
               }
 
-              const iam = new AWS.IAM(awsConfig);
+              const iam = v2Client("IAM", awsConfig);
               await ensureIamPrincipalExists(iam, plan.args.principalType, plan.args.principalIdentifier);
 
               const createPolicyResult = await withAwsRetry("IAM.createPolicy", () => iam.createPolicy({
@@ -7741,66 +7816,16 @@ serve(async (req) => {
 
               console.log(`[CloudPilot] AWS API: ${service}.${operation} [${validatorResult.riskLevel}]`, JSON.stringify(args.params ?? {}));
 
-              // Dynamically import AWS SDK v3 client and command using literal strings
-              // required by Supabase Edge Functions / Deno Deploy bundler for static analysis
+              // Use the shared dynamic module loader (eliminates duplicate switch statement)
               let module: any;
               try {
-                switch (service) {
-                  case "S3": module = await import("npm:@aws-sdk/client-s3@3.744.0"); break;
-                  case "EC2": module = await import("npm:@aws-sdk/client-ec2@3.744.0"); break;
-                  case "IAM": module = await import("npm:@aws-sdk/client-iam@3.744.0"); break;
-                  case "STS": module = await import("npm:@aws-sdk/client-sts@3.744.0"); break;
-                  case "GuardDuty": module = await import("npm:@aws-sdk/client-guardduty@3.744.0"); break;
-                  case "SecurityHub": module = await import("npm:@aws-sdk/client-securityhub@3.744.0"); break;
-                  case "CloudTrail": module = await import("npm:@aws-sdk/client-cloudtrail@3.744.0"); break;
-                  case "Config": module = await import("npm:@aws-sdk/client-config-service@3.744.0"); break;
-                  case "RDS": module = await import("npm:@aws-sdk/client-rds@3.744.0"); break;
-                  case "Lambda": module = await import("npm:@aws-sdk/client-lambda@3.744.0"); break;
-                  case "EKS": module = await import("npm:@aws-sdk/client-eks@3.744.0"); break;
-                  case "ECS": module = await import("npm:@aws-sdk/client-ecs@3.744.0"); break;
-                  case "KMS": module = await import("npm:@aws-sdk/client-kms@3.744.0"); break;
-                  case "SecretsManager": module = await import("npm:@aws-sdk/client-secrets-manager@3.744.0"); break;
-                  case "SSM": module = await import("npm:@aws-sdk/client-ssm@3.744.0"); break;
-                  case "Organizations": module = await import("npm:@aws-sdk/client-organizations@3.744.0"); break;
-                  case "WAFv2": module = await import("npm:@aws-sdk/client-wafv2@3.744.0"); break;
-                  case "CloudFront": module = await import("npm:@aws-sdk/client-cloudfront@3.744.0"); break;
-                  case "SNS": module = await import("npm:@aws-sdk/client-sns@3.744.0"); break;
-                  case "SQS": module = await import("npm:@aws-sdk/client-sqs@3.744.0"); break;
-                  case "ECR": module = await import("npm:@aws-sdk/client-ecr@3.744.0"); break;
-                  case "Athena": module = await import("npm:@aws-sdk/client-athena@3.744.0"); break;
-                  case "CloudWatch": module = await import("npm:@aws-sdk/client-cloudwatch@3.744.0"); break;
-                  case "CloudWatchLogs": module = await import("npm:@aws-sdk/client-cloudwatch-logs@3.744.0"); break;
-                  case "Inspector2": module = await import("npm:@aws-sdk/client-inspector2@3.744.0"); break;
-                  case "AccessAnalyzer": module = await import("npm:@aws-sdk/client-accessanalyzer@3.744.0"); break;
-                  case "Macie2": module = await import("npm:@aws-sdk/client-macie2@3.744.0"); break;
-                  case "NetworkFirewall": module = await import("npm:@aws-sdk/client-network-firewall@3.744.0"); break;
-                  case "Shield": module = await import("npm:@aws-sdk/client-shield@3.744.0"); break;
-                  case "ACM": module = await import("npm:@aws-sdk/client-acm@3.744.0"); break;
-                  case "APIGateway": module = await import("npm:@aws-sdk/client-api-gateway@3.744.0"); break;
-                  case "CognitoIdentityServiceProvider": module = await import("npm:@aws-sdk/client-cognito-identity-provider@3.744.0"); break;
-                  case "EventBridge": module = await import("npm:@aws-sdk/client-eventbridge@3.744.0"); break;
-                  case "StepFunctions": module = await import("npm:@aws-sdk/client-sfn@3.744.0"); break;
-                  case "ElastiCache": module = await import("npm:@aws-sdk/client-elasticache@3.744.0"); break;
-                  case "Redshift": module = await import("npm:@aws-sdk/client-redshift@3.744.0"); break;
-                  case "DynamoDB": module = await import("npm:@aws-sdk/client-dynamodb@3.744.0"); break;
-                  case "Route53": module = await import("npm:@aws-sdk/client-route53@3.744.0"); break;
-                  case "ELBv2": module = await import("npm:@aws-sdk/client-elastic-load-balancing-v2@3.744.0"); break;
-                  case "AutoScaling": module = await import("npm:@aws-sdk/client-auto-scaling@3.744.0"); break;
-                  default:
-                    throw new Error(`AWS service '${service}' is not mapped to an SDK v3 package.`);
-                }
+                module = await loadAwsModule(service);
               } catch (e) {
                 throw new Error(`AWS service package for '${service}' could not be imported. Ensure the service is supported in SDK v3.`);
               }
 
-              // Map legacy v2 class names to v3 client names if they differ
-              let clientName = `${service}Client`;
-              if (service === "Config") clientName = "ConfigServiceClient";
-              if (service === "CognitoIdentityServiceProvider") clientName = "CognitoIdentityProviderClient";
-              if (service === "StepFunctions") clientName = "SFNClient";
-              if (service === "ELBv2") clientName = "ElasticLoadBalancingV2Client";
-              if (service === "AutoScaling") clientName = "AutoScalingClient";
-              if (service === "APIGateway") clientName = "APIGatewayClient";
+              // Use shared client name map
+              const clientName = V3_CLIENT_NAMES[service] || `${service}Client`;
 
               const ClientClass = module[clientName];
               if (!ClientClass) {
