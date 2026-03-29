@@ -6,6 +6,12 @@ verify_jwt = false
 [functions.aws-agent-tools]
 verify_jwt = false
 
+[functions.aws-agent-scanner]
+verify_jwt = false
+
+[functions.aws-agent-ops]
+verify_jwt = false
+
 [functions.guardian-scheduler]
 verify_jwt = false
 
