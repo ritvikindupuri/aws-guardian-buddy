@@ -17,3 +17,6 @@ verify_jwt = false
 
 [functions.guardian-event-processor]
 verify_jwt = false
+
+[functions.aws-executor]
+verify_jwt = false

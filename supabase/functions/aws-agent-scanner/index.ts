@@ -18,92 +18,50 @@ const ENV = {
   supabaseServiceRoleKey: requireEnv("SUPABASE_SERVICE_ROLE_KEY"),
 };
 
-// ── AWS SDK v3 Dynamic Module Loader ────────────────────────────────────────
-// Replaces the monolithic AWS SDK v2 import with lazy-loaded v3 clients.
-// This eliminates the ~200MB bundle that caused deploy timeouts.
-const _awsModuleCache: Record<string, any> = {};
+// ── AWS Executor Proxy ──────────────────────────────────────────────────────
+// Delegates all AWS SDK calls to the aws-executor edge function to avoid
+// bundling 40+ @aws-sdk/client-* packages in this function.
+const EXECUTOR_URL = `${ENV.supabaseUrl}/functions/v1/aws-executor`;
 
-const _awsSvcMap: Record<string, string> = {
-  IAM: "iam", EC2: "ec2", S3: "s3", STS: "sts",
-  Organizations: "organizations", CloudWatch: "cloudwatch",
-  CostExplorer: "cost-explorer", SNS: "sns",
-  CloudTrail: "cloudtrail", CloudWatchLogs: "cloudwatch-logs",
-  GuardDuty: "guardduty", SecurityHub: "securityhub",
-  Config: "config-service", RDS: "rds", Lambda: "lambda",
-  EKS: "eks", ECS: "ecs", KMS: "kms",
-  SecretsManager: "secrets-manager", SSM: "ssm",
-  WAFv2: "wafv2", CloudFront: "cloudfront", SQS: "sqs",
-  ECR: "ecr", Athena: "athena", Inspector2: "inspector2",
-  AccessAnalyzer: "accessanalyzer", Macie2: "macie2",
-  NetworkFirewall: "network-firewall", Shield: "shield",
-  ACM: "acm", APIGateway: "api-gateway",
-  CognitoIdentityServiceProvider: "cognito-identity-provider",
-  EventBridge: "eventbridge", StepFunctions: "sfn",
-  ElastiCache: "elasticache", Redshift: "redshift",
-  DynamoDB: "dynamodb", Route53: "route53",
-  ELBv2: "elastic-load-balancing-v2", AutoScaling: "auto-scaling",
-};
-
-async function loadAwsModule(service: string): Promise<any> {
-  if (_awsModuleCache[service]) return _awsModuleCache[service];
-  const pkg = _awsSvcMap[service];
-  if (!pkg) throw new Error(`Unsupported AWS service: ${service}`);
-  // Dynamic specifier prevents bundler from statically resolving all 40 SDK packages
-  const specifier = "npm:@aws-sdk/client-" + pkg + "@3.744.0";
-  const mod = await import(specifier);
-  _awsModuleCache[service] = mod;
-  return mod;
+async function awsExec(service: string, commandName: string, config: any, params: any): Promise<any> {
+  const resp = await fetch(EXECUTOR_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${ENV.supabaseServiceRoleKey}`,
+    },
+    body: JSON.stringify({ service, commandName, config, params }),
+  });
+  const data = await resp.json();
+  if (data.error) {
+    const err: any = new Error(data.error);
+    err.name = data.name || "Error";
+    err.code = data.code || "UNKNOWN";
+    err.$metadata = { httpStatusCode: data.statusCode || 500 };
+    err.statusCode = data.statusCode || 500;
+    throw err;
+  }
+  return data.result;
 }
 
-const V3_CLIENT_NAMES: Record<string, string> = {
-  IAM: "IAMClient", EC2: "EC2Client", S3: "S3Client", STS: "STSClient",
-  Organizations: "OrganizationsClient", CloudWatch: "CloudWatchClient",
-  CostExplorer: "CostExplorerClient", SNS: "SNSClient", CloudTrail: "CloudTrailClient",
-  CloudWatchLogs: "CloudWatchLogsClient", GuardDuty: "GuardDutyClient",
-  SecurityHub: "SecurityHubClient", Config: "ConfigServiceClient",
-  RDS: "RDSClient", Lambda: "LambdaClient", EKS: "EKSClient", ECS: "ECSClient",
-  KMS: "KMSClient", SecretsManager: "SecretsManagerClient", SSM: "SSMClient",
-  WAFv2: "WAFv2Client", CloudFront: "CloudFrontClient", SQS: "SQSClient",
-  ECR: "ECRClient", Athena: "AthenaClient", Inspector2: "Inspector2Client",
-  AccessAnalyzer: "AccessAnalyzerClient", Macie2: "Macie2Client",
-  NetworkFirewall: "NetworkFirewallClient", Shield: "ShieldClient",
-  ACM: "ACMClient", APIGateway: "APIGatewayClient",
-  CognitoIdentityServiceProvider: "CognitoIdentityProviderClient",
-  EventBridge: "EventBridgeClient", StepFunctions: "SFNClient",
-  ElastiCache: "ElastiCacheClient", Redshift: "RedshiftClient",
-  DynamoDB: "DynamoDBClient", Route53: "Route53Client",
-  ELBv2: "ElasticLoadBalancingV2Client", AutoScaling: "AutoScalingClient",
-};
-
 // v2-compatible Proxy wrapper: allows `v2Client("IAM", config).listUsers({}).promise()`
-// This preserves all existing .promise() call patterns while using v3 under the hood
 function v2Client(service: string, config: any): any {
   return new Proxy({}, {
     get(_target, method: string) {
       if (method === "then" || method === "catch" || typeof method === "symbol") return undefined;
       return (params: any = {}) => ({
         promise: async () => {
-          const mod = await loadAwsModule(service);
-          const clientName = V3_CLIENT_NAMES[service] || `${service}Client`;
-          const client = new mod[clientName]({ ...config, maxAttempts: 4 });
           const commandName = method.charAt(0).toUpperCase() + method.slice(1) + "Command";
-          const CommandClass = mod[commandName];
-          if (!CommandClass) throw new Error(`Unknown command: ${service}.${commandName}`);
-          return client.send(new CommandClass(params));
+          return awsExec(service, commandName, config, params);
         },
       });
     },
   });
 }
 
-// Direct v3 send helper for pushAuditToAws and other functions that use v3 directly
+// Direct v3 send helper
 async function v3Send(service: string, commandName: string, config: any, params: any): Promise<any> {
-  const mod = await loadAwsModule(service);
-  const clientName = V3_CLIENT_NAMES[service] || `${service}Client`;
-  const client = new mod[clientName](config);
-  const CommandClass = mod[commandName];
-  if (!CommandClass) throw new Error(`Unknown v3 command: ${service}.${commandName}`);
-  return client.send(new CommandClass(params));
+  return awsExec(service, commandName, config, params);
 }
 
 
@@ -2895,37 +2853,14 @@ serve(async (req) => {
 
               console.log(`[CloudPilot] AWS API: ${service}.${operation} [${validatorResult.riskLevel}]`, JSON.stringify(args.params ?? {}));
 
-              // Use the shared dynamic module loader (eliminates duplicate switch statement)
-              let module: any;
-              try {
-                module = await loadAwsModule(service);
-              } catch (e) {
-                throw new Error(`AWS service package for '${service}' could not be imported. Ensure the service is supported in SDK v3.`);
-              }
+              // Use aws-executor proxy for the SDK call
+              const commandName = `${operation.charAt(0).toUpperCase() + operation.slice(1)}Command`;
 
-              // Use shared client name map
-              const clientName = V3_CLIENT_NAMES[service] || `${service}Client`;
-
-              const ClientClass = module[clientName];
-              if (!ClientClass) {
-                 throw new Error(`AWS service client '${clientName}' not found for service '${service}'.`);
-              }
-
-              // Handle commands which might need special capitalization (though mostly uppercase first letter works)
-              let commandName = `${operation.charAt(0).toUpperCase() + operation.slice(1)}Command`;
-              const CommandClass = module[commandName];
-              if (!CommandClass) {
-                 throw new Error(`Operation command '${commandName}' not found for service '${service}'. Check the operation name.`);
-              }
-
-              const client = new ClientClass(awsConfig);
-              const command = new CommandClass(args.params || {});
-
-              const result = await withAwsRetry(`${service}.${operation}`, () => client.send(command));
+              const result = await withAwsRetry(`${service}.${operation}`, () =>
+                awsExec(service, commandName, awsConfig, args.params || {})
+              );
               const execTime = Date.now() - startTime;
-              
-              // Extract data, removing non-serializable v3 SDK wrapper properties if needed
-              const { $metadata, ...resultData } = result as any;
+              const resultData = result;
 
               // Truncate very large responses to prevent context overflow
               let resultStr = JSON.stringify(resultData);
