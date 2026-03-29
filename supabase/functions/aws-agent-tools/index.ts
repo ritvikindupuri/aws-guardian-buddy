@@ -4863,7 +4863,6 @@ function sanitizeString(val: unknown, maxLen: number): string {
 
 
 
-
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -4874,285 +4873,1972 @@ serve(async (req) => {
     const { toolCalls, awsConfig, userId, conversationId, notificationEmail, userHasConfirmedMutation, latestUserMessage } = body;
 
     const supabaseAdmin = createClient(ENV.supabaseUrl, ENV.supabaseServiceRoleKey);
-    const results: Array<{ toolCallId: string; content: string; auditSummary?: any }> = [];
+    
+    // The original dispatch code pushes results into apiMessages as {role: "tool", tool_call_id, content}
+    // We collect these and return them
+    const apiMessages: any[] = [];
+    let latestUnifiedAuditSummary: Record<string, any> | null = null;
 
+    // Process each tool call using the original dispatch logic
     for (const toolCall of toolCalls) {
-      const startTime = Date.now();
-      try {
-        const toolName = toolCall.function.name;
-        const rawArgs = JSON.parse(toolCall.function.arguments || "{}");
-        let result: any = null;
-        let auditSummary: any = undefined;
+          if (toolCall.function.name === "manage_cost_rule") {
+            const startTime = Date.now();
+            try {
+              if (!userId) {
+                throw new Error("Authentication is required to store cost automation rules.");
+              }
 
-        if (toolName === "execute_aws_api") {
-          const service = sanitizeString(rawArgs.service, 64);
-          const operation = sanitizeString(rawArgs.operation, 128);
+              const rawArgs = JSON.parse(toolCall.function.arguments);
+              const rawQuery = sanitizeString(rawArgs.rawQuery, 2000);
+              if (!rawQuery) {
+                throw new Error("A raw cost rule query is required.");
+              }
 
-          if (!ALLOWED_AWS_SERVICES.has(service)) {
-            throw new Error(`AWS service '${service}' is not allowed. Permitted: ${[...ALLOWED_AWS_SERVICES].join(", ")}`);
-          }
+              const rule = parseCostRuleFromQuery(rawQuery, notificationEmail || null);
+              await saveCostRule(supabaseAdmin, userId, rule);
+              const execTime = Date.now() - startTime;
 
-          const validatorResult = validatePrivilegeEscalation(service, operation, rawArgs.params);
-          if (!validatorResult.allowed) {
-            if (userId) {
-              supabaseAdmin.from("agent_audit_log").insert({
-                user_id: userId, aws_service: service, aws_operation: operation,
-                aws_region: awsConfig.region, status: "blocked",
-                error_message: validatorResult.reason, validator_result: validatorResult.riskLevel,
-                execution_time_ms: Date.now() - startTime,
-              }).then();
+              if (userId) {
+                supabaseAdmin.from("agent_audit_log").insert({
+                  user_id: userId,
+                  aws_service: "COST",
+                  aws_operation: "manageCostRule",
+                  aws_region: awsConfig.region,
+                  status: "success",
+                  validator_result: "ALLOWED",
+                  execution_time_ms: execTime,
+                }).then();
+              }
+
+              apiMessages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify({
+                  status: "stored",
+                  rule,
+                }),
+              } as any);
+            } catch (err: any) {
+              apiMessages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify({ error: err?.message || "Cost rule creation failed." }),
+              } as any);
             }
-            throw new Error(validatorResult.reason);
-          }
+          } else if (toolCall.function.name === "run_cost_anomaly_scan") {
+            const startTime = Date.now();
+            try {
+              const rawArgs = JSON.parse(toolCall.function.arguments || "{}");
+              const daysBack = Number(rawArgs.daysBack || 14);
+              const rules = userId ? await fetchCostRules(supabaseAdmin, userId) : [];
+              const costData = await fetchCostData(awsConfig, daysBack);
+              const anomalies = detectCostAnomalies(costData.daily_by_service, rules);
+              const idleInstances = await findIdleEc2Instances(awsConfig);
+              const remediations = classifyCostRemediations(anomalies, idleInstances);
+              const execTime = Date.now() - startTime;
 
-          console.log(`[CloudPilot] AWS API: ${service}.${operation} [${validatorResult.riskLevel}]`);
+              if (userId) {
+                supabaseAdmin.from("agent_audit_log").insert({
+                  user_id: userId,
+                  aws_service: "COST",
+                  aws_operation: "runCostAnomalyScan",
+                  aws_region: awsConfig.region,
+                  status: "success",
+                  validator_result: "ALLOWED",
+                  execution_time_ms: execTime,
+                }).then();
+              }
 
-          let module: any;
-          try {
-            module = await loadAwsModule(service);
-          } catch {
-            throw new Error(`AWS service '${service}' could not be imported.`);
-          }
+              apiMessages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify({
+                  period: costData.period,
+                  ruleCount: rules.length,
+                  rules,
+                  anomalies,
+                  idleInstances,
+                  remediations,
+                  freshness: {
+                    status: "fresh",
+                    generatedAt: new Date().toISOString(),
+                  },
+                }),
+              } as any);
+            } catch (err: any) {
+              apiMessages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify({ error: err?.message || "Cost anomaly scan failed." }),
+              } as any);
+            }
+          } else if (toolCall.function.name === "manage_drift_baseline") {
+            const startTime = Date.now();
+            try {
+              if (!userId) {
+                throw new Error("Authentication is required for drift baseline management.");
+              }
 
-          const clientName = V3_CLIENT_NAMES[service] || `${service}Client`;
-          const ClientClass = module[clientName];
-          if (!ClientClass) throw new Error(`Client '${clientName}' not found for '${service}'.`);
+              const rawArgs = JSON.parse(toolCall.function.arguments || "{}");
+              const action = sanitizeString(rawArgs.action, 64) as "capture_baseline" | "acknowledge_drift";
 
-          const commandName = `${operation.charAt(0).toUpperCase() + operation.slice(1)}Command`;
-          const CommandClass = module[commandName];
-          if (!CommandClass) throw new Error(`Command '${commandName}' not found for '${service}'.`);
+              if (action === "capture_baseline") {
+                const scope = (sanitizeString(rawArgs.scope || "full", 64) || "full") as DriftScope;
+                const accountId = await getAwsAccountId(awsConfig);
+                const snapshots = await captureSnapshotsForScope(scope, awsConfig, accountId);
+                await upsertBaselineSnapshots(supabaseAdmin, userId, snapshots);
+                const execTime = Date.now() - startTime;
 
-          const client = new ClientClass(awsConfig);
-          const apiResult = await withAwsRetry(`${service}.${operation}`, () => client.send(new CommandClass(rawArgs.params || {})));
-          const execTime = Date.now() - startTime;
-          const { $metadata, ...resultData } = apiResult as any;
+                if (userId) {
+                  supabaseAdmin.from("agent_audit_log").insert({
+                    user_id: userId,
+                    aws_service: "MULTI",
+                    aws_operation: "captureDriftBaseline",
+                    aws_region: awsConfig.region,
+                    status: "success",
+                    validator_result: "ALLOWED",
+                    execution_time_ms: execTime,
+                  }).then();
+                }
 
-          let resultStr = JSON.stringify(resultData);
-          if (resultStr.length > 100000) {
-            resultStr = resultStr.slice(0, 100000) + "... [TRUNCATED]";
-          }
+                pushAuditToAws(awsConfig, {
+                  timestamp: new Date().toISOString(),
+                  userId,
+                  service: "MULTI",
+                  operation: "captureDriftBaseline",
+                  region: awsConfig.region,
+                  status: "success",
+                  scope,
+                  snapshotCount: snapshots.length,
+                  executionTimeMs: execTime,
+                });
 
-          if (userId) {
-            supabaseAdmin.from("agent_audit_log").insert({
-              user_id: userId, aws_service: service, aws_operation: operation,
-              aws_region: awsConfig.region,
-              params_hash: rawArgs.params ? btoa(JSON.stringify(rawArgs.params).slice(0, 200)) : null,
-              status: "success", validator_result: validatorResult.riskLevel,
-              execution_time_ms: execTime,
-            }).then();
-          }
+                apiMessages.push({
+                  role: "tool",
+                  tool_call_id: toolCall.id,
+                  content: JSON.stringify({
+                    status: "baseline_captured",
+                    scope,
+                    accountId,
+                    snapshotCount: snapshots.length,
+                    capturedAt: new Date().toISOString(),
+                  }),
+                } as any);
+                continue;
+              }
 
-          pushAuditToAws(awsConfig, {
-            timestamp: new Date().toISOString(), userId, service, operation,
-            region: awsConfig.region, params: rawArgs.params, status: "success",
-            validatorResult: validatorResult.riskLevel, executionTimeMs: execTime,
-          });
+              if (action === "acknowledge_drift") {
+                const driftEventId = sanitizeString(rawArgs.driftEventId, 128);
+                if (!driftEventId) {
+                  throw new Error("A drift event ID is required to acknowledge drift.");
+                }
 
-          const prefix = validatorResult.riskLevel === "HIGH_RISK" ? `[VALIDATOR WARNING: ${validatorResult.reason}]\n\n` : "";
-          results.push({ toolCallId: toolCall.id, content: prefix + resultStr });
-          continue;
+                const acknowledgement = await acknowledgeDriftEvent(supabaseAdmin, userId, driftEventId);
+                const execTime = Date.now() - startTime;
 
-        } else if (toolName === "run_unified_audit") {
-          const rawQuery = sanitizeString(rawArgs.rawQuery, 2000);
-          if (!rawQuery) throw new Error("A raw audit query is required.");
+                if (userId) {
+                  supabaseAdmin.from("agent_audit_log").insert({
+                    user_id: userId,
+                    aws_service: "MULTI",
+                    aws_operation: "acknowledgeDriftEvent",
+                    aws_region: awsConfig.region,
+                    status: "success",
+                    validator_result: "ALLOWED",
+                    execution_time_ms: execTime,
+                  }).then();
+                }
 
-          const auditResult = await runUnifiedAudit(rawQuery, awsConfig, supabaseAdmin, userId);
-          const execTime = Date.now() - startTime;
+                pushAuditToAws(awsConfig, {
+                  timestamp: new Date().toISOString(),
+                  userId,
+                  service: "MULTI",
+                  operation: "acknowledgeDriftEvent",
+                  region: awsConfig.region,
+                  status: "success",
+                  driftEventId,
+                  resourceId: acknowledgement.resourceId,
+                  resourceType: acknowledgement.resourceType,
+                  executionTimeMs: execTime,
+                });
 
-          if (userId) {
-            supabaseAdmin.from("agent_audit_log").insert({
-              user_id: userId, aws_service: "MULTI", aws_operation: "runUnifiedAudit",
-              aws_region: awsConfig.region, status: "success", validator_result: "ALLOWED",
-              execution_time_ms: execTime,
-            }).then();
-          }
+                apiMessages.push({
+                  role: "tool",
+                  tool_call_id: toolCall.id,
+                  content: JSON.stringify({
+                    status: "acknowledged",
+                    ...acknowledgement,
+                    message: "The drift event has been resolved and the baseline has been updated to the current state.",
+                  }),
+                } as any);
+                continue;
+              }
 
-          pushAuditToAws(awsConfig, {
-            timestamp: new Date().toISOString(), userId, service: "MULTI",
-            operation: "runUnifiedAudit", region: awsConfig.region, status: "success",
-            executionTimeMs: execTime,
-          });
+              throw new Error(`Unsupported drift baseline action '${action}'.`);
+            } catch (err: any) {
+              const execTime = Date.now() - startTime;
+              const errorMessage = err?.message || "Drift baseline management failed.";
 
-          auditSummary = auditResult;
-          result = auditResult;
+              if (userId) {
+                supabaseAdmin.from("agent_audit_log").insert({
+                  user_id: userId,
+                  aws_service: "MULTI",
+                  aws_operation: "manageDriftBaseline",
+                  aws_region: awsConfig.region,
+                  status: "error",
+                  error_code: err?.code || null,
+                  error_message: errorMessage.slice(0, 2000),
+                  validator_result: "ALLOWED",
+                  execution_time_ms: execTime,
+                }).then();
+              }
 
-        } else if (toolName === "manage_cost_rule") {
-          if (!userId) throw new Error("Authentication required.");
-          const rawQuery = sanitizeString(rawArgs.rawQuery, 2000);
-          if (!rawQuery) throw new Error("A cost rule query is required.");
-          const rule = parseCostRuleFromQuery(rawQuery, notificationEmail || null);
-          await saveCostRule(supabaseAdmin, userId, rule);
-          result = { status: "stored", rule };
+              pushAuditToAws(awsConfig, {
+                timestamp: new Date().toISOString(),
+                userId,
+                service: "MULTI",
+                operation: "manageDriftBaseline",
+                region: awsConfig.region,
+                status: "error",
+                errorCode: err?.code || null,
+                errorMessage: errorMessage.slice(0, 2000),
+                executionTimeMs: execTime,
+              });
 
-        } else if (toolName === "run_cost_anomaly_scan") {
-          const daysBack = Number(rawArgs.daysBack || 14);
-          const rules = userId ? await fetchCostRules(supabaseAdmin, userId) : [];
-          const costData = await fetchCostData(awsConfig, daysBack);
-          const anomalies = detectCostAnomalies(costData.daily_by_service, rules);
-          const idleInstances = await findIdleEc2Instances(awsConfig);
-          const remediations = classifyCostRemediations(anomalies, idleInstances);
-          result = { period: costData.period, ruleCount: rules.length, rules, anomalies, idleInstances, remediations, freshness: { status: "fresh", generatedAt: new Date().toISOString() } };
+              apiMessages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify({ error: errorMessage }),
+              } as any);
+            }
+          } else if (toolCall.function.name === "run_drift_detection") {
+            const startTime = Date.now();
+            try {
+              if (!userId) {
+                throw new Error("Authentication is required for drift detection.");
+              }
 
-        } else if (toolName === "manage_drift_baseline") {
-          if (!userId) throw new Error("Authentication required for drift baseline.");
-          const action = sanitizeString(rawArgs.action, 64);
-          if (action === "capture_baseline") {
-            const scope = (sanitizeString(rawArgs.scope || "full", 64) || "full") as DriftScope;
-            const accountId = await getAwsAccountId(awsConfig);
-            const snapshots = await captureSnapshotsForScope(scope, awsConfig, accountId);
-            await upsertBaselineSnapshots(supabaseAdmin, userId, snapshots);
-            result = { status: "baseline_captured", scope, accountId, snapshotCount: snapshots.length, capturedAt: new Date().toISOString() };
-          } else if (action === "acknowledge_drift") {
-            const driftEventId = sanitizeString(rawArgs.driftEventId, 128);
-            if (!driftEventId) throw new Error("A drift event ID is required.");
-            const ack = await acknowledgeDriftEvent(supabaseAdmin, userId, driftEventId);
-            result = { status: "acknowledged", ...ack, message: "Drift resolved and baseline updated." };
-          } else {
-            throw new Error(`Unsupported drift action '${action}'.`);
-          }
+              const rawArgs = JSON.parse(toolCall.function.arguments || "{}");
+              const rawQuery = sanitizeString(rawArgs.rawQuery, 2000);
+              if (!rawQuery) {
+                throw new Error("A raw drift query is required.");
+              }
 
-        } else if (toolName === "run_drift_detection") {
-          if (!userId) throw new Error("Authentication required for drift detection.");
-          const rawQuery = sanitizeString(rawArgs.rawQuery, 2000);
-          if (!rawQuery) throw new Error("A drift query is required.");
-          result = await runDriftDetection(supabaseAdmin, userId, rawQuery, awsConfig);
+              const driftResult = await runDriftDetection(supabaseAdmin, userId, rawQuery, awsConfig);
+              const execTime = Date.now() - startTime;
 
-        } else if (toolName === "manage_runbook_execution") {
-          if (!userId) throw new Error("Authentication required for runbook execution.");
-          const rawQuery = sanitizeString(rawArgs.rawQuery, 2000);
-          const explicitDryRun = typeof rawArgs.dryRun === "boolean" ? Boolean(rawArgs.dryRun) : undefined;
-          const normalizedQuery = rawQuery.toLowerCase().trim();
-          if (!rawQuery) throw new Error("A runbook request is required.");
+              if (userId) {
+                supabaseAdmin.from("agent_audit_log").insert({
+                  user_id: userId,
+                  aws_service: "MULTI",
+                  aws_operation: "runDriftDetection",
+                  aws_region: awsConfig.region,
+                  status: "success",
+                  validator_result: "ALLOWED",
+                  execution_time_ms: execTime,
+                }).then();
+              }
 
-          const latestExecution = await getLatestRunbookExecution(supabaseAdmin, userId, conversationId || null);
+              pushAuditToAws(awsConfig, {
+                timestamp: new Date().toISOString(),
+                userId,
+                service: "MULTI",
+                operation: "runDriftDetection",
+                region: awsConfig.region,
+                status: "success",
+                scope: driftResult.scope,
+                driftCount: driftResult.driftCount,
+                healthScore: driftResult.healthScore,
+                executionTimeMs: execTime,
+              });
 
-          if (normalizedQuery === "abort") {
-            if (!latestExecution) throw new Error("No active runbook to abort.");
-            await updateRunbookExecution(supabaseAdmin, latestExecution.id, { status: "ABORTED" });
-            result = { status: "ABORTED", executionId: latestExecution.id, message: "Runbook aborted." };
-          } else if (normalizedQuery === "run playbook") {
-            if (!latestExecution) throw new Error("No planned runbook to start.");
-            result = await continueRunbookExecution(supabaseAdmin, latestExecution, awsConfig, notificationEmail || null, userId, latestUserMessage);
-          } else if (normalizedQuery === "confirm" && latestExecution?.status === "WAITING_CONFIRMATION") {
-            result = await continueRunbookExecution(supabaseAdmin, latestExecution, awsConfig, notificationEmail || null, userId, latestUserMessage);
-          } else {
-            const runbookId = inferRunbookId(rawQuery);
-            const runbook = RUNBOOK_LIBRARY[runbookId];
-            const dryRun = isRunbookDryRun(rawQuery, explicitDryRun);
-            const steps = await planRunbookSteps(runbook, rawQuery, awsConfig);
-            const executionId = crypto.randomUUID();
-            await createRunbookExecution(supabaseAdmin, {
-              id: executionId, user_id: userId, conversation_id: conversationId || null,
-              runbook_id: runbook.id, runbook_name: runbook.name, trigger_query: rawQuery,
-              dry_run: dryRun, status: "PLANNED", current_step_index: 0,
-              steps, results: [], approved_by: null, last_error: null,
-            });
-            result = { status: "PLANNED", executionId, runbookId: runbook.id, runbookName: runbook.name, dryRun, steps, formalReport: buildRunbookPreview(runbook, steps, executionId, dryRun) };
-          }
+              apiMessages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify(driftResult),
+              } as any);
+            } catch (err: any) {
+              const execTime = Date.now() - startTime;
+              const errorMessage = err?.message || "Drift detection failed.";
 
-        } else if (toolName === "manage_event_response_policy") {
-          if (!userId) throw new Error("Authentication required.");
-          const rawQuery = sanitizeString(rawArgs.rawQuery, 2000);
-          if (!rawQuery) throw new Error("An event response policy request is required.");
-          const normalizedQuery = rawQuery.toLowerCase();
-          const isListRequest = /\b(list|show|what|my event rules|response policies)\b/.test(normalizedQuery);
+              if (userId) {
+                supabaseAdmin.from("agent_audit_log").insert({
+                  user_id: userId,
+                  aws_service: "MULTI",
+                  aws_operation: "runDriftDetection",
+                  aws_region: awsConfig.region,
+                  status: "error",
+                  error_code: err?.code || null,
+                  error_message: errorMessage.slice(0, 2000),
+                  validator_result: "ALLOWED",
+                  execution_time_ms: execTime,
+                }).then();
+              }
 
-          if (isListRequest) {
-            const policies = await fetchUserEventResponsePolicies(supabaseAdmin, userId);
-            result = { status: "list", policies };
-          } else {
-            const policy = parseEventResponsePolicyFromQuery(rawQuery, userId);
-            const savedPolicy = await upsertEventResponsePolicy(supabaseAdmin, policy);
-            result = { status: "saved", policy: savedPolicy };
-          }
+              pushAuditToAws(awsConfig, {
+                timestamp: new Date().toISOString(),
+                userId,
+                service: "MULTI",
+                operation: "runDriftDetection",
+                region: awsConfig.region,
+                status: "error",
+                errorCode: err?.code || null,
+                errorMessage: errorMessage.slice(0, 2000),
+                executionTimeMs: execTime,
+              });
 
-        } else if (toolName === "run_cloudtrail_replay") {
-          if (!userId) throw new Error("Authentication required for CloudTrail replay.");
-          const rawQuery = sanitizeString(rawArgs.rawQuery, 2000);
-          const hoursBack = Number(rawArgs.hoursBack || 24);
-          const policies = await fetchUserEventResponsePolicies(supabaseAdmin, userId);
-          const replayResult = await replayCloudTrailEvents(supabaseAdmin, userId, awsConfig, hoursBack, policies);
-          result = replayResult;
+              apiMessages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify({ error: errorMessage }),
+              } as any);
+            }
+          } else if (toolCall.function.name === "manage_runbook_execution") {
+            const startTime = Date.now();
+            try {
+              if (!userId) {
+                throw new Error("Authentication is required for runbook execution.");
+              }
 
-        } else if (toolName === "manage_org_operation") {
-          if (!userId) throw new Error("Authentication required.");
-          const rawQuery = sanitizeString(rawArgs.rawQuery, 2000);
-          if (!rawQuery) throw new Error("An org operation request is required.");
-          result = await handleOrgOperation(rawQuery, awsConfig, supabaseAdmin, userId, notificationEmail || null, userHasConfirmedMutation);
+              const rawArgs = JSON.parse(toolCall.function.arguments || "{}");
+              const rawQuery = sanitizeString(rawArgs.rawQuery, 2000);
+              const explicitDryRun = typeof rawArgs.dryRun === "boolean" ? Boolean(rawArgs.dryRun) : undefined;
+              const normalizedQuery = rawQuery.toLowerCase().trim();
 
-        } else if (toolName === "run_org_query") {
-          const rawQuery = sanitizeString(rawArgs.rawQuery, 2000);
-          if (!rawQuery) throw new Error("An org query is required.");
-          result = await handleOrgQuery(rawQuery, awsConfig, supabaseAdmin, userId);
+              if (!rawQuery) {
+                throw new Error("A runbook request is required.");
+              }
 
-        } else if (toolName === "manage_security_group_rule") {
-          result = await handleSecurityGroupRule(toolCall, rawArgs, awsConfig, supabaseAdmin, userId, userHasConfirmedMutation);
+              const latestExecution = await getLatestRunbookExecution(supabaseAdmin, userId, conversationId || null);
 
-        } else if (toolName === "manage_iam_access") {
-          result = await handleIamAccess(toolCall, rawArgs, awsConfig, supabaseAdmin, userId, userHasConfirmedMutation);
+              if (normalizedQuery === "abort") {
+                if (!latestExecution) {
+                  throw new Error("No active runbook execution was found to abort.");
+                }
+                await updateRunbookExecution(supabaseAdmin, latestExecution.id, { status: "ABORTED" });
+                apiMessages.push({
+                  role: "tool",
+                  tool_call_id: toolCall.id,
+                  content: JSON.stringify({
+                    status: "ABORTED",
+                    executionId: latestExecution.id,
+                    message: "The active runbook execution was aborted.",
+                  }),
+                } as any);
+                continue;
+              }
 
-        } else if (toolName === "run_attack_simulation" || toolName === "run_evasion_test") {
-          const simResult = {
-            id: `${toolName}_${Date.now()}`,
-            target: rawArgs.target || rawArgs.detectionRule,
-            status: "orchestrating",
-            instructions: `Use execute_aws_api to perform real discovery for this ${toolName === "run_attack_simulation" ? "attack simulation" : "evasion test"}.`,
-          };
-          if (userId) {
-            supabaseAdmin.from("agent_audit_log").insert({
-              user_id: userId, aws_service: "SIMULATION", aws_operation: toolName,
-              aws_region: awsConfig.region, status: "success", validator_result: "ALLOWED",
-              execution_time_ms: Date.now() - startTime,
-            }).then();
-          }
-          result = simResult;
+              if (normalizedQuery === "run playbook") {
+                if (!latestExecution) {
+                  throw new Error("No planned runbook was found to start.");
+                }
+                const continued = await continueRunbookExecution(
+                  supabaseAdmin,
+                  latestExecution,
+                  awsConfig,
+                  notificationEmail || null,
+                  userId,
+                  latestUserMessage,
+                );
+                const execTime = Date.now() - startTime;
+                if (userId) {
+                  supabaseAdmin.from("agent_audit_log").insert({
+                    user_id: userId,
+                    aws_service: "MULTI",
+                    aws_operation: "runRunbook",
+                    aws_region: awsConfig.region,
+                    status: String(continued.status).toLowerCase(),
+                    validator_result: "HIGH_RISK",
+                    execution_time_ms: execTime,
+                  }).then();
+                }
+                apiMessages.push({
+                  role: "tool",
+                  tool_call_id: toolCall.id,
+                  content: JSON.stringify(continued),
+                } as any);
+                continue;
+              }
 
-        } else {
-          result = { error: `Unknown tool: ${toolName}` };
-        }
+              if (normalizedQuery === "confirm" && latestExecution?.status === "WAITING_CONFIRMATION") {
+                const continued = await continueRunbookExecution(
+                  supabaseAdmin,
+                  latestExecution,
+                  awsConfig,
+                  notificationEmail || null,
+                  userId,
+                  latestUserMessage,
+                );
+                apiMessages.push({
+                  role: "tool",
+                  tool_call_id: toolCall.id,
+                  content: JSON.stringify(continued),
+                } as any);
+                continue;
+              }
 
-        // For tools that set result (not execute_aws_api which uses continue)
-        const execTime = Date.now() - startTime;
-        if (userId && toolName !== "execute_aws_api") {
-          supabaseAdmin.from("agent_audit_log").insert({
-            user_id: userId, aws_service: "MULTI", aws_operation: toolName,
-            aws_region: awsConfig.region, status: "success", validator_result: "ALLOWED",
-            execution_time_ms: execTime,
-          }).then();
+              const runbookId = inferRunbookId(rawQuery);
+              const runbook = RUNBOOK_LIBRARY[runbookId];
+              const dryRun = isRunbookDryRun(rawQuery, explicitDryRun);
+              const steps = await planRunbookSteps(runbook, rawQuery, awsConfig);
+              const executionId = crypto.randomUUID();
 
-          pushAuditToAws(awsConfig, {
-            timestamp: new Date().toISOString(), userId, service: "MULTI",
-            operation: toolName, region: awsConfig.region, status: "success",
-            executionTimeMs: execTime,
-          });
-        }
+              await createRunbookExecution(supabaseAdmin, {
+                id: executionId,
+                user_id: userId,
+                conversation_id: conversationId || null,
+                runbook_id: runbook.id,
+                runbook_name: runbook.name,
+                trigger_query: rawQuery,
+                dry_run: dryRun,
+                status: "PLANNED",
+                current_step_index: 0,
+                steps,
+                results: [],
+                approved_by: null,
+                last_error: null,
+              });
 
-        results.push({
-          toolCallId: toolCall.id,
-          content: JSON.stringify(result),
-          auditSummary: auditSummary || undefined,
-        });
+              const execTime = Date.now() - startTime;
+              if (userId) {
+                supabaseAdmin.from("agent_audit_log").insert({
+                  user_id: userId,
+                  aws_service: "MULTI",
+                  aws_operation: "planRunbook",
+                  aws_region: awsConfig.region,
+                  status: "success",
+                  validator_result: "HIGH_RISK",
+                  execution_time_ms: execTime,
+                }).then();
+              }
 
-      } catch (err: any) {
-        const execTime = Date.now() - startTime;
-        const errorMessage = err?.message || "Tool execution failed.";
+              pushAuditToAws(awsConfig, {
+                timestamp: new Date().toISOString(),
+                userId,
+                service: "MULTI",
+                operation: "planRunbook",
+                region: awsConfig.region,
+                status: "success",
+                runbookId: runbook.id,
+                executionId,
+                dryRun,
+                executionTimeMs: execTime,
+              });
 
-        if (userId) {
-          supabaseAdmin.from("agent_audit_log").insert({
-            user_id: userId, aws_service: "MULTI",
-            aws_operation: toolCall.function?.name || "unknown",
-            aws_region: awsConfig?.region || "unknown", status: "error",
-            error_code: err?.code || null, error_message: errorMessage.slice(0, 2000),
-            validator_result: "ALLOWED", execution_time_ms: execTime,
-          }).then();
-        }
+              apiMessages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify({
+                  status: "PLANNED",
+                  executionId,
+                  runbookId: runbook.id,
+                  runbookName: runbook.name,
+                  dryRun,
+                  steps,
+                  formalReport: buildRunbookPreview(runbook, steps, executionId, dryRun),
+                }),
+              } as any);
+            } catch (err: any) {
+              const execTime = Date.now() - startTime;
+              const errorMessage = err?.message || "Runbook execution failed.";
 
-        results.push({
-          toolCallId: toolCall.id,
-          content: JSON.stringify({ error: errorMessage, code: err?.code, retryable: err?.retryable || false }),
-        });
-      }
+              if (userId) {
+                supabaseAdmin.from("agent_audit_log").insert({
+                  user_id: userId,
+                  aws_service: "MULTI",
+                  aws_operation: "manageRunbookExecution",
+                  aws_region: awsConfig.region,
+                  status: "error",
+                  error_code: err?.code || null,
+                  error_message: errorMessage.slice(0, 2000),
+                  validator_result: "HIGH_RISK",
+                  execution_time_ms: execTime,
+                }).then();
+              }
+
+              apiMessages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify({ error: errorMessage }),
+              } as any);
+            }
+          } else if (toolCall.function.name === "manage_event_response_policy") {
+            const startTime = Date.now();
+            try {
+              if (!userId) {
+                throw new Error("Authentication is required to manage event response policies.");
+              }
+
+              const rawArgs = JSON.parse(toolCall.function.arguments || "{}");
+              const rawQuery = sanitizeString(rawArgs.rawQuery, 2000);
+              if (!rawQuery) {
+                throw new Error("An event response policy request is required.");
+              }
+
+              const normalizedQuery = rawQuery.toLowerCase();
+              const isListRequest =
+                /\blist\b/.test(normalizedQuery) ||
+                /\bshow\b/.test(normalizedQuery) ||
+                /\bwhat\b/.test(normalizedQuery) ||
+                /\bmy event rules\b/.test(normalizedQuery) ||
+                /\bresponse policies\b/.test(normalizedQuery);
+
+              if (isListRequest) {
+                const userPolicies = await fetchUserEventResponsePolicies(supabaseAdmin, userId);
+                const execTime = Date.now() - startTime;
+
+                if (userId) {
+                  supabaseAdmin.from("agent_audit_log").insert({
+                    user_id: userId,
+                    aws_service: "CLOUDTRAIL",
+                    aws_operation: "listEventResponsePolicies",
+                    aws_region: awsConfig.region,
+                    status: "success",
+                    validator_result: "ALLOWED",
+                    execution_time_ms: execTime,
+                  }).then();
+                }
+
+                apiMessages.push({
+                  role: "tool",
+                  tool_call_id: toolCall.id,
+                  content: JSON.stringify({
+                    status: "listed",
+                    builtInPolicies: BUILT_IN_EVENT_RESPONSE_POLICIES,
+                    userPolicies,
+                    formalReport: buildFormalEventPolicyListReport(BUILT_IN_EVENT_RESPONSE_POLICIES, userPolicies),
+                  }),
+                } as any);
+                continue;
+              }
+
+              const policy = parseEventResponsePolicyFromQuery(rawQuery, notificationEmail || null);
+              await saveEventResponsePolicy(supabaseAdmin, userId, policy);
+              const execTime = Date.now() - startTime;
+
+              if (userId) {
+                supabaseAdmin.from("agent_audit_log").insert({
+                  user_id: userId,
+                  aws_service: "CLOUDTRAIL",
+                  aws_operation: "manageEventResponsePolicy",
+                  aws_region: awsConfig.region,
+                  status: "success",
+                  validator_result: "ALLOWED",
+                  execution_time_ms: execTime,
+                }).then();
+              }
+
+              pushAuditToAws(awsConfig, {
+                timestamp: new Date().toISOString(),
+                userId,
+                service: "CLOUDTRAIL",
+                operation: "manageEventResponsePolicy",
+                region: awsConfig.region,
+                status: "success",
+                policyId: policy.policy_id,
+                triggerEvent: policy.trigger_event,
+                executionTimeMs: execTime,
+              });
+
+              apiMessages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify({
+                  status: "stored",
+                  policy,
+                  formalReport: buildFormalCreatedEventPolicyReport(policy),
+                }),
+              } as any);
+            } catch (err: any) {
+              const execTime = Date.now() - startTime;
+              const errorMessage = err?.message || "Event response policy request failed.";
+
+              if (userId) {
+                supabaseAdmin.from("agent_audit_log").insert({
+                  user_id: userId,
+                  aws_service: "CLOUDTRAIL",
+                  aws_operation: "manageEventResponsePolicy",
+                  aws_region: awsConfig.region,
+                  status: "error",
+                  error_code: err?.code || null,
+                  error_message: errorMessage.slice(0, 2000),
+                  validator_result: "ALLOWED",
+                  execution_time_ms: execTime,
+                }).then();
+              }
+
+              apiMessages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify({ error: errorMessage }),
+              } as any);
+            }
+          } else if (toolCall.function.name === "replay_cloudtrail_events") {
+            const startTime = Date.now();
+            try {
+              const rawArgs = JSON.parse(toolCall.function.arguments || "{}");
+              const hoursBack = Math.max(1, Math.min(168, Number(rawArgs.hoursBack || 24)));
+              const replayResult = await replayCloudTrailEvents(supabaseAdmin, userId || null, awsConfig, hoursBack);
+              const execTime = Date.now() - startTime;
+
+              if (userId) {
+                supabaseAdmin.from("agent_audit_log").insert({
+                  user_id: userId,
+                  aws_service: "CLOUDTRAIL",
+                  aws_operation: "replayCloudTrailEvents",
+                  aws_region: awsConfig.region,
+                  status: "success",
+                  validator_result: "ALLOWED",
+                  execution_time_ms: execTime,
+                }).then();
+              }
+
+              pushAuditToAws(awsConfig, {
+                timestamp: new Date().toISOString(),
+                userId,
+                service: "CLOUDTRAIL",
+                operation: "replayCloudTrailEvents",
+                region: awsConfig.region,
+                status: "success",
+                hoursBack,
+                matchedEvents: replayResult.matchedEvents,
+                executionTimeMs: execTime,
+              });
+
+              apiMessages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify(replayResult),
+              } as any);
+            } catch (err: any) {
+              const execTime = Date.now() - startTime;
+              const errorMessage = err?.message || "CloudTrail replay failed.";
+
+              if (userId) {
+                supabaseAdmin.from("agent_audit_log").insert({
+                  user_id: userId,
+                  aws_service: "CLOUDTRAIL",
+                  aws_operation: "replayCloudTrailEvents",
+                  aws_region: awsConfig.region,
+                  status: "error",
+                  error_code: err?.code || null,
+                  error_message: errorMessage.slice(0, 2000),
+                  validator_result: "ALLOWED",
+                  execution_time_ms: execTime,
+                }).then();
+              }
+
+              apiMessages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify({ error: errorMessage }),
+              } as any);
+            }
+          } else if (toolCall.function.name === "run_org_query") {
+            const startTime = Date.now();
+            try {
+              const rawArgs = JSON.parse(toolCall.function.arguments || "{}");
+              const queryType = sanitizeString(rawArgs.queryType, 64) as OrgQueryType;
+              const scope = sanitizeString(rawArgs.scope || "all", 128) || "all";
+              const queryResult = await runOrgQuery(queryType, scope, awsConfig);
+              const execTime = Date.now() - startTime;
+
+              if (userId) {
+                supabaseAdmin.from("agent_audit_log").insert({
+                  user_id: userId,
+                  aws_service: "ORGANIZATIONS",
+                  aws_operation: "runOrgQuery",
+                  aws_region: awsConfig.region,
+                  status: "success",
+                  validator_result: "ALLOWED",
+                  execution_time_ms: execTime,
+                }).then();
+              }
+
+              pushAuditToAws(awsConfig, {
+                timestamp: new Date().toISOString(),
+                userId,
+                service: "ORGANIZATIONS",
+                operation: "runOrgQuery",
+                region: awsConfig.region,
+                status: "success",
+                queryType,
+                scope,
+                executionTimeMs: execTime,
+              });
+
+              apiMessages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify(queryResult),
+              } as any);
+            } catch (err: any) {
+              const execTime = Date.now() - startTime;
+              const errorMessage = err?.message || "Organization query failed.";
+
+              if (userId) {
+                supabaseAdmin.from("agent_audit_log").insert({
+                  user_id: userId,
+                  aws_service: "ORGANIZATIONS",
+                  aws_operation: "runOrgQuery",
+                  aws_region: awsConfig.region,
+                  status: "error",
+                  error_code: err?.code || null,
+                  error_message: errorMessage.slice(0, 2000),
+                  validator_result: "ALLOWED",
+                  execution_time_ms: execTime,
+                }).then();
+              }
+
+              pushAuditToAws(awsConfig, {
+                timestamp: new Date().toISOString(),
+                userId,
+                service: "ORGANIZATIONS",
+                operation: "runOrgQuery",
+                region: awsConfig.region,
+                status: "error",
+                errorCode: err?.code || null,
+                errorMessage: errorMessage.slice(0, 2000),
+                executionTimeMs: execTime,
+              });
+
+              apiMessages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify({ error: errorMessage }),
+              } as any);
+            }
+          } else if (toolCall.function.name === "manage_org_operation") {
+            const startTime = Date.now();
+            try {
+              if (!userId) {
+                throw new Error("Authentication is required for organization-wide write operations.");
+              }
+
+              const rawArgs = JSON.parse(toolCall.function.arguments || "{}");
+              const action = sanitizeString(rawArgs.action, 64) as OrgOperationAction;
+              const scope = sanitizeString(rawArgs.scope || "all", 128) || "all";
+              const scpTemplate = sanitizeString(rawArgs.scpTemplate, 128) as OrgScpTemplate;
+              const allowedRegions = Array.isArray(rawArgs.allowedRegions)
+                ? rawArgs.allowedRegions.map((region: unknown) => sanitizeString(region, 64)).filter(Boolean)
+                : [];
+              const rollbackPlan = sanitizeString(rawArgs.rollbackPlan, 500);
+
+              if (action !== "attach_scp") {
+                throw new Error(`Unsupported organization action '${action}'.`);
+              }
+
+              const resolution = await resolveOrgScope(scope, awsConfig);
+              const blastRadius = checkOrgBlastRadius(resolution.accounts);
+              const policyDocument = buildScpDocument(scpTemplate, allowedRegions);
+              const highestTier = ENV_TIERS[blastRadius.highestRiskEnv] || ENV_TIERS.unknown;
+              const countConfirmation = parseOrgConfirmationCount(latestUserMessage);
+              const hasRequiredCountConfirmation = countConfirmation === resolution.accounts.length;
+              const requiresDoubleConfirmation = highestTier.confirmation === "double";
+
+              if (resolution.accounts.length === 0) {
+                throw new Error("The requested scope resolved to zero accounts.");
+              }
+
+              const previewPayload = buildOrgPreview(
+                scope,
+                resolution.accounts,
+                blastRadius,
+                scpTemplate,
+                policyDocument,
+                rollbackPlan,
+              );
+
+              if (!blastRadius.safe_to_proceed) {
+                await persistOrgOperationHistory(supabaseAdmin, userId, {
+                  action,
+                  scope,
+                  scpTemplate,
+                  accountCount: resolution.accounts.length,
+                  envBreakdown: blastRadius.by_env,
+                  warnings: previewPayload.warnings,
+                  blocked: previewPayload.blocked,
+                  rollbackPlan,
+                  status: "blocked",
+                  previewPayload,
+                });
+                apiMessages.push({
+                  role: "tool",
+                  tool_call_id: toolCall.id,
+                  content: JSON.stringify(previewPayload),
+                } as any);
+                continue;
+              }
+
+              if (highestTier.rollback_plan === "required" && !rollbackPlan) {
+                const rollbackPreviewPayload = {
+                  ...previewPayload,
+                  status: "preview_only",
+                  warnings: [
+                    ...previewPayload.warnings,
+                    "A rollback plan is required before this operation can be executed for production or unknown environments.",
+                  ],
+                };
+                await persistOrgOperationHistory(supabaseAdmin, userId, {
+                  action,
+                  scope,
+                  scpTemplate,
+                  accountCount: resolution.accounts.length,
+                  envBreakdown: blastRadius.by_env,
+                  warnings: rollbackPreviewPayload.warnings,
+                  blocked: rollbackPreviewPayload.blocked,
+                  rollbackPlan,
+                  status: "preview_only",
+                  previewPayload: rollbackPreviewPayload,
+                });
+                apiMessages.push({
+                  role: "tool",
+                  tool_call_id: toolCall.id,
+                  content: JSON.stringify(rollbackPreviewPayload),
+                } as any);
+                continue;
+              }
+
+              const confirmed = requiresDoubleConfirmation
+                ? hasRequiredCountConfirmation
+                : userHasConfirmedMutation || hasRequiredCountConfirmation;
+
+              if (!confirmed) {
+                await persistOrgOperationHistory(supabaseAdmin, userId, {
+                  action,
+                  scope,
+                  scpTemplate,
+                  accountCount: resolution.accounts.length,
+                  envBreakdown: blastRadius.by_env,
+                  warnings: previewPayload.warnings,
+                  blocked: previewPayload.blocked,
+                  rollbackPlan,
+                  status: "preview_only",
+                  previewPayload,
+                });
+                apiMessages.push({
+                  role: "tool",
+                  tool_call_id: toolCall.id,
+                  content: JSON.stringify(previewPayload),
+                } as any);
+                continue;
+              }
+
+              const orgIdempotencyPayload = {
+                action,
+                scope,
+                scpTemplate,
+                allowedRegions,
+                rollbackPlan,
+                accountIds: resolution.accounts.map((account) => account.id).sort(),
+              };
+              const orgRequestHash = await sha256(stableStringify(orgIdempotencyPayload));
+              const orgRequestKey = `org-operation:${orgRequestHash}`;
+              const orgClaim = await claimIdempotencyKey(
+                supabaseAdmin,
+                userId,
+                "manage_org_operation",
+                orgRequestKey,
+                orgRequestHash,
+              );
+
+              if (orgClaim.existing?.status === "success" && orgClaim.existing.response_payload) {
+                apiMessages.push({
+                  role: "tool",
+                  tool_call_id: toolCall.id,
+                  content: JSON.stringify(orgClaim.existing.response_payload),
+                } as any);
+                continue;
+              }
+
+              if (orgClaim.existing?.status === "pending") {
+                throw new CloudPilotError("This organization rollout is already in progress.", {
+                  code: "IDEMPOTENT_OPERATION_PENDING",
+                  category: "conflict",
+                  status: 409,
+                });
+              }
+
+              const execution = await executeOrgSCPRollout(awsConfig, resolution.accounts, scpTemplate, policyDocument);
+              const execTime = Date.now() - startTime;
+              const summary = buildOrgExecutionSummary(scope, execution.policyName, execution.policyId, execution.results);
+              await storeIdempotencySuccess(supabaseAdmin, "manage_org_operation", orgRequestKey, summary);
+              await persistOrgOperationHistory(supabaseAdmin, userId, {
+                action,
+                scope,
+                scpTemplate,
+                accountCount: resolution.accounts.length,
+                envBreakdown: blastRadius.by_env,
+                warnings: previewPayload.warnings,
+                blocked: previewPayload.blocked,
+                rollbackPlan,
+                status: String(summary.status),
+                previewPayload,
+                executionSummary: summary,
+              });
+
+              if (userId) {
+                supabaseAdmin.from("agent_audit_log").insert({
+                  user_id: userId,
+                  aws_service: "ORGANIZATIONS",
+                  aws_operation: "manageOrgOperation",
+                  aws_region: awsConfig.region,
+                  status: summary.status,
+                  validator_result: requiresDoubleConfirmation ? "HIGH_RISK" : "ALLOWED",
+                  execution_time_ms: execTime,
+                }).then();
+              }
+
+              pushAuditToAws(awsConfig, {
+                timestamp: new Date().toISOString(),
+                userId,
+                service: "ORGANIZATIONS",
+                operation: "manageOrgOperation",
+                region: awsConfig.region,
+                status: summary.status,
+                scope,
+                accountCount: resolution.accounts.length,
+                successCount: summary.successCount,
+                failedCount: summary.failedCount,
+                executionTimeMs: execTime,
+              });
+
+              apiMessages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify(summary),
+              } as any);
+            } catch (err: any) {
+              const execTime = Date.now() - startTime;
+              const typedError = toCloudPilotError(err);
+              const errorMessage = typedError.message || "Organization operation failed.";
+              try {
+                const rawArgs = JSON.parse(toolCall.function.arguments || "{}");
+                const scope = sanitizeString(rawArgs.scope || "all", 128) || "all";
+                const scpTemplate = sanitizeString(rawArgs.scpTemplate, 128) as OrgScpTemplate;
+                const allowedRegions = Array.isArray(rawArgs.allowedRegions)
+                  ? rawArgs.allowedRegions.map((region: unknown) => sanitizeString(region, 64)).filter(Boolean)
+                  : [];
+                const rollbackPlan = sanitizeString(rawArgs.rollbackPlan, 500);
+                const resolution = await resolveOrgScope(scope, awsConfig);
+                const requestHash = await sha256(stableStringify({
+                  action: sanitizeString(rawArgs.action, 64),
+                  scope,
+                  scpTemplate,
+                  allowedRegions,
+                  rollbackPlan,
+                  accountIds: resolution.accounts.map((account) => account.id).sort(),
+                }));
+                await storeIdempotencyFailure(
+                  supabaseAdmin,
+                  "manage_org_operation",
+                  `org-operation:${requestHash}`,
+                  { error: errorMessage, code: typedError.code, category: typedError.category },
+                );
+              } catch {
+                // Best-effort failure recording only.
+              }
+
+              if (userId) {
+                supabaseAdmin.from("agent_audit_log").insert({
+                  user_id: userId,
+                  aws_service: "ORGANIZATIONS",
+                  aws_operation: "manageOrgOperation",
+                  aws_region: awsConfig.region,
+                  status: "error",
+                  error_code: typedError.code || null,
+                  error_message: errorMessage.slice(0, 2000),
+                  validator_result: "HIGH_RISK",
+                  execution_time_ms: execTime,
+                }).then();
+              }
+
+              pushAuditToAws(awsConfig, {
+                timestamp: new Date().toISOString(),
+                userId,
+                service: "ORGANIZATIONS",
+                operation: "manageOrgOperation",
+                region: awsConfig.region,
+                status: "error",
+                errorCode: typedError.code || null,
+                errorMessage: errorMessage.slice(0, 2000),
+                executionTimeMs: execTime,
+              });
+
+              apiMessages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify({
+                  error: errorMessage,
+                  code: typedError.code,
+                  category: typedError.category,
+                  retryable: typedError.retryable,
+                }),
+              } as any);
+            }
+          } else if (toolCall.function.name === "run_unified_audit") {
+            const startTime = Date.now();
+            try {
+              const rawArgs = JSON.parse(toolCall.function.arguments);
+              const rawQuery = sanitizeString(rawArgs.rawQuery, 2000);
+              if (!rawQuery) {
+                throw new Error("A raw audit query is required.");
+              }
+
+              const auditResult = await runUnifiedAudit(rawQuery, awsConfig, supabaseAdmin, userId);
+              const execTime = Date.now() - startTime;
+              latestUnifiedAuditSummary = {
+                planner: auditResult.planner,
+                totals: auditResult.totals,
+                cache: auditResult.cache,
+                accountHealthScore: auditResult.accountHealthScore,
+                findingsForPanel: auditResult.findingsForPanel,
+                servicesAssessed: auditResult.servicesAssessed,
+              };
+
+              if (userId) {
+                supabaseAdmin.from("agent_audit_log").insert({
+                  user_id: userId,
+                  aws_service: "MULTI",
+                  aws_operation: "runUnifiedAudit",
+                  aws_region: awsConfig.region,
+                  status: "success",
+                  validator_result: "ALLOWED",
+                  execution_time_ms: execTime,
+                }).then();
+              }
+
+              pushAuditToAws(awsConfig, {
+                timestamp: new Date().toISOString(),
+                userId,
+                service: "MULTI",
+                operation: "runUnifiedAudit",
+                region: awsConfig.region,
+                status: "success",
+                intent: auditResult.planner.intent,
+                scanners: auditResult.planner.scanners,
+                findings: auditResult.totals.findings,
+                overallRisk: auditResult.totals.overallRisk,
+                executionTimeMs: execTime,
+              });
+
+              apiMessages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify(auditResult),
+              } as any);
+            } catch (err: any) {
+              const execTime = Date.now() - startTime;
+              const typedError = toCloudPilotError(err);
+              const errorMessage = typedError.message || "Unified audit failed.";
+
+              if (userId) {
+                supabaseAdmin.from("agent_audit_log").insert({
+                  user_id: userId,
+                  aws_service: "MULTI",
+                  aws_operation: "runUnifiedAudit",
+                  aws_region: awsConfig.region,
+                  status: "error",
+                  error_code: typedError.code || null,
+                  error_message: errorMessage.slice(0, 2000),
+                  validator_result: "ALLOWED",
+                  execution_time_ms: execTime,
+                }).then();
+              }
+
+              pushAuditToAws(awsConfig, {
+                timestamp: new Date().toISOString(),
+                userId,
+                service: "MULTI",
+                operation: "runUnifiedAudit",
+                region: awsConfig.region,
+                status: "error",
+                errorCode: typedError.code || null,
+                errorMessage: errorMessage.slice(0, 2000),
+                executionTimeMs: execTime,
+              });
+
+              apiMessages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify({
+                  error: errorMessage,
+                  code: typedError.code,
+                  category: typedError.category,
+                  retryable: typedError.retryable,
+                }),
+              } as any);
+            }
+          } else if (toolCall.function.name === "manage_security_group_rule") {
+            const startTime = Date.now();
+            try {
+              const rawArgs = JSON.parse(toolCall.function.arguments);
+              const args: SecurityGroupRuleArgs = {
+                action: rawArgs.action,
+                targetGroupIdentifier: sanitizeSecurityGroupIdentifier(rawArgs.targetGroupIdentifier),
+                protocol: sanitizeProtocol(rawArgs.protocol),
+                fromPort: normalizePort(rawArgs.fromPort),
+                toPort: normalizePort(rawArgs.toPort),
+                cidr: rawArgs.cidr ? sanitizeCidr(rawArgs.cidr) : undefined,
+                sourceGroupIdentifier: rawArgs.sourceGroupIdentifier
+                  ? sanitizeSecurityGroupIdentifier(rawArgs.sourceGroupIdentifier)
+                  : undefined,
+                description: rawArgs.description ? sanitizeString(rawArgs.description, 255) : undefined,
+              };
+
+              if (!args.targetGroupIdentifier) {
+                throw new Error("A target security group is required.");
+              }
+              if (!args.cidr && !args.sourceGroupIdentifier) {
+                throw new Error("A CIDR or source security group is required.");
+              }
+
+              const ec2 = v2Client("EC2", awsConfig);
+              const targetGroup = await resolveSecurityGroup(ec2, args.targetGroupIdentifier);
+              const sourceGroup = args.sourceGroupIdentifier
+                ? await resolveSecurityGroup(ec2, args.sourceGroupIdentifier)
+                : null;
+              const risk = classifySecurityGroupRisk(targetGroup, args, Boolean(sourceGroup));
+              const permission = buildSecurityGroupPermission(args, sourceGroup?.groupId);
+              const operationName = buildSecurityGroupOperationName(args.action);
+              const existingMatch = findExistingMatchingPermission(targetGroup, args, permission, sourceGroup?.groupId);
+              const wouldBeNoop = isAllowAction(args.action) ? Boolean(existingMatch) : !existingMatch;
+              const execTime = Date.now() - startTime;
+
+              if (!risk.allowed) {
+                const blockedPayload = {
+                  status: "blocked",
+                  riskLevel: risk.riskLevel,
+                  targetGroup,
+                  requestedRule: {
+                    action: args.action,
+                    protocol: args.protocol,
+                    fromPort: args.fromPort,
+                    toPort: args.toPort,
+                    cidr: args.cidr || null,
+                    sourceGroupId: sourceGroup?.groupId || null,
+                  },
+                  reasons: risk.reasons,
+                };
+
+                if (userId) {
+                  supabaseAdmin.from("agent_audit_log").insert({
+                    user_id: userId,
+                    aws_service: "EC2",
+                    aws_operation: "manageSecurityGroupRule",
+                    aws_region: awsConfig.region,
+                    status: "blocked",
+                    error_message: risk.reasons.join(" "),
+                    validator_result: risk.riskLevel,
+                    execution_time_ms: execTime,
+                  }).then();
+                }
+
+                pushAuditToAws(awsConfig, {
+                  timestamp: new Date().toISOString(),
+                  userId,
+                  service: "EC2",
+                  operation: "manageSecurityGroupRule",
+                  region: awsConfig.region,
+                  status: "blocked",
+                  riskLevel: risk.riskLevel,
+                  targetGroupId: targetGroup.groupId,
+                  reasons: risk.reasons,
+                  executionTimeMs: execTime,
+                });
+
+                apiMessages.push({
+                  role: "tool",
+                  tool_call_id: toolCall.id,
+                  content: JSON.stringify(blockedPayload),
+                } as any);
+                continue;
+              }
+
+              if (!userHasConfirmedMutation) {
+                const preview = {
+                  status: "preview_only",
+                  confirmationRequired: true,
+                  riskLevel: risk.riskLevel,
+                  direction: getSecurityGroupDirection(args.action),
+                  operation: operationName,
+                  targetGroup,
+                  sourceGroup,
+                  requestedRule: {
+                    action: args.action,
+                    protocol: args.protocol,
+                    fromPort: args.fromPort,
+                    toPort: args.toPort,
+                    cidr: args.cidr || null,
+                    sourceGroupId: sourceGroup?.groupId || null,
+                    description: args.description || null,
+                  },
+                  permission,
+                  existingMatch: existingMatch ? {
+                    protocol: existingMatch.IpProtocol || null,
+                    fromPort: existingMatch.FromPort ?? null,
+                    toPort: existingMatch.ToPort ?? null,
+                    targets: ipPermissionTargets(existingMatch),
+                  } : null,
+                  noOp: wouldBeNoop,
+                  reasons: risk.reasons,
+                  summary: `${isAllowAction(args.action) ? "Add" : "Remove"} ${getSecurityGroupDirection(args.action)} ${args.protocol}:${args.fromPort}-${args.toPort} on ${targetGroup.groupName} (${targetGroup.groupId}).`,
+                  exposureSummary: args.cidr
+                    ? `${getSecurityGroupDirection(args.action)} rule targets ${args.cidr}.`
+                    : `${getSecurityGroupDirection(args.action)} rule targets security group ${sourceGroup?.groupName || sourceGroup?.groupId}.`,
+                  confirmationHint: "Reply with 'confirm' to apply this security group change.",
+                };
+
+                if (userId) {
+                  supabaseAdmin.from("agent_audit_log").insert({
+                    user_id: userId,
+                    aws_service: "EC2",
+                    aws_operation: "previewSecurityGroupRule",
+                    aws_region: awsConfig.region,
+                    status: "success",
+                    validator_result: risk.riskLevel,
+                    execution_time_ms: execTime,
+                  }).then();
+                }
+
+                pushAuditToAws(awsConfig, {
+                  timestamp: new Date().toISOString(),
+                  userId,
+                  service: "EC2",
+                  operation: "previewSecurityGroupRule",
+                  region: awsConfig.region,
+                  status: "preview_only",
+                  riskLevel: risk.riskLevel,
+                  targetGroupId: targetGroup.groupId,
+                  sourceGroupId: sourceGroup?.groupId || null,
+                  cidr: args.cidr || null,
+                  executionTimeMs: execTime,
+                });
+
+                apiMessages.push({
+                  role: "tool",
+                  tool_call_id: toolCall.id,
+                  content: JSON.stringify(preview),
+                } as any);
+                continue;
+              }
+
+              if (wouldBeNoop) {
+                apiMessages.push({
+                  role: "tool",
+                  tool_call_id: toolCall.id,
+                  content: JSON.stringify({
+                    status: "no_op",
+                    riskLevel: risk.riskLevel,
+                    direction: getSecurityGroupDirection(args.action),
+                    operation: operationName,
+                    targetGroup,
+                    sourceGroup,
+                    appliedRule: permission,
+                    reason: isAllowAction(args.action)
+                      ? "The exact rule already exists."
+                      : "No matching rule exists to revoke.",
+                  }),
+                } as any);
+                continue;
+              }
+
+              const sgIdempotencyPayload = {
+                region: awsConfig.region,
+                action: args.action,
+                targetGroupId: targetGroup.groupId,
+                sourceGroupId: sourceGroup?.groupId || null,
+                cidr: args.cidr || null,
+                permission,
+              };
+              const sgRequestHash = await sha256(stableStringify(sgIdempotencyPayload));
+              const sgRequestKey = `security-group:${sgRequestHash}`;
+              const sgClaim = await claimIdempotencyKey(
+                supabaseAdmin,
+                userId,
+                "manage_security_group_rule",
+                sgRequestKey,
+                sgRequestHash,
+              );
+
+              if (sgClaim.existing?.status === "success" && sgClaim.existing.response_payload) {
+                apiMessages.push({
+                  role: "tool",
+                  tool_call_id: toolCall.id,
+                  content: JSON.stringify(sgClaim.existing.response_payload),
+                } as any);
+                continue;
+              }
+
+              if (sgClaim.existing?.status === "pending") {
+                throw new CloudPilotError("This security group change is already in progress.", {
+                  code: "IDEMPOTENT_OPERATION_PENDING",
+                  category: "conflict",
+                  status: 409,
+                });
+              }
+
+              if (args.action === "allow_ingress") {
+                await withAwsRetry("EC2.authorizeSecurityGroupIngress", () => ec2.authorizeSecurityGroupIngress({
+                  GroupId: targetGroup.groupId,
+                  IpPermissions: [permission],
+                }).promise());
+              } else if (args.action === "revoke_ingress") {
+                await withAwsRetry("EC2.revokeSecurityGroupIngress", () => ec2.revokeSecurityGroupIngress({
+                  GroupId: targetGroup.groupId,
+                  IpPermissions: [permission],
+                }).promise());
+              } else if (args.action === "allow_egress") {
+                await withAwsRetry("EC2.authorizeSecurityGroupEgress", () => ec2.authorizeSecurityGroupEgress({
+                  GroupId: targetGroup.groupId,
+                  IpPermissions: [permission],
+                }).promise());
+              } else {
+                await withAwsRetry("EC2.revokeSecurityGroupEgress", () => ec2.revokeSecurityGroupEgress({
+                  GroupId: targetGroup.groupId,
+                  IpPermissions: [permission],
+                }).promise());
+              }
+
+              const finalExecTime = Date.now() - startTime;
+              const executionResult = {
+                status: "executed",
+                riskLevel: risk.riskLevel,
+                direction: getSecurityGroupDirection(args.action),
+                targetGroup,
+                sourceGroup,
+                appliedRule: permission,
+                operation: operationName,
+              };
+
+              await storeIdempotencySuccess(
+                supabaseAdmin,
+                "manage_security_group_rule",
+                sgRequestKey,
+                executionResult,
+              );
+
+              if (userId) {
+                supabaseAdmin.from("agent_audit_log").insert({
+                  user_id: userId,
+                  aws_service: "EC2",
+                  aws_operation: "executeSecurityGroupRule",
+                  aws_region: awsConfig.region,
+                  status: "success",
+                  validator_result: risk.riskLevel,
+                  execution_time_ms: finalExecTime,
+                }).then();
+              }
+
+              pushAuditToAws(awsConfig, {
+                timestamp: new Date().toISOString(),
+                userId,
+                service: "EC2",
+                operation: "executeSecurityGroupRule",
+                region: awsConfig.region,
+                status: "success",
+                riskLevel: risk.riskLevel,
+                targetGroupId: targetGroup.groupId,
+                sourceGroupId: sourceGroup?.groupId || null,
+                cidr: args.cidr || null,
+                executionTimeMs: finalExecTime,
+              });
+
+              apiMessages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify(executionResult),
+              } as any);
+            } catch (err: any) {
+              const execTime = Date.now() - startTime;
+              const typedError = toCloudPilotError(err);
+              const errorMessage = typedError.message || "Security group automation failed.";
+              if (userHasConfirmedMutation) {
+                try {
+                  const rawArgs = JSON.parse(toolCall.function.arguments);
+                  const args: SecurityGroupRuleArgs = {
+                    action: rawArgs.action,
+                    targetGroupIdentifier: sanitizeSecurityGroupIdentifier(rawArgs.targetGroupIdentifier),
+                    protocol: sanitizeProtocol(rawArgs.protocol),
+                    fromPort: normalizePort(rawArgs.fromPort),
+                    toPort: normalizePort(rawArgs.toPort),
+                    cidr: rawArgs.cidr ? sanitizeCidr(rawArgs.cidr) : undefined,
+                    sourceGroupIdentifier: rawArgs.sourceGroupIdentifier
+                      ? sanitizeSecurityGroupIdentifier(rawArgs.sourceGroupIdentifier)
+                      : undefined,
+                    description: rawArgs.description ? sanitizeString(rawArgs.description, 255) : undefined,
+                  };
+                  const ec2 = v2Client("EC2", awsConfig);
+                  const targetGroup = await resolveSecurityGroup(ec2, args.targetGroupIdentifier);
+                  const sourceGroup = args.sourceGroupIdentifier
+                    ? await resolveSecurityGroup(ec2, args.sourceGroupIdentifier)
+                    : null;
+                  const permission = buildSecurityGroupPermission(args, sourceGroup?.groupId);
+                  const requestHash = await sha256(stableStringify({
+                    region: awsConfig.region,
+                    action: args.action,
+                    targetGroupId: targetGroup.groupId,
+                    sourceGroupId: sourceGroup?.groupId || null,
+                    cidr: args.cidr || null,
+                    permission,
+                  }));
+                  await storeIdempotencyFailure(
+                    supabaseAdmin,
+                    "manage_security_group_rule",
+                    `security-group:${requestHash}`,
+                    { error: errorMessage, code: typedError.code, category: typedError.category },
+                  );
+                } catch {
+                  // Best-effort failure recording only.
+                }
+              }
+
+              if (userId) {
+                supabaseAdmin.from("agent_audit_log").insert({
+                  user_id: userId,
+                  aws_service: "EC2",
+                  aws_operation: "manageSecurityGroupRule",
+                  aws_region: awsConfig.region,
+                  status: "error",
+                  error_code: typedError.code || null,
+                  error_message: errorMessage.slice(0, 2000),
+                  validator_result: "HIGH",
+                  execution_time_ms: execTime,
+                }).then();
+              }
+
+              pushAuditToAws(awsConfig, {
+                timestamp: new Date().toISOString(),
+                userId,
+                service: "EC2",
+                operation: "manageSecurityGroupRule",
+                region: awsConfig.region,
+                status: "error",
+                errorCode: typedError.code || null,
+                errorMessage: errorMessage.slice(0, 2000),
+                executionTimeMs: execTime,
+              });
+
+              apiMessages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify({
+                  error: errorMessage,
+                  code: typedError.code,
+                  category: typedError.category,
+                  retryable: typedError.retryable,
+                }),
+              } as any);
+            }
+          } else if (toolCall.function.name === "manage_iam_access") {
+            const startTime = Date.now();
+            try {
+              const rawArgs = JSON.parse(toolCall.function.arguments);
+              const plan = buildIamAccessPlan(rawArgs);
+
+              if (!userHasConfirmedMutation) {
+                const execTime = Date.now() - startTime;
+                const preview = {
+                  status: "preview_only",
+                  confirmationRequired: true,
+                  summary: `Create policy '${plan.policyName}' and attach it to IAM ${plan.args.principalType} '${plan.args.principalIdentifier}'.`,
+                  requestedAction: plan.args.action,
+                  principal: {
+                    type: plan.args.principalType,
+                    identifier: plan.args.principalIdentifier,
+                  },
+                  access: {
+                    service: plan.args.service,
+                    scope: plan.args.scope,
+                    resources: plan.policyDocument.Statement[0].Resource,
+                  },
+                  operations: [
+                    {
+                      service: "IAM",
+                      operation: "createPolicy",
+                    },
+                    {
+                      service: "IAM",
+                      operation: plan.attachOperation,
+                    },
+                  ],
+                  warnings: plan.warnings,
+                  policyDocument: plan.policyDocument,
+                  confirmationHint: "Reply with 'confirm' to apply this IAM change.",
+                };
+
+                if (userId) {
+                  supabaseAdmin.from("agent_audit_log").insert({
+                    user_id: userId,
+                    aws_service: "IAM",
+                    aws_operation: "previewIamAccessChange",
+                    aws_region: awsConfig.region,
+                    status: "success",
+                    validator_result: "ALLOWED",
+                    execution_time_ms: execTime,
+                  }).then();
+                }
+
+                pushAuditToAws(awsConfig, {
+                  timestamp: new Date().toISOString(),
+                  userId,
+                  service: "IAM",
+                  operation: "previewIamAccessChange",
+                  region: awsConfig.region,
+                  principalType: plan.args.principalType,
+                  principalIdentifier: plan.args.principalIdentifier,
+                  policyName: plan.policyName,
+                  status: "preview_only",
+                  executionTimeMs: execTime,
+                });
+
+                apiMessages.push({
+                  role: "tool",
+                  tool_call_id: toolCall.id,
+                  content: JSON.stringify(preview),
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                } as any);
+                continue;
+              }
+
+              const idempotencyPayload = {
+                region: awsConfig.region,
+                principalType: plan.args.principalType,
+                principalIdentifier: plan.args.principalIdentifier,
+                policyName: plan.policyName,
+                policyDocument: plan.policyDocument,
+              };
+              const iamRequestHash = await sha256(stableStringify(idempotencyPayload));
+              const iamRequestKey = `iam-access:${iamRequestHash}`;
+              const iamClaim = await claimIdempotencyKey(
+                supabaseAdmin,
+                userId,
+                "manage_iam_access",
+                iamRequestKey,
+                iamRequestHash,
+              );
+
+              if (iamClaim.existing?.status === "success" && iamClaim.existing.response_payload) {
+                apiMessages.push({
+                  role: "tool",
+                  tool_call_id: toolCall.id,
+                  content: JSON.stringify(iamClaim.existing.response_payload),
+                } as any);
+                continue;
+              }
+
+              if (iamClaim.existing?.status === "pending") {
+                throw new CloudPilotError("This IAM change is already in progress.", {
+                  code: "IDEMPOTENT_OPERATION_PENDING",
+                  category: "conflict",
+                  status: 409,
+                });
+              }
+
+              const iam = v2Client("IAM", awsConfig);
+              await ensureIamPrincipalExists(iam, plan.args.principalType, plan.args.principalIdentifier);
+
+              const createPolicyResult = await withAwsRetry("IAM.createPolicy", () => iam.createPolicy({
+                PolicyName: plan.policyName,
+                PolicyDocument: JSON.stringify(plan.policyDocument),
+                Description: `Created by CloudPilot IAM automation for ${plan.args.principalType}:${plan.args.principalIdentifier}`,
+              }).promise());
+
+              const policyArn = createPolicyResult.Policy?.Arn;
+              if (!policyArn) {
+                throw new Error("IAM policy was created without a returned ARN.");
+              }
+
+              if (plan.args.principalType === "group") {
+                await withAwsRetry("IAM.attachGroupPolicy", () => iam.attachGroupPolicy({
+                  GroupName: plan.args.principalIdentifier,
+                  PolicyArn: policyArn,
+                }).promise());
+              } else if (plan.args.principalType === "role") {
+                await withAwsRetry("IAM.attachRolePolicy", () => iam.attachRolePolicy({
+                  RoleName: plan.args.principalIdentifier,
+                  PolicyArn: policyArn,
+                }).promise());
+              } else {
+                await withAwsRetry("IAM.attachUserPolicy", () => iam.attachUserPolicy({
+                  UserName: plan.args.principalIdentifier,
+                  PolicyArn: policyArn,
+                }).promise());
+              }
+
+              const execTime = Date.now() - startTime;
+              const executionResult = {
+                status: "executed",
+                principal: {
+                  type: plan.args.principalType,
+                  identifier: plan.args.principalIdentifier,
+                },
+                policyName: plan.policyName,
+                policyArn,
+                attachOperation: plan.attachOperation,
+                policyDocument: plan.policyDocument,
+              };
+
+              await storeIdempotencySuccess(supabaseAdmin, "manage_iam_access", iamRequestKey, executionResult);
+
+              if (userId) {
+                supabaseAdmin.from("agent_audit_log").insert({
+                  user_id: userId,
+                  aws_service: "IAM",
+                  aws_operation: "executeIamAccessChange",
+                  aws_region: awsConfig.region,
+                  status: "success",
+                  validator_result: "HIGH_RISK",
+                  execution_time_ms: execTime,
+                }).then();
+              }
+
+              pushAuditToAws(awsConfig, {
+                timestamp: new Date().toISOString(),
+                userId,
+                service: "IAM",
+                operation: "executeIamAccessChange",
+                region: awsConfig.region,
+                principalType: plan.args.principalType,
+                principalIdentifier: plan.args.principalIdentifier,
+                policyName: plan.policyName,
+                policyArn,
+                status: "success",
+                validatorResult: "HIGH_RISK",
+                executionTimeMs: execTime,
+              });
+
+              apiMessages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify(executionResult),
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              } as any);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            } catch (err: any) {
+              const execTime = Date.now() - startTime;
+              const typedError = toCloudPilotError(err);
+              const errorMessage = typedError.message || "IAM automation failed.";
+              if (userHasConfirmedMutation) {
+                const rawArgs = JSON.parse(toolCall.function.arguments);
+                const plan = buildIamAccessPlan(rawArgs);
+                const requestHash = await sha256(stableStringify({
+                  region: awsConfig.region,
+                  principalType: plan.args.principalType,
+                  principalIdentifier: plan.args.principalIdentifier,
+                  policyName: plan.policyName,
+                  policyDocument: plan.policyDocument,
+                }));
+                await storeIdempotencyFailure(
+                  supabaseAdmin,
+                  "manage_iam_access",
+                  `iam-access:${requestHash}`,
+                  { error: errorMessage, code: typedError.code, category: typedError.category },
+                );
+              }
+
+              if (userId) {
+                supabaseAdmin.from("agent_audit_log").insert({
+                  user_id: userId,
+                  aws_service: "IAM",
+                  aws_operation: "manageIamAccess",
+                  aws_region: awsConfig.region,
+                  status: "error",
+                  error_code: typedError.code || null,
+                  error_message: errorMessage.slice(0, 2000),
+                  validator_result: userHasConfirmedMutation ? "HIGH_RISK" : "ALLOWED",
+                  execution_time_ms: execTime,
+                }).then();
+              }
+
+              pushAuditToAws(awsConfig, {
+                timestamp: new Date().toISOString(),
+                userId,
+                service: "IAM",
+                operation: "manageIamAccess",
+                region: awsConfig.region,
+                status: "error",
+                errorCode: typedError.code || null,
+                errorMessage: errorMessage.slice(0, 2000),
+                executionTimeMs: execTime,
+              });
+
+              apiMessages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify({
+                  error: errorMessage,
+                  code: typedError.code,
+                  category: typedError.category,
+                  retryable: typedError.retryable,
+                }),
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              } as any);
+            }
+          } else if (toolCall.function.name === "run_attack_simulation") {
+            const startTime = Date.now();
+            try {
+              const args = JSON.parse(toolCall.function.arguments);
+
+              // Instead of a fake simulation, orchestrate real API calls to map the attack path.
+              // We will instruct the agent that it must perform the real checks.
+              const simulationResult = {
+                simulation_id: `sim_${Date.now()}`,
+                target: args.target,
+                vector: args.vector,
+                status: "orchestrating",
+                instructions: `You must now use execute_aws_api to perform real discovery for the '${args.vector}' attack vector against '${args.target}'. Do not use fabricated data. Map out the dynamic attack path using real IAM, EC2, or S3 configurations you retrieve. Calculate the Unified Risk Score based on real findings.`,
+              };
+
+              const execTime = Date.now() - startTime;
+
+              if (userId) {
+                await supabaseAdmin.from("agent_audit_log").insert({
+                  user_id: userId,
+                  aws_service: "SIMULATION",
+                  aws_operation: "runAttackSimulation",
+                  aws_region: awsConfig.region,
+                  status: "success",
+                  validator_result: "ALLOWED",
+                  execution_time_ms: execTime,
+                });
+              }
+
+              await pushAuditToAws(awsConfig, {
+                timestamp: new Date().toISOString(),
+                userId,
+                service: "SIMULATION",
+                operation: "runAttackSimulation",
+                region: awsConfig.region,
+                status: "success",
+                target: args.target,
+                vector: args.vector,
+                executionTimeMs: execTime,
+              });
+
+              apiMessages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify(simulationResult),
+              } as any);
+            } catch (err: any) {
+              apiMessages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify({ error: err.message || "Simulation failed." }),
+              } as any);
+            }
+          } else if (toolCall.function.name === "run_evasion_test") {
+            const startTime = Date.now();
+            try {
+              const args = JSON.parse(toolCall.function.arguments);
+
+              const evasionResult = {
+                test_id: `evasion_${Date.now()}`,
+                target_rule: args.detectionRule,
+                status: "orchestrating",
+                instructions: `You must now use execute_aws_api to query CloudTrail and GuardDuty to check if '${args.detectionRule}' is actively monitoring. Propose specific evasion techniques (like jitter, region-hopping) that could bypass the observed configuration. Do not invent fake detections; verify the real configuration first.`,
+              };
+
+              const execTime = Date.now() - startTime;
+
+              if (userId) {
+                await supabaseAdmin.from("agent_audit_log").insert({
+                  user_id: userId,
+                  aws_service: "SIMULATION",
+                  aws_operation: "runEvasionTest",
+                  aws_region: awsConfig.region,
+                  status: "success",
+                  validator_result: "ALLOWED",
+                  execution_time_ms: execTime,
+                });
+              }
+
+              await pushAuditToAws(awsConfig, {
+                timestamp: new Date().toISOString(),
+                userId,
+                service: "SIMULATION",
+                operation: "runEvasionTest",
+                region: awsConfig.region,
+                status: "success",
+                rule: args.detectionRule,
+                executionTimeMs: execTime,
+              });
+
+              apiMessages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify(evasionResult),
+              } as any);
+            } catch (err: any) {
+              apiMessages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify({ error: err.message || "Evasion test failed." }),
+              } as any);
+            }
+          } else if (toolCall.function.name === "execute_aws_api") {
+            const startTime = Date.now();
+            let service = "";
+            let operation = "";
+            let validatorResult: ValidatorResult = { allowed: true, riskLevel: "ALLOWED" };
+
+            try {
+              const args = JSON.parse(toolCall.function.arguments);
+              service = sanitizeString(args.service, 64);
+              operation = sanitizeString(args.operation, 128);
+
+              // Security: validate service allowlist
+              if (!ALLOWED_AWS_SERVICES.has(service)) {
+                throw new Error(`AWS service '${service}' is not allowed. Permitted services: ${[...ALLOWED_AWS_SERVICES].join(", ")}`);
+              }
+
+              // ── Privilege Escalation Validator ──────────────────────────────
+              validatorResult = validatePrivilegeEscalation(service, operation, args.params);
+              if (!validatorResult.allowed) {
+                // Log blocked call to audit
+                if (userId) {
+                  supabaseAdmin.from("agent_audit_log").insert({
+                    user_id: userId,
+                    aws_service: service,
+                    aws_operation: operation,
+                    aws_region: awsConfig.region,
+                    params_hash: args.params ? btoa(JSON.stringify(args.params).slice(0, 200)) : null,
+                    status: "blocked",
+                    error_message: validatorResult.reason,
+                    validator_result: validatorResult.riskLevel,
+                    execution_time_ms: Date.now() - startTime,
+                  }).then();
+                }
+                throw new Error(validatorResult.reason);
+              }
+
+              console.log(`[CloudPilot] AWS API: ${service}.${operation} [${validatorResult.riskLevel}]`, JSON.stringify(args.params ?? {}));
+
+              // Use the shared dynamic module loader (eliminates duplicate switch statement)
+              let module: any;
+              try {
+                module = await loadAwsModule(service);
+              } catch (e) {
+                throw new Error(`AWS service package for '${service}' could not be imported. Ensure the service is supported in SDK v3.`);
+              }
+
+              // Use shared client name map
+              const clientName = V3_CLIENT_NAMES[service] || `${service}Client`;
+
+              const ClientClass = module[clientName];
+              if (!ClientClass) {
+                 throw new Error(`AWS service client '${clientName}' not found for service '${service}'.`);
+              }
+
+              // Handle commands which might need special capitalization (though mostly uppercase first letter works)
+              let commandName = `${operation.charAt(0).toUpperCase() + operation.slice(1)}Command`;
+              const CommandClass = module[commandName];
+              if (!CommandClass) {
+                 throw new Error(`Operation command '${commandName}' not found for service '${service}'. Check the operation name.`);
+              }
+
+              const client = new ClientClass(awsConfig);
+              const command = new CommandClass(args.params || {});
+
+              const result = await withAwsRetry(`${service}.${operation}`, () => client.send(command));
+              const execTime = Date.now() - startTime;
+              
+              // Extract data, removing non-serializable v3 SDK wrapper properties if needed
+              const { $metadata, ...resultData } = result as any;
+
+              // Truncate very large responses to prevent context overflow
+              let resultStr = JSON.stringify(resultData);
+              if (resultStr.length > 100000) {
+                resultStr = resultStr.slice(0, 100000) + '... [TRUNCATED — response too large, narrow your query]';
+              }
+
+              // ── Audit log: successful call ──────────────────────────────────
+              if (userId) {
+                supabaseAdmin.from("agent_audit_log").insert({
+                  user_id: userId,
+                  aws_service: service,
+                  aws_operation: operation,
+                  aws_region: awsConfig.region,
+                  params_hash: args.params ? btoa(JSON.stringify(args.params).slice(0, 200)) : null,
+                  status: "success",
+                  validator_result: validatorResult.riskLevel,
+                  execution_time_ms: execTime,
+                }).then();
+              }
+
+              // ── CloudWatch Logs + WORM S3 Audit Trail (User's Account) ──────────
+              pushAuditToAws(awsConfig, {
+                timestamp: new Date().toISOString(),
+                userId,
+                service,
+                operation,
+                region: awsConfig.region,
+                params: args.params,
+                status: "success",
+                validatorResult: validatorResult.riskLevel,
+                executionTimeMs: execTime,
+              });
+
+              // Prepend validator warning to tool response if HIGH_RISK
+              const prefix = validatorResult.riskLevel === "HIGH_RISK"
+                ? `[VALIDATOR WARNING: ${validatorResult.reason}]\n\n`
+                : "";
+
+              apiMessages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: prefix + resultStr,
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              } as any);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            } catch (err: any) {
+              const execTime = Date.now() - startTime;
+              const typedError = toCloudPilotError(err);
+              console.error("[CloudPilot] AWS SDK Error:", typedError.message);
+
+              let errorDetail = typedError.message;
+              if (err.name === "AccessDeniedException" || err.name === "AccessDenied" || err.code === "AccessDeniedException" || err.code === "AccessDenied" || err.code === "UnauthorizedAccess" || err.code === "AuthorizationError" || err.$metadata?.httpStatusCode === 403 || err.statusCode === 403) {
+                const svc = service.toLowerCase();
+                const op = operation;
+                errorDetail = `PERMISSION DENIED: The configured IAM credentials do not have permission to perform '${svc}:${op}'. ` +
+                  `To resolve this, the IAM user/role needs the following permission added to its policy:\n\n` +
+                  `{\n  "Effect": "Allow",\n  "Action": "${svc}:${op[0].toUpperCase() + op.slice(1)}",\n  "Resource": "*"\n}\n\n` +
+                  `Original error: ${err.message} (Code: ${err.name || err.code})`;
+              }
+
+              // ── Audit log: failed call ──────────────────────────────────────
+              if (userId && service) {
+                supabaseAdmin.from("agent_audit_log").insert({
+                  user_id: userId,
+                  aws_service: service || "UNKNOWN",
+                  aws_operation: operation || "UNKNOWN",
+                  aws_region: awsConfig.region,
+                  status: "error",
+                  error_code: typedError.code || null,
+                  error_message: (errorDetail || "").slice(0, 2000),
+                  validator_result: validatorResult.riskLevel,
+                  execution_time_ms: execTime,
+                }).then();
+              }
+
+              // ── CloudWatch Logs + WORM S3 Audit Trail (Error) ─────────────
+              pushAuditToAws(awsConfig, {
+                timestamp: new Date().toISOString(),
+                userId,
+
     }
+
+    // Convert apiMessages tool results to response format
+    const results = apiMessages
+      .filter((m: any) => m.role === "tool")
+      .map((m: any) => ({
+        toolCallId: m.tool_call_id,
+        content: m.content,
+        auditSummary: latestUnifiedAuditSummary || undefined,
+      }));
+
+    // Reset audit summary after sending
+    latestUnifiedAuditSummary = null;
 
     return new Response(JSON.stringify({ results }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
