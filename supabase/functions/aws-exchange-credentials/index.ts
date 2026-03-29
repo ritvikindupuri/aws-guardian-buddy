@@ -1,5 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import AWS from "npm:aws-sdk@2.1693.0";
+import { STSClient, GetCallerIdentityCommand, GetSessionTokenCommand, AssumeRoleCommand } from "npm:@aws-sdk/client-sts@3.744.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -65,7 +65,7 @@ serve(async (req) => {
         );
       }
 
-      const sts = new AWS.STS({
+      const sts = new STSClient({
         credentials: {
           accessKeyId,
           secretAccessKey,
@@ -77,7 +77,7 @@ serve(async (req) => {
       });
 
       // Validate by calling getCallerIdentity
-      const callerIdentity = await sts.getCallerIdentity().promise();
+      const callerIdentity = await sts.send(new GetCallerIdentityCommand({}));
       identity = {
         account: callerIdentity.Account || "",
         arn: callerIdentity.Arn || "",
@@ -85,11 +85,9 @@ serve(async (req) => {
       };
 
       // Exchange for temporary session token
-      const sessionData = await sts
-        .getSessionToken({ DurationSeconds: 3600 })
-        .promise();
+      const sessionData = await sts.send(new GetSessionTokenCommand({ DurationSeconds: 3600 }));
 
-      if (!sessionData.Credentials) {
+      if (!sessionData.Credentials || !sessionData.Credentials.AccessKeyId || !sessionData.Credentials.SecretAccessKey || !sessionData.Credentials.SessionToken || !sessionData.Credentials.Expiration) {
         throw new Error("Failed to obtain temporary session credentials.");
       }
 
@@ -124,21 +122,19 @@ serve(async (req) => {
         };
       }
 
-      const sts = new AWS.STS(stsConfig);
-      const assumedRole = await sts
-        .assumeRole({
-          RoleArn: roleArn,
-          RoleSessionName: `CloudPilot-${Date.now()}`,
-          DurationSeconds: 3600,
-        })
-        .promise();
+      const sts = new STSClient(stsConfig);
+      const assumedRole = await sts.send(new AssumeRoleCommand({
+        RoleArn: roleArn,
+        RoleSessionName: `CloudPilot-${Date.now()}`,
+        DurationSeconds: 3600,
+      }));
 
-      if (!assumedRole.Credentials) {
+      if (!assumedRole.Credentials || !assumedRole.Credentials.AccessKeyId || !assumedRole.Credentials.SecretAccessKey || !assumedRole.Credentials.SessionToken || !assumedRole.Credentials.Expiration) {
         throw new Error("Failed to assume role.");
       }
 
       // Get identity from assumed role
-      const assumedSts = new AWS.STS({
+      const assumedSts = new STSClient({
         credentials: {
           accessKeyId: assumedRole.Credentials.AccessKeyId,
           secretAccessKey: assumedRole.Credentials.SecretAccessKey,
@@ -146,7 +142,7 @@ serve(async (req) => {
         },
         region,
       });
-      const callerIdentity = await assumedSts.getCallerIdentity().promise();
+      const callerIdentity = await assumedSts.send(new GetCallerIdentityCommand({}));
       identity = {
         account: callerIdentity.Account || "",
         arn: callerIdentity.Arn || "",

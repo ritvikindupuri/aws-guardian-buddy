@@ -1,6 +1,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import AWS from "npm:aws-sdk@2.1693.0";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import { CloudWatchLogsClient, CreateLogGroupCommand, CreateLogStreamCommand, DescribeLogStreamsCommand, PutLogEventsCommand } from "npm:@aws-sdk/client-cloudwatch-logs@3.744.0";
+import { STSClient, GetCallerIdentityCommand } from "npm:@aws-sdk/client-sts@3.744.0";
+import { S3Client, CreateBucketCommand, PutObjectLockConfigurationCommand, PutPublicAccessBlockCommand, PutBucketEncryptionCommand, PutObjectCommand } from "npm:@aws-sdk/client-s3@3.744.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -4430,32 +4432,32 @@ const WORM_BUCKET_PREFIX = "cloudpilot-audit-worm-";
 async function pushAuditToAws(awsConfig: any, payload: Record<string, any>) {
   try {
     // ── 1. CloudWatch Logs ──────────────────────────────────────────────────
-    const cwl = new AWS.CloudWatchLogs(awsConfig);
+    const cwl = new CloudWatchLogsClient(awsConfig);
     const groupName = CW_LOG_GROUP;
     const streamName = `agent-${new Date().toISOString().slice(0, 10)}`;
 
     // Ensure log group exists (idempotent)
     try {
-      await cwl.createLogGroup({ logGroupName: groupName }).promise();
+      await cwl.send(new CreateLogGroupCommand({ logGroupName: groupName }));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (e: any) {
-      if (e.code !== "ResourceAlreadyExistsException") throw e;
+      if (e.name !== "ResourceAlreadyExistsException" && e.code !== "ResourceAlreadyExistsException") throw e;
     }
 
     // Ensure log stream exists (idempotent)
     try {
-      await cwl.createLogStream({ logGroupName: groupName, logStreamName: streamName }).promise();
+      await cwl.send(new CreateLogStreamCommand({ logGroupName: groupName, logStreamName: streamName }));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (e: any) {
-      if (e.code !== "ResourceAlreadyExistsException") throw e;
+      if (e.name !== "ResourceAlreadyExistsException" && e.code !== "ResourceAlreadyExistsException") throw e;
     }
 
     // Get the upload sequence token
-    const desc = await cwl.describeLogStreams({
+    const desc = await cwl.send(new DescribeLogStreamsCommand({
       logGroupName: groupName,
       logStreamNamePrefix: streamName,
       limit: 1,
-    }).promise();
+    }));
     const seqToken = desc.logStreams?.[0]?.uploadSequenceToken;
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -4469,24 +4471,24 @@ async function pushAuditToAws(awsConfig: any, payload: Record<string, any>) {
     };
     if (seqToken) cwParams.sequenceToken = seqToken;
 
-    await cwl.putLogEvents(cwParams).promise();
+    await cwl.send(new PutLogEventsCommand(cwParams));
 
     // ── 2. WORM S3 (Object Lock — Compliance Mode) ──────────────────────────
-    const sts = new AWS.STS(awsConfig);
-    const identity = await sts.getCallerIdentity().promise();
+    const sts = new STSClient(awsConfig);
+    const identity = await sts.send(new GetCallerIdentityCommand({}));
     const accountId = identity.Account;
     const wormBucket = `${WORM_BUCKET_PREFIX}${accountId}`;
-    const s3 = new AWS.S3(awsConfig);
+    const s3 = new S3Client(awsConfig);
 
     // Ensure bucket exists with Object Lock enabled (must be set at creation)
     try {
-      await s3.createBucket({
+      await s3.send(new CreateBucketCommand({
         Bucket: wormBucket,
         ObjectLockEnabledForBucket: true,
-      }).promise();
+      }));
 
       // Set default retention — 1 year Compliance mode (immutable)
-      await s3.putObjectLockConfiguration({
+      await s3.send(new PutObjectLockConfigurationCommand({
         Bucket: wormBucket,
         ObjectLockConfiguration: {
           ObjectLockEnabled: "Enabled",
@@ -4497,10 +4499,10 @@ async function pushAuditToAws(awsConfig: any, payload: Record<string, any>) {
             },
           },
         },
-      }).promise();
+      }));
 
       // Block all public access
-      await s3.putPublicAccessBlock({
+      await s3.send(new PutPublicAccessBlockCommand({
         Bucket: wormBucket,
         PublicAccessBlockConfiguration: {
           BlockPublicAcls: true,
@@ -4508,20 +4510,20 @@ async function pushAuditToAws(awsConfig: any, payload: Record<string, any>) {
           BlockPublicPolicy: true,
           RestrictPublicBuckets: true,
         },
-      }).promise();
+      }));
 
       // Enable AES-256 encryption
-      await s3.putBucketEncryption({
+      await s3.send(new PutBucketEncryptionCommand({
         Bucket: wormBucket,
         ServerSideEncryptionConfiguration: {
           Rules: [{ ApplyServerSideEncryptionByDefault: { SSEAlgorithm: "AES256" } }],
         },
-      }).promise();
+      }));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (e: any) {
       // BucketAlreadyOwnedByYou or BucketAlreadyExists means it's already set up
-      if (e.code !== "BucketAlreadyOwnedByYou" && e.code !== "BucketAlreadyExists") {
-        console.error("[CloudPilot] WORM bucket setup error (non-fatal):", e.code);
+      if (e.name !== "BucketAlreadyOwnedByYou" && e.name !== "BucketAlreadyExists" && e.code !== "BucketAlreadyOwnedByYou" && e.code !== "BucketAlreadyExists") {
+        console.error("[CloudPilot] WORM bucket setup error (non-fatal):", e.name || e.code);
       }
     }
 
@@ -4529,34 +4531,77 @@ async function pushAuditToAws(awsConfig: any, payload: Record<string, any>) {
     const ts = payload.timestamp || new Date().toISOString();
     const logKey = `audit/${ts.slice(0, 10)}/${ts.replace(/:/g, "-")}-${crypto.randomUUID()}.json`;
 
-    await s3.putObject({
+    await s3.send(new PutObjectCommand({
       Bucket: wormBucket,
       Key: logKey,
       Body: JSON.stringify(payload, null, 2),
       ContentType: "application/json",
       ServerSideEncryption: "AES256",
-    }).promise();
+    }));
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (e: any) {
     // Audit failures are non-fatal — log but don't break the agent flow
-    console.error("[CloudPilot] Audit push failed (CW/WORM):", e.code || e.message);
+    console.error("[CloudPilot] Audit push failed (CW/WORM):", e.name || e.code || e.message);
   }
 }
 
 // ── Security: Input validation ──────────────────────────────────────────────
-const ALLOWED_AWS_SERVICES = new Set([
-  "S3", "EC2", "IAM", "STS", "GuardDuty", "SecurityHub", "CloudTrail", "Config",
-  "RDS", "Lambda", "EKS", "ECS", "KMS", "SecretsManager", "SSM", "Organizations",
-  "WAFv2", "CloudFront", "SNS", "SQS", "ECR", "Athena", "CloudWatch", "CloudWatchLogs",
-  "Inspector2", "AccessAnalyzer", "Macie2", "NetworkFirewall", "Shield", "ACM",
-  "APIGateway", "CognitoIdentityServiceProvider", "EventBridge", "StepFunctions",
-  "ElastiCache", "Redshift", "DynamoDB", "Route53", "ELBv2", "AutoScaling",
-]);
+const AWS_V3_SERVICE_MAP: Record<string, string> = {
+  "S3": "s3",
+  "EC2": "ec2",
+  "IAM": "iam",
+  "STS": "sts",
+  "GuardDuty": "guardduty",
+  "SecurityHub": "securityhub",
+  "CloudTrail": "cloudtrail",
+  "Config": "config-service",
+  "RDS": "rds",
+  "Lambda": "lambda",
+  "EKS": "eks",
+  "ECS": "ecs",
+  "KMS": "kms",
+  "SecretsManager": "secrets-manager",
+  "SSM": "ssm",
+  "Organizations": "organizations",
+  "WAFv2": "wafv2",
+  "CloudFront": "cloudfront",
+  "SNS": "sns",
+  "SQS": "sqs",
+  "ECR": "ecr",
+  "Athena": "athena",
+  "CloudWatch": "cloudwatch",
+  "CloudWatchLogs": "cloudwatch-logs",
+  "Inspector2": "inspector2",
+  "AccessAnalyzer": "accessanalyzer",
+  "Macie2": "macie2",
+  "NetworkFirewall": "network-firewall",
+  "Shield": "shield",
+  "ACM": "acm",
+  "APIGateway": "api-gateway",
+  "CognitoIdentityServiceProvider": "cognito-identity-provider",
+  "EventBridge": "eventbridge",
+  "StepFunctions": "sfn",
+  "ElastiCache": "elasticache",
+  "Redshift": "redshift",
+  "DynamoDB": "dynamodb",
+  "Route53": "route53",
+  "ELBv2": "elastic-load-balancing-v2",
+  "AutoScaling": "auto-scaling",
+};
+
+const ALLOWED_AWS_SERVICES = new Set(Object.keys(AWS_V3_SERVICE_MAP));
 
 const BLOCKED_OPERATIONS = new Set([
   // Prevent destructive billing/account-level operations
   "closeAccount", "leaveOrganization", "deleteOrganization",
   "createAccount", "inviteAccountToOrganization",
+
+  // Prevent AI from accidentally executing destructive resource deletions
+  "terminateInstances", "deleteBucket", "deleteDbInstance",
+  "deleteTable", "deleteCluster", "deleteFunction",
+  "deleteVpc", "deleteSubnet", "deleteNatGateway",
+  "deleteInternetGateway", "deleteRouteTable", "deleteSecurityGroup",
+  "deleteKey", "scheduleKeyDeletion", "deleteSecret"
 ]);
 
 // ── Privilege Escalation Validator ──────────────────────────────────────────
@@ -6212,22 +6257,90 @@ serve(async (req) => {
 
               console.log(`[CloudPilot] AWS API: ${service}.${operation} [${validatorResult.riskLevel}]`, JSON.stringify(args.params ?? {}));
 
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const ServiceClass = (AWS as any)[service];
-              if (!ServiceClass) {
-                throw new Error(`AWS service '${service}' not found in SDK. Check the service name.`);
+              // Dynamically import AWS SDK v3 client and command using literal strings
+              // required by Supabase Edge Functions / Deno Deploy bundler for static analysis
+              let module: any;
+              try {
+                switch (service) {
+                  case "S3": module = await import("npm:@aws-sdk/client-s3@3.744.0"); break;
+                  case "EC2": module = await import("npm:@aws-sdk/client-ec2@3.744.0"); break;
+                  case "IAM": module = await import("npm:@aws-sdk/client-iam@3.744.0"); break;
+                  case "STS": module = await import("npm:@aws-sdk/client-sts@3.744.0"); break;
+                  case "GuardDuty": module = await import("npm:@aws-sdk/client-guardduty@3.744.0"); break;
+                  case "SecurityHub": module = await import("npm:@aws-sdk/client-securityhub@3.744.0"); break;
+                  case "CloudTrail": module = await import("npm:@aws-sdk/client-cloudtrail@3.744.0"); break;
+                  case "Config": module = await import("npm:@aws-sdk/client-config-service@3.744.0"); break;
+                  case "RDS": module = await import("npm:@aws-sdk/client-rds@3.744.0"); break;
+                  case "Lambda": module = await import("npm:@aws-sdk/client-lambda@3.744.0"); break;
+                  case "EKS": module = await import("npm:@aws-sdk/client-eks@3.744.0"); break;
+                  case "ECS": module = await import("npm:@aws-sdk/client-ecs@3.744.0"); break;
+                  case "KMS": module = await import("npm:@aws-sdk/client-kms@3.744.0"); break;
+                  case "SecretsManager": module = await import("npm:@aws-sdk/client-secrets-manager@3.744.0"); break;
+                  case "SSM": module = await import("npm:@aws-sdk/client-ssm@3.744.0"); break;
+                  case "Organizations": module = await import("npm:@aws-sdk/client-organizations@3.744.0"); break;
+                  case "WAFv2": module = await import("npm:@aws-sdk/client-wafv2@3.744.0"); break;
+                  case "CloudFront": module = await import("npm:@aws-sdk/client-cloudfront@3.744.0"); break;
+                  case "SNS": module = await import("npm:@aws-sdk/client-sns@3.744.0"); break;
+                  case "SQS": module = await import("npm:@aws-sdk/client-sqs@3.744.0"); break;
+                  case "ECR": module = await import("npm:@aws-sdk/client-ecr@3.744.0"); break;
+                  case "Athena": module = await import("npm:@aws-sdk/client-athena@3.744.0"); break;
+                  case "CloudWatch": module = await import("npm:@aws-sdk/client-cloudwatch@3.744.0"); break;
+                  case "CloudWatchLogs": module = await import("npm:@aws-sdk/client-cloudwatch-logs@3.744.0"); break;
+                  case "Inspector2": module = await import("npm:@aws-sdk/client-inspector2@3.744.0"); break;
+                  case "AccessAnalyzer": module = await import("npm:@aws-sdk/client-accessanalyzer@3.744.0"); break;
+                  case "Macie2": module = await import("npm:@aws-sdk/client-macie2@3.744.0"); break;
+                  case "NetworkFirewall": module = await import("npm:@aws-sdk/client-network-firewall@3.744.0"); break;
+                  case "Shield": module = await import("npm:@aws-sdk/client-shield@3.744.0"); break;
+                  case "ACM": module = await import("npm:@aws-sdk/client-acm@3.744.0"); break;
+                  case "APIGateway": module = await import("npm:@aws-sdk/client-api-gateway@3.744.0"); break;
+                  case "CognitoIdentityServiceProvider": module = await import("npm:@aws-sdk/client-cognito-identity-provider@3.744.0"); break;
+                  case "EventBridge": module = await import("npm:@aws-sdk/client-eventbridge@3.744.0"); break;
+                  case "StepFunctions": module = await import("npm:@aws-sdk/client-sfn@3.744.0"); break;
+                  case "ElastiCache": module = await import("npm:@aws-sdk/client-elasticache@3.744.0"); break;
+                  case "Redshift": module = await import("npm:@aws-sdk/client-redshift@3.744.0"); break;
+                  case "DynamoDB": module = await import("npm:@aws-sdk/client-dynamodb@3.744.0"); break;
+                  case "Route53": module = await import("npm:@aws-sdk/client-route53@3.744.0"); break;
+                  case "ELBv2": module = await import("npm:@aws-sdk/client-elastic-load-balancing-v2@3.744.0"); break;
+                  case "AutoScaling": module = await import("npm:@aws-sdk/client-auto-scaling@3.744.0"); break;
+                  default:
+                    throw new Error(`AWS service '${service}' is not mapped to an SDK v3 package.`);
+                }
+              } catch (e) {
+                throw new Error(`AWS service package for '${service}' could not be imported. Ensure the service is supported in SDK v3.`);
               }
 
-              const client = new ServiceClass(awsConfig);
-              if (typeof client[operation] !== "function") {
-                throw new Error(`Operation '${operation}' not found on ${service}. Check the operation name.`);
+              // Map legacy v2 class names to v3 client names if they differ
+              let clientName = `${service}Client`;
+              if (service === "Config") clientName = "ConfigServiceClient";
+              if (service === "CognitoIdentityServiceProvider") clientName = "CognitoIdentityProviderClient";
+              if (service === "StepFunctions") clientName = "SFNClient";
+              if (service === "ELBv2") clientName = "ElasticLoadBalancingV2Client";
+              if (service === "AutoScaling") clientName = "AutoScalingClient";
+              if (service === "APIGateway") clientName = "APIGatewayClient";
+
+              const ClientClass = module[clientName];
+              if (!ClientClass) {
+                 throw new Error(`AWS service client '${clientName}' not found in package '${packageName}'.`);
               }
 
-              const result = await client[operation](args.params || {}).promise();
+              // Handle commands which might need special capitalization (though mostly uppercase first letter works)
+              let commandName = `${operation.charAt(0).toUpperCase() + operation.slice(1)}Command`;
+              const CommandClass = module[commandName];
+              if (!CommandClass) {
+                 throw new Error(`Operation command '${commandName}' not found in package '${packageName}'. Check the operation name.`);
+              }
+
+              const client = new ClientClass(awsConfig);
+              const command = new CommandClass(args.params || {});
+
+              const result = await client.send(command);
               const execTime = Date.now() - startTime;
               
+              // Extract data, removing non-serializable v3 SDK wrapper properties if needed
+              const { $metadata, ...resultData } = result as any;
+
               // Truncate very large responses to prevent context overflow
-              let resultStr = JSON.stringify(result);
+              let resultStr = JSON.stringify(resultData);
               if (resultStr.length > 100000) {
                 resultStr = resultStr.slice(0, 100000) + '... [TRUNCATED — response too large, narrow your query]';
               }
@@ -6276,13 +6389,13 @@ serve(async (req) => {
               console.error("[CloudPilot] AWS SDK Error:", err.message);
 
               let errorDetail = err.message;
-              if (err.code === "AccessDeniedException" || err.code === "AccessDenied" || err.code === "UnauthorizedAccess" || err.code === "AuthorizationError" || err.statusCode === 403) {
+              if (err.name === "AccessDeniedException" || err.name === "AccessDenied" || err.code === "AccessDeniedException" || err.code === "AccessDenied" || err.code === "UnauthorizedAccess" || err.code === "AuthorizationError" || err.$metadata?.httpStatusCode === 403 || err.statusCode === 403) {
                 const svc = service.toLowerCase();
                 const op = operation;
                 errorDetail = `PERMISSION DENIED: The configured IAM credentials do not have permission to perform '${svc}:${op}'. ` +
                   `To resolve this, the IAM user/role needs the following permission added to its policy:\n\n` +
                   `{\n  "Effect": "Allow",\n  "Action": "${svc}:${op[0].toUpperCase() + op.slice(1)}",\n  "Resource": "*"\n}\n\n` +
-                  `Original error: ${err.message} (Code: ${err.code})`;
+                  `Original error: ${err.message} (Code: ${err.name || err.code})`;
               }
 
               // ── Audit log: failed call ──────────────────────────────────────
@@ -6308,7 +6421,7 @@ serve(async (req) => {
                 operation: operation || "UNKNOWN",
                 region: awsConfig.region,
                 status: "error",
-                errorCode: err.code || null,
+                errorCode: err.name || err.code || null,
                 errorMessage: (errorDetail || "").slice(0, 2000),
                 validatorResult: validatorResult.riskLevel,
                 executionTimeMs: execTime,
@@ -6319,8 +6432,8 @@ serve(async (req) => {
                 tool_call_id: toolCall.id,
                 content: JSON.stringify({
                   error: errorDetail,
-                  code: err.code,
-                  statusCode: err.statusCode,
+                  code: err.name || err.code,
+                  statusCode: err.$metadata?.httpStatusCode || err.statusCode,
                 }),
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               } as any);
