@@ -9,6 +9,7 @@ import Index from "./pages/Index.tsx";
 import Auth from "./pages/Auth.tsx";
 import Report from "./pages/Report.tsx";
 import ReportsHistory from "./pages/ReportsHistory.tsx";
+import Operations from "./pages/Operations.tsx";
 import NotFound from "./pages/NotFound.tsx";
 import { useAuth } from "@/hooks/useAuth.ts";
 
@@ -64,6 +65,14 @@ const AppRoutes = () => {
         element={
           <ProtectedRoute>
             <ReportsHistory />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/operations"
+        element={
+          <ProtectedRoute>
+            <Operations />
           </ProtectedRoute>
         }
       />

@@ -103,3 +103,18 @@ Confirm
 
 27. Abort active runbook
 Abort
+
+
+Event-driven automation
+
+28. Create world-open SSH response policy
+If anyone opens port 22 to the world, close it immediately and page me.
+
+29. Create IAM user creation alert policy
+Alert the security team whenever a new IAM user is created outside Guardian.
+
+30. Create root account usage response policy
+If root account is used for anything, wake up the on-call immediately.
+
+31. Replay recent CloudTrail events
+Replay the last 24 hours of CloudTrail events against my response policies and return a formal backtest report showing which events would have triggered which policies. Do not use emojis.

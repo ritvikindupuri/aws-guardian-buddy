@@ -170,6 +170,60 @@ export type Database = {
         }
         Relationships: []
       }
+      event_response_policies: {
+        Row: {
+          created_at: string
+          created_by: string
+          id: string
+          is_active: boolean
+          name: string
+          notify_channels: Json
+          policy_id: string
+          raw_query: string
+          response_action: string
+          response_params: Json
+          response_type: string
+          risk_threshold: string
+          trigger_conditions: Json
+          trigger_event: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          id?: string
+          is_active?: boolean
+          name: string
+          notify_channels?: Json
+          policy_id: string
+          raw_query: string
+          response_action: string
+          response_params?: Json
+          response_type?: string
+          risk_threshold?: string
+          trigger_conditions?: Json
+          trigger_event: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          id?: string
+          is_active?: boolean
+          name?: string
+          notify_channels?: Json
+          policy_id?: string
+          raw_query?: string
+          response_action?: string
+          response_params?: Json
+          response_type?: string
+          risk_threshold?: string
+          trigger_conditions?: Json
+          trigger_event?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       conversations: {
         Row: {
           created_at: string
@@ -225,6 +279,57 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      org_operation_history: {
+        Row: {
+          account_count: number
+          action: string
+          blocked: Json
+          created_at: string
+          env_breakdown: Json
+          execution_summary: Json | null
+          id: string
+          preview_payload: Json
+          rollback_plan: string | null
+          scp_template: string | null
+          scope: string
+          status: string
+          user_id: string
+          warnings: Json
+        }
+        Insert: {
+          account_count?: number
+          action: string
+          blocked?: Json
+          created_at?: string
+          env_breakdown?: Json
+          execution_summary?: Json | null
+          id?: string
+          preview_payload?: Json
+          rollback_plan?: string | null
+          scp_template?: string | null
+          scope: string
+          status?: string
+          user_id: string
+          warnings?: Json
+        }
+        Update: {
+          account_count?: number
+          action?: string
+          blocked?: Json
+          created_at?: string
+          env_breakdown?: Json
+          execution_summary?: Json | null
+          id?: string
+          preview_payload?: Json
+          rollback_plan?: string | null
+          scp_template?: string | null
+          scope?: string
+          status?: string
+          user_id?: string
+          warnings?: Json
+        }
+        Relationships: []
       }
       resource_snapshots: {
         Row: {

@@ -39,16 +39,41 @@ interface AuditSummary {
   servicesAssessed: string[];
 }
 
+interface LiveRunbookStep {
+  id: string;
+  stepId: string;
+  stepName: string;
+  status: string;
+  risk: string;
+  output: string | null;
+  stepOrder: number;
+  updatedAt: string;
+}
+
+interface LiveRunbookExecution {
+  id: string;
+  runbookId: string;
+  runbookName: string;
+  status: string;
+  dryRun: boolean;
+  currentStepIndex: number;
+  lastError: string | null;
+  updatedAt: string;
+  steps: LiveRunbookStep[];
+}
+
 export const useChat = (conversationId: string | null, notificationEmail?: string) => {
   const [messages, setMessages] = useState<ChatMessageData[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [auditSummary, setAuditSummary] = useState<AuditSummary | null>(null);
+  const [liveRunbook, setLiveRunbook] = useState<LiveRunbookExecution | null>(null);
 
   // Load messages from DB when active conversation changes
   useEffect(() => {
     if (!conversationId) {
       setMessages((prev) => prev.length > 0 && prev[0].status === "complete" ? [] : prev);
       setAuditSummary(null);
+      setLiveRunbook(null);
       return;
     }
     (supabase
@@ -80,6 +105,93 @@ export const useChat = (conversationId: string | null, notificationEmail?: strin
           });
         }
       });
+  }, [conversationId]);
+
+  useEffect(() => {
+    if (!conversationId) {
+      setLiveRunbook(null);
+      return;
+    }
+
+    let isActive = true;
+
+    const refreshRunbook = async () => {
+      const { data: executions } = await supabase
+        .from("runbook_executions")
+        .select("*")
+        .eq("conversation_id", conversationId)
+        .order("updated_at", { ascending: false })
+        .limit(1);
+
+      const execution = executions?.[0];
+      if (!isActive || !execution) {
+        if (isActive) setLiveRunbook(null);
+        return;
+      }
+
+      const { data: steps } = await supabase
+        .from("runbook_execution_steps")
+        .select("*")
+        .eq("execution_id", execution.id)
+        .order("step_order", { ascending: true });
+
+      if (!isActive) return;
+
+      setLiveRunbook({
+        id: execution.id,
+        runbookId: execution.runbook_id,
+        runbookName: execution.runbook_name,
+        status: execution.status,
+        dryRun: execution.dry_run,
+        currentStepIndex: execution.current_step_index,
+        lastError: execution.last_error,
+        updatedAt: execution.updated_at,
+        steps: (steps || []).map((step) => ({
+          id: step.id,
+          stepId: step.step_id,
+          stepName: step.step_name,
+          status: step.status,
+          risk: step.risk,
+          output: step.output,
+          stepOrder: step.step_order,
+          updatedAt: step.updated_at,
+        })),
+      });
+    };
+
+    refreshRunbook();
+
+    const channel = supabase
+      .channel(`runbook-live-${conversationId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "runbook_executions",
+          filter: `conversation_id=eq.${conversationId}`,
+        },
+        () => {
+          refreshRunbook();
+        },
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "runbook_execution_steps",
+        },
+        () => {
+          refreshRunbook();
+        },
+      )
+      .subscribe();
+
+    return () => {
+      isActive = false;
+      supabase.removeChannel(channel);
+    };
   }, [conversationId]);
 
   const sendMessage = useCallback(
@@ -288,5 +400,5 @@ export const useChat = (conversationId: string | null, notificationEmail?: strin
     fixPrompt: finding.fixPrompt,
   }));
 
-  return { messages, isLoading, sendMessage, clearMessages, auditSummary, findings };
+  return { messages, isLoading, sendMessage, clearMessages, auditSummary, findings, liveRunbook };
 };

@@ -42,7 +42,14 @@ By tightly coupling LLM reasoning capabilities with strict, restricted, and audi
 19. [Compliance Frameworks](#compliance-frameworks)
 20. [VPC Endpoint Configuration Guide — Fully Private AWS API Routing](#vpc-endpoint-configuration-guide--fully-private-aws-api-routing)
 21. [CloudWatch Automation](#cloudwatch-automation)
-22. [Conclusion](#conclusion)
+22. [Unified Audit Engine](#unified-audit-engine)
+23. [IAM Automation — Preview, Confirm, Execute](#iam-automation--preview-confirm-execute)
+24. [Security Group Automation — Risk-Gated Mutations](#security-group-automation--risk-gated-mutations)
+25. [Cost Automation — Rules, Anomalies, and Remediation](#cost-automation--rules-anomalies-and-remediation)
+26. [Drift Detection — Baselines, Diffs, and Morning Digests](#drift-detection--baselines-diffs-and-morning-digests)
+27. [AWS Organizations Automation](#aws-organizations-automation)
+28. [Runbook Execution Engine](#runbook-execution-engine)
+29. [Conclusion](#conclusion)
 
 ### Typical User Query Flow
 
@@ -1683,6 +1690,348 @@ graph TB
 
 ---
 
+## Unified Audit Engine
+
+CloudPilot AI now supports a formal **unified audit path** for broad account-health questions such as:
+
+- "Show me everything wrong with my AWS account"
+- "What are my security issues"
+- "Where am I wasting money"
+- "Am I SOC 2 ready"
+
+Rather than relying on the model to invent its own inspection order each time, the backend now classifies the request into an audit intent and executes a fixed scanner plan. Each scanner returns findings in a normalized schema so the agent can aggregate, rank, and summarize them consistently.
+
+### Audit Pipeline
+
+```mermaid
+flowchart TD
+    A[Plain English audit query] --> B[Query classifier and planner]
+    B --> C[IAM scanner]
+    B --> D[S3 scanner]
+    B --> E[Security group scanner]
+    B --> F[EC2 scanner]
+    B --> G[Cost scanner]
+    C --> H[Result aggregator]
+    D --> H
+    E --> H
+    F --> H
+    G --> H
+    H --> I[Severity ranking and health score]
+    I --> J[Formal synthesis layer]
+    J --> K[Chat response + findings panel]
+```
+
+### Implemented Scanners
+
+| Scanner | Current checks |
+|---------|----------------|
+| IAM | `AdministratorAccess`, MFA presence, stale access keys |
+| S3 | Public Access Block, default encryption, lifecycle presence |
+| Security Groups | Internet-exposed ingress on sensitive ports |
+| EC2 / EBS | Public instance + IMDSv2 gaps, unattached volumes |
+| Cost | Elevated service spend over the last 30 days |
+
+### Cached Audit Results
+
+Unified audit results are cached in-memory inside the edge function for a short period to improve UX on repeated queries. The frontend receives freshness metadata and renders whether results are **fresh** or **cached**, along with the last refresh time.
+
+### Health Score
+
+The audit layer computes an **Account Health Score** out of 100:
+
+- CRITICAL = -20
+- HIGH = -10
+- MEDIUM = -5
+- LOW = -2
+
+This single score gives users a consistent way to track posture changes over time.
+
+---
+
+## IAM Automation — Preview, Confirm, Execute
+
+CloudPilot AI now supports a guarded IAM automation flow for a narrow but high-value use case: granting least-privilege read-only S3 access to a user, group, or role through a managed policy.
+
+### Supported Flow
+
+- Natural language request such as: "Give dev-team read-only S3 access"
+- Structured policy generation with a fixed least-privilege action map
+- Safety validation that blocks wildcard actions and escalation primitives
+- Human preview before execution
+- Managed policy creation and policy attachment only after explicit confirmation
+
+### Safety Guarantees
+
+The IAM automation path does **not** permit the model to invent arbitrary IAM JSON. Instead:
+
+- blocked actions such as `iam:*`, `iam:PassRole`, and `sts:AssumeRole` are hardcoded
+- wildcard service actions are rejected
+- the generated policy is constrained to supported service/scope templates
+- execution only occurs after a follow-up confirmation message
+
+### Current Scope
+
+| Operation | Support |
+|-----------|---------|
+| Attach least-privilege policy | Yes |
+| S3 read-only template | Yes |
+| Arbitrary IAM mutations | No |
+| Inline policy creation | No |
+| Role trust policy editing | No |
+
+This makes the first IAM automation slice safe enough to demo while still useful for real access workflows.
+
+---
+
+## Security Group Automation — Risk-Gated Mutations
+
+CloudPilot AI now supports a dedicated security group automation path separate from raw `execute_aws_api` calls. This path is built around risk classification, hard-block rules, and preview-before-apply execution.
+
+### Supported Operations
+
+- Allow ingress
+- Revoke ingress
+- Allow egress
+- Revoke egress
+- CIDR-based rules
+- Security-group-to-security-group rules
+
+### Built-In Guardrails
+
+The validator classifies each request as `LOW`, `MEDIUM`, `HIGH`, or `BLOCKED`.
+
+Hard-block examples:
+
+- opening port 22 to `0.0.0.0/0`
+- opening port 3389 to `0.0.0.0/0`
+
+Risk classification also considers:
+
+- public internet exposure
+- sensitive ports
+- all-traffic rules
+- production-like naming or tagging
+- egress internet access
+
+### Preview Payload
+
+Before execution, the user sees:
+
+- target group
+- direction (ingress / egress)
+- exact requested permission
+- existing matching rule, if any
+- whether the operation is a no-op
+- risk level and reasons
+- confirmation instruction
+
+This is one of the strongest examples of CloudPilot AI’s broader safety pattern: the model interprets the request, but the **validator and executor are deterministic**.
+
+---
+
+## Cost Automation — Rules, Anomalies, and Remediation
+
+CloudPilot AI now includes a dedicated cost automation layer for natural-language budget rules and cost anomaly investigation.
+
+### Current Capabilities
+
+| Capability | Description |
+|-----------|-------------|
+| Cost rule creation | Parse and store budget / spike rules from natural language |
+| Cost anomaly scan | Pull recent spend, detect spikes and trends |
+| Idle resource analysis | Identify low-utilization non-production EC2 instances |
+| Remediation classification | Distinguish alert-only vs confirm-required vs auto-fix candidates |
+
+### Stored Cost Rules
+
+Rules are persisted in Supabase via the `cost_automation_rules` table. Examples:
+
+- daily threshold alerts
+- EC2-specific threshold rules
+- service spike multiplier rules
+
+### Anomaly Detection
+
+The current detector supports:
+
+- statistical spike detection
+- simple threshold breach detection
+- accelerating spend trend detection
+
+### Remediation Suggestions
+
+When the spike appears to be EC2-related, the backend can identify idle non-production instances and estimate potential daily savings. This gives the user a clear action path instead of a generic "spend is high" observation.
+
+### Current Limits
+
+- no scheduled EventBridge polling yet
+- no Slack / email delivery orchestration beyond the stored rule structure
+- no destructive auto-remediation such as deletion or termination
+
+---
+
+## Drift Detection — Baselines, Diffs, and Morning Digests
+
+CloudPilot AI now includes a baseline-driven drift engine for tracking configuration changes over time.
+
+### Core Model
+
+The system captures a **resource snapshot** for supported resources and computes a stable fingerprint. Drift is detected by comparing current snapshots against a previously captured baseline.
+
+### Supported Resource Types
+
+- Security groups
+- IAM users
+- S3 buckets
+
+### Drift Tables
+
+Two new Supabase tables back the feature:
+
+| Table | Purpose |
+|-------|---------|
+| `resource_snapshots` | Stores the last confirmed-good state per resource |
+| `drift_events` | Stores detected changes with severity, explanation, and fix prompt |
+
+### Drift Lifecycle
+
+1. Capture baseline
+2. Run drift detection
+3. Compute structured diffs
+4. Score severity
+5. Generate formal digest
+6. Acknowledge intentional change and update baseline
+
+### Current Risk Rules
+
+Implemented high-value examples include:
+
+- world-open inbound security group rule added
+- S3 public access block removed
+- `AdministratorAccess` attached to an IAM user
+- MFA disabled on an IAM user
+- S3 versioning disabled
+
+Each drift event stores:
+
+- baseline state
+- current state
+- structured diff
+- severity
+- explanation
+- fix prompt
+
+This turns drift detection from a raw "something changed" feed into a workflow-oriented control surface.
+
+---
+
+## AWS Organizations Automation
+
+CloudPilot AI now supports a first slice of AWS Organizations-aware automation and read-only org-wide queries.
+
+### Cross-Account Execution Model
+
+The implementation assumes a central **GuardianExecutionRole** pattern, where the management account can assume into member accounts using STS with an external ID. The backend caches assumed-role sessions per account and region for the duration of the request window.
+
+### Implemented Org Queries
+
+| Query | Current support |
+|-------|-----------------|
+| Accounts without MFA | Yes |
+| Accounts with public S3 buckets | Yes |
+| List attached SCPs | Yes |
+| Accounts missing `env` tag | Yes |
+| Full org structure | Yes |
+| Guardian onboarding status | Yes |
+
+### Implemented Write Operation
+
+The current org-wide mutation path supports **guarded SCP rollout** through a fixed template library, including:
+
+- deny non-approved regions
+- deny root account usage
+- require MFA for all actions
+- deny leaving organization
+- enforce S3 encryption
+
+### Blast Radius Controls
+
+Org-wide changes are evaluated against hardcoded environment tiers:
+
+- `dev`
+- `staging`
+- `prod`
+- `unknown`
+
+These tiers determine:
+
+- maximum account count
+- whether auto-execution is allowed
+- whether rollback planning is mandatory
+- whether double confirmation is required
+
+For larger or higher-risk scopes, the user must confirm with an explicit phrase such as:
+
+`apply to 12 accounts`
+
+This keeps the blast radius visible and difficult to ignore.
+
+---
+
+## Runbook Execution Engine
+
+CloudPilot AI now includes the foundation of a structured **runbook execution engine** for multi-step workflows.
+
+### Why This Matters
+
+Earlier flows in CloudPilot AI focused on single operations: one audit, one policy change, one security group mutation. Runbooks elevate the product into a more autonomous workflow system capable of planning and executing multi-step responses.
+
+### Implemented Runbook Library
+
+| Runbook | Status |
+|---------|--------|
+| Public S3 lockdown | Implemented |
+| Cost spike remediation | Implemented |
+| Data breach response | Implemented as a guided, partially manual workflow |
+
+### Execution States
+
+Runbook executions are persisted in Supabase:
+
+| Table | Purpose |
+|-------|---------|
+| `runbook_executions` | Stores the execution-level plan, status, and accumulated results |
+| `runbook_execution_steps` | Stores per-step progress, output, and timestamps |
+
+### Execution Modes
+
+- **Plan only** — produce a formal preview with resolved steps
+- **Dry run** — execute query steps but skip AWS action steps
+- **Execution** — run automatic steps and pause on confirmation steps
+- **Resume** — continue a planned or paused runbook via `run playbook` or `confirm`
+- **Abort** — terminate an active runbook
+
+### Current Execution Pattern
+
+1. Resolve runbook from natural language
+2. Gather context and fill placeholders
+3. Persist planned execution
+4. Show formal step preview
+5. Start via `run playbook`
+6. Pause at confirmation or manual checkpoints
+7. Persist step results
+8. Produce a formal completion report
+
+### Current Limits
+
+- realtime frontend subscription to step-level progress is not yet wired
+- some destructive breach-response steps are intentionally manual or gated
+- rollback is represented structurally, but not every rollback path is fully automated yet
+
+Even in this first slice, the runbook engine establishes an important architectural shift: the agent is no longer only a chat interface with tools, but a workflow system with durable execution state.
+
+---
+
 ## Conclusion
 
 CloudPilot AI represents a significant advancement in applied generative AI for cloud security operations. By bridging the reasoning capabilities of state-of-the-art large language models with the strict, deterministic execution of real AWS APIs, it eliminates the "hallucination" problem common in standard chat assistants.
@@ -1691,6 +2040,6 @@ The architecture is meticulously designed for security, employing robust input v
 
 The comprehensive React frontend provides a professional, highly responsive interface tailored for security engineers, incorporating real-time SSE streaming, animated panels, date-grouped chat history, 30+ pre-built security workflows across 7 categories, and color-coded severity tracking. The backend edge function implements a robust agentic loop with forced tool calls, 35-service allowlisting, 5-operation blocking, 100KB response truncation, and strict rate limiting with clear user-facing error messages.
 
-For organizations with strict network isolation requirements, the VPC Endpoint configuration guide provides step-by-step instructions to ensure all AWS API traffic routes exclusively over the AWS internal backbone via PrivateLink, with zero code changes required. Combined with the triple-sink audit architecture (Supabase, CloudWatch Logs, WORM S3) and CloudWatch automation for real-time alerting and anomaly detection, CloudPilot AI delivers an enterprise-grade security operations platform suitable for regulated industries.
+For organizations with strict network isolation requirements, the VPC Endpoint configuration guide provides step-by-step instructions to ensure all AWS API traffic routes exclusively over the AWS internal backbone via PrivateLink, with zero code changes required. Combined with the triple-sink audit architecture (Supabase, CloudWatch Logs, WORM S3), the unified audit engine, guarded IAM and security-group automation, cost anomaly analysis, baseline-driven drift detection, AWS Organizations controls, and the emerging runbook execution system, CloudPilot AI delivers an enterprise-grade security operations platform suitable for regulated industries.
 
 Through its uncompromising "Zero Simulation Tolerance" and robust technical foundation, CloudPilot AI delivers highly accurate, contextual, and actionable intelligence—empowering security teams to identify and remediate vulnerabilities faster and more effectively.

@@ -116,6 +116,18 @@ Prefer this tool for requests such as:
 - "prepare for SOC2 audit"
 - "run playbook"
 
+For CloudTrail-driven event automation and event response rules:
+  STEP 1 → Use manage_event_response_policy to create or list plain-English event response policies
+  STEP 2 → Use replay_cloudtrail_events to replay recent CloudTrail activity against built-in and user-defined policies
+  STEP 3 → Keep reports formal, neatly formatted, and free of emojis
+  STEP 4 → Only describe auto-fix actions as applied when the backend actually executed them
+
+Prefer these tools for requests such as:
+- "if anyone opens port 22 to the world, close it immediately and page me"
+- "alert me whenever a new IAM user is created outside Guardian"
+- "if root account is used for anything, wake up the on-call immediately"
+- "replay the last 24 hours of CloudTrail events against my response policies"
+
 For attack simulation requests:
   STEP 1 → If the user specifically asks for an AI-vs-AI or evasion simulation, use run_attack_simulation or run_evasion_test tools to orchestrate.
   STEP 2 → Use AWS APIs to discover the real attack surface
@@ -923,6 +935,41 @@ const tools = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "manage_event_response_policy",
+      description:
+        "Creates or lists formal CloudTrail-driven event response policies for the authenticated user, using guarded plain-English parsing instead of raw JSON authoring.",
+      parameters: {
+        type: "object",
+        properties: {
+          rawQuery: {
+            type: "string",
+            description: "The user's original natural-language event automation rule request or list request.",
+          },
+        },
+        required: ["rawQuery"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "replay_cloudtrail_events",
+      description:
+        "Replays recent CloudTrail activity against built-in and user-defined response policies, classifies risk, deduplicates events, and returns a formal backtest report.",
+      parameters: {
+        type: "object",
+        properties: {
+          hoursBack: {
+            type: "integer",
+            description: "Optional replay window in hours. Defaults to 24.",
+          },
+        },
+      },
+    },
+  },
 ];
 
 const IAM_BLOCKED_ACTIONS = new Set([
@@ -1564,6 +1611,60 @@ interface RunbookExecutionRecord {
   last_error: string | null;
 }
 
+type EventResponseType = "auto_fix" | "notify" | "runbook" | "all";
+
+interface EventResponsePolicyRecord {
+  id: string;
+  policy_id: string;
+  name: string;
+  trigger_event: string;
+  trigger_conditions: Record<string, any>;
+  risk_threshold: UnifiedAuditSeverity;
+  response_type: EventResponseType;
+  response_action: string;
+  response_params: Record<string, any>;
+  notify_channels: string[];
+  raw_query: string;
+  created_by: string;
+  is_active: boolean;
+  built_in?: boolean;
+}
+
+interface EnrichedEvent {
+  event_id: string;
+  event_name: string;
+  event_time: string;
+  actor_arn: string;
+  actor_type: string;
+  actor_is_guardian: boolean;
+  source_ip: string;
+  resource_id: string;
+  resource_type: string;
+  region: string;
+  risk_level: UnifiedAuditSeverity;
+  risk_reason: string;
+  requested_ports: number[];
+  source_cidrs: string[];
+  raw_event: Record<string, any>;
+}
+
+interface EventReplayMatch {
+  event: EnrichedEvent;
+  policies: EventResponsePolicyRecord[];
+}
+
+interface EventReplayResult {
+  hoursBack: number;
+  totalEvents: number;
+  watchedEvents: number;
+  deduplicatedEvents: number;
+  matchedEvents: number;
+  policiesEvaluated: number;
+  matches: EventReplayMatch[];
+  formalReport: string;
+  generatedAt: string;
+}
+
 const SEVERITY_ORDER: Record<UnifiedAuditSeverity, number> = {
   CRITICAL: 0,
   HIGH: 1,
@@ -1736,6 +1837,114 @@ const SCP_TEMPLATES: Record<OrgScpTemplate, { description: string; build: (args:
     }),
   },
 };
+
+const WATCHED_CLOUDTRAIL_EVENTS = new Set([
+  "AuthorizeSecurityGroupIngress",
+  "AuthorizeSecurityGroupEgress",
+  "RevokeSecurityGroupIngress",
+  "RevokeSecurityGroupEgress",
+  "CreateSecurityGroup",
+  "DeleteSecurityGroup",
+  "DeleteBucketPublicAccessBlock",
+  "PutBucketPublicAccessBlock",
+  "PutBucketPolicy",
+  "DeleteBucketPolicy",
+  "DeleteBucketEncryption",
+  "PutBucketEncryption",
+  "PutBucketAcl",
+  "AttachUserPolicy",
+  "DetachUserPolicy",
+  "AttachRolePolicy",
+  "PutUserPolicy",
+  "CreateUser",
+  "DeleteUser",
+  "CreateAccessKey",
+  "DeleteAccessKey",
+  "UpdateAccessKey",
+  "DeactivateMFADevice",
+  "CreateLoginProfile",
+  "CreateVpc",
+  "DeleteVpc",
+  "CreateInternetGateway",
+  "AttachInternetGateway",
+  "CreateNatGateway",
+  "RunInstances",
+  "TerminateInstances",
+  "StopInstances",
+  "CreateAccount",
+  "LeaveOrganization",
+  "DisableAWSServiceAccess",
+  "DeleteTrail",
+  "StopLogging",
+  "PutEventSelectors",
+]);
+
+const BUILT_IN_EVENT_RESPONSE_POLICIES: EventResponsePolicyRecord[] = [
+  {
+    id: "builtin-auto-block-public-s3",
+    policy_id: "auto_block_public_s3",
+    name: "Auto-block public S3 access",
+    trigger_event: "DeleteBucketPublicAccessBlock",
+    trigger_conditions: {},
+    risk_threshold: "CRITICAL",
+    response_type: "auto_fix",
+    response_action: "put_public_access_block",
+    response_params: { block_all: true },
+    notify_channels: ["slack:#security"],
+    raw_query: "If a public access block is removed from an S3 bucket, restore it immediately.",
+    created_by: "guardian_builtin",
+    is_active: true,
+    built_in: true,
+  },
+  {
+    id: "builtin-alert-new-iam-user",
+    policy_id: "alert_new_iam_user",
+    name: "Alert on new IAM user creation",
+    trigger_event: "CreateUser",
+    trigger_conditions: { actor_is_guardian: false },
+    risk_threshold: "HIGH",
+    response_type: "notify",
+    response_action: "send_alert",
+    response_params: { message: "New IAM user {resource_id} created by {actor_arn}" },
+    notify_channels: ["slack:#security"],
+    raw_query: "Alert the security team whenever a new IAM user is created outside Guardian.",
+    created_by: "guardian_builtin",
+    is_active: true,
+    built_in: true,
+  },
+  {
+    id: "builtin-restore-cloudtrail",
+    policy_id: "restore_cloudtrail",
+    name: "Restore CloudTrail if disabled",
+    trigger_event: "DeleteTrail",
+    trigger_conditions: {},
+    risk_threshold: "CRITICAL",
+    response_type: "all",
+    response_action: "restore_cloudtrail_and_alert",
+    response_params: { runbook: "cloudtrail_disabled_response" },
+    notify_channels: ["slack:#security", "pagerduty"],
+    raw_query: "If CloudTrail is disabled, restore it immediately and alert the security team.",
+    created_by: "guardian_builtin",
+    is_active: true,
+    built_in: true,
+  },
+  {
+    id: "builtin-flag-root-usage",
+    policy_id: "flag_root_usage",
+    name: "Alert on any root account usage",
+    trigger_event: "*",
+    trigger_conditions: { actor_type: "root" },
+    risk_threshold: "CRITICAL",
+    response_type: "all",
+    response_action: "root_usage_response",
+    response_params: { runbook: "root_account_usage_response" },
+    notify_channels: ["slack:#security", "pagerduty"],
+    raw_query: "If the root account is used for anything, alert immediately and start the root-account response workflow.",
+    created_by: "guardian_builtin",
+    is_active: true,
+    built_in: true,
+  },
+];
 
 function parseOrgConfirmationCount(input: string): number | null {
   const text = sanitizeString(input, 200).trim();
@@ -2048,6 +2257,43 @@ function buildOrgExecutionSummary(
     results,
     formalReport: lines.join("\n"),
   };
+}
+
+async function persistOrgOperationHistory(
+  supabaseAdmin: any,
+  userId: string,
+  payload: {
+    action: OrgOperationAction;
+    scope: string;
+    scpTemplate?: OrgScpTemplate;
+    accountCount: number;
+    envBreakdown: Record<string, number>;
+    warnings: string[];
+    blocked: string[];
+    rollbackPlan?: string;
+    status: string;
+    previewPayload: Record<string, any>;
+    executionSummary?: Record<string, any> | null;
+  },
+) {
+  const { error } = await supabaseAdmin.from("org_operation_history").insert({
+    user_id: userId,
+    action: payload.action,
+    scope: payload.scope,
+    scp_template: payload.scpTemplate || null,
+    account_count: payload.accountCount,
+    env_breakdown: payload.envBreakdown,
+    warnings: payload.warnings,
+    blocked: payload.blocked,
+    rollback_plan: payload.rollbackPlan || null,
+    status: payload.status,
+    preview_payload: payload.previewPayload,
+    execution_summary: payload.executionSummary || null,
+  });
+
+  if (error) {
+    console.error("Failed to persist org operation history:", error.message);
+  }
 }
 
 function buildOrgQueryReport(title: string, bodyLines: string[]): string {
@@ -2495,6 +2741,68 @@ async function createBudgetAlertAction(awsConfig: any, accountId: string, thresh
   return { created: true, budgetName };
 }
 
+async function ensureAlertTopicAndSubscription(
+  awsConfig: any,
+  notificationEmail: string,
+): Promise<{ topicArn: string; subscriptionStatus: "existing" | "pending_confirmation" }> {
+  const sns = new AWS.SNS(awsConfig);
+  const accountId = await getAwsAccountId(awsConfig);
+  const topicName = `cloudpilot-alerts-${accountId}`;
+  const topic = await sns.createTopic({ Name: topicName }).promise();
+  const topicArn = topic.TopicArn;
+  if (!topicArn) {
+    throw new Error("Failed to resolve the SNS topic ARN for notifications.");
+  }
+
+  const subscriptions = await sns.listSubscriptionsByTopic({ TopicArn: topicArn }).promise();
+  const existing = (subscriptions.Subscriptions || []).find(
+    (subscription) => subscription.Protocol === "email" && subscription.Endpoint === notificationEmail,
+  );
+
+  if (existing) {
+    return {
+      topicArn,
+      subscriptionStatus: existing.SubscriptionArn === "PendingConfirmation" ? "pending_confirmation" : "existing",
+    };
+  }
+
+  await sns.subscribe({
+    TopicArn: topicArn,
+    Protocol: "email",
+    Endpoint: notificationEmail,
+  }).promise();
+
+  return { topicArn, subscriptionStatus: "pending_confirmation" };
+}
+
+async function sendIncidentNotification(
+  awsConfig: any,
+  notificationEmail: string | null,
+  subject: string,
+  message: string,
+): Promise<Record<string, any>> {
+  if (!notificationEmail) {
+    return { sent: false, target: "No notification email configured", note: "Notification was skipped because no email is configured." };
+  }
+
+  const sns = new AWS.SNS(awsConfig);
+  const { topicArn, subscriptionStatus } = await ensureAlertTopicAndSubscription(awsConfig, notificationEmail);
+
+  const publishResult = await sns.publish({
+    TopicArn: topicArn,
+    Subject: subject.slice(0, 100),
+    Message: message,
+  }).promise();
+
+  return {
+    sent: true,
+    target: notificationEmail,
+    topicArn,
+    subscriptionStatus,
+    messageId: publishResult.MessageId || null,
+  };
+}
+
 async function rotateAccessKeysAction(awsConfig: any, users: string[]): Promise<Record<string, any>> {
   const iam = new AWS.IAM(awsConfig);
   const rotated: Array<{ user: string; oldKeyIds: string[]; newKeyId?: string }> = [];
@@ -2742,11 +3050,12 @@ async function executeRunbookStep(
     case "query_cloudtrail":
       return queryCloudTrailSummary(awsConfig, String(step.params.event), String(step.params.resource), Number(step.params.hours_back || 2));
     case "send_incident_alert":
-      return {
-        sent: Boolean(notificationEmail),
-        target: notificationEmail || "No notification email configured",
-        summary: step.params.summary || "Incident notification prepared.",
-      };
+      return sendIncidentNotification(
+        awsConfig,
+        notificationEmail,
+        "CloudPilot incident notification",
+        String(step.params.summary || "Incident notification prepared."),
+      );
     case "verify_cloudtrail_enabled":
       return verifyCloudTrailEnabledSummary(awsConfig);
     case "generate_incident_report":
@@ -2927,6 +3236,542 @@ async function continueRunbookExecution(
     results,
     formalReport: completionLines.join("\n"),
   };
+}
+
+function parseEventNotifyChannels(rawQuery: string, notificationEmail: string | null): string[] {
+  const query = rawQuery.toLowerCase();
+  const channels = new Set<string>();
+
+  const slackMatch = rawQuery.match(/slack:\s*(#[\w-]+)/i);
+  if (slackMatch?.[1]) {
+    channels.add(`slack:${slackMatch[1]}`);
+  } else if (/\bsecurity team\b/.test(query) || /\bslack\b/.test(query)) {
+    channels.add("slack:#security");
+  }
+
+  if (/\bpage\b|\bpagerduty\b|\bon-call\b|\bwake up\b/.test(query)) {
+    channels.add("pagerduty");
+  }
+
+  if ((/\bemail\b/.test(query) || channels.size === 0) && notificationEmail) {
+    channels.add(`email:${sanitizeString(notificationEmail, 320)}`);
+  }
+
+  return Array.from(channels);
+}
+
+function buildEventPolicyName(rawQuery: string): string {
+  const normalized = rawQuery
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  return normalized || `event-policy-${Date.now()}`;
+}
+
+function parseEventResponsePolicyFromQuery(
+  rawQuery: string,
+  notificationEmail: string | null,
+): EventResponsePolicyRecord {
+  const query = rawQuery.toLowerCase();
+  const notifyChannels = parseEventNotifyChannels(rawQuery, notificationEmail);
+
+  if ((/\bport 22\b/.test(query) || /\bssh\b/.test(query)) && (/\bworld\b/.test(query) || /0\.0\.0\.0\/0/.test(query))) {
+    return {
+      id: crypto.randomUUID(),
+      policy_id: `policy-${crypto.randomUUID().slice(0, 8)}`,
+      name: "Auto-close world-open SSH",
+      trigger_event: "AuthorizeSecurityGroupIngress",
+      trigger_conditions: {
+        source_cidr: IPV4_ANYWHERE,
+        port: 22,
+      },
+      risk_threshold: "CRITICAL",
+      response_type: "all",
+      response_action: "revoke_sg_rule",
+      response_params: {},
+      notify_channels: notifyChannels,
+      raw_query: rawQuery,
+      created_by: "user",
+      is_active: true,
+    };
+  }
+
+  if (/\bnew iam user\b/.test(query) || (/\biam user\b/.test(query) && /\bcreated\b/.test(query))) {
+    return {
+      id: crypto.randomUUID(),
+      policy_id: `policy-${crypto.randomUUID().slice(0, 8)}`,
+      name: "Alert on new IAM user creation",
+      trigger_event: "CreateUser",
+      trigger_conditions: {
+        actor_is_guardian: false,
+      },
+      risk_threshold: "HIGH",
+      response_type: "notify",
+      response_action: "send_alert",
+      response_params: {},
+      notify_channels: notifyChannels,
+      raw_query: rawQuery,
+      created_by: "user",
+      is_active: true,
+    };
+  }
+
+  if (/\broot account\b/.test(query) || (/\broot\b/.test(query) && /\bused\b/.test(query))) {
+    return {
+      id: crypto.randomUUID(),
+      policy_id: `policy-${crypto.randomUUID().slice(0, 8)}`,
+      name: "Alert on root account usage",
+      trigger_event: "*",
+      trigger_conditions: {
+        actor_type: "root",
+      },
+      risk_threshold: "CRITICAL",
+      response_type: "all",
+      response_action: "trigger_runbook",
+      response_params: {
+        runbook: "root_account_usage_response",
+      },
+      notify_channels: notifyChannels,
+      raw_query: rawQuery,
+      created_by: "user",
+      is_active: true,
+    };
+  }
+
+  if ((/\bcloudtrail\b/.test(query) || /\btrail\b/.test(query)) && (/\bdisabled\b/.test(query) || /\bstop logging\b/.test(query) || /\bdelete trail\b/.test(query))) {
+    return {
+      id: crypto.randomUUID(),
+      policy_id: `policy-${crypto.randomUUID().slice(0, 8)}`,
+      name: "Restore CloudTrail if disabled",
+      trigger_event: "StopLogging",
+      trigger_conditions: {},
+      risk_threshold: "CRITICAL",
+      response_type: "all",
+      response_action: "restore_cloudtrail_logging",
+      response_params: {
+        runbook: "cloudtrail_disabled_response",
+      },
+      notify_channels: notifyChannels,
+      raw_query: rawQuery,
+      created_by: "user",
+      is_active: true,
+    };
+  }
+
+  throw new Error("Unsupported event response policy request. Supported rules currently include world-open SSH, new IAM user creation, root account usage, and CloudTrail disablement.");
+}
+
+async function saveEventResponsePolicy(supabaseAdmin: any, userId: string, policy: EventResponsePolicyRecord) {
+  const { error } = await supabaseAdmin.from("event_response_policies").insert({
+    id: policy.id,
+    user_id: userId,
+    policy_id: policy.policy_id,
+    name: policy.name,
+    trigger_event: policy.trigger_event,
+    trigger_conditions: policy.trigger_conditions,
+    risk_threshold: policy.risk_threshold,
+    response_type: policy.response_type,
+    response_action: policy.response_action,
+    response_params: policy.response_params,
+    notify_channels: policy.notify_channels,
+    raw_query: policy.raw_query,
+    created_by: userId,
+    is_active: policy.is_active,
+  });
+
+  if (error) {
+    throw new Error(`Failed to store the event response policy: ${error.message}`);
+  }
+}
+
+async function fetchUserEventResponsePolicies(supabaseAdmin: any, userId: string): Promise<EventResponsePolicyRecord[]> {
+  const { data, error } = await supabaseAdmin
+    .from("event_response_policies")
+    .select("*")
+    .eq("user_id", userId)
+    .eq("is_active", true)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    throw new Error(`Failed to fetch event response policies: ${error.message}`);
+  }
+
+  return (data || []).map((row: any) => ({
+    id: row.id,
+    policy_id: row.policy_id,
+    name: row.name,
+    trigger_event: row.trigger_event,
+    trigger_conditions: row.trigger_conditions || {},
+    risk_threshold: row.risk_threshold,
+    response_type: row.response_type,
+    response_action: row.response_action,
+    response_params: row.response_params || {},
+    notify_channels: Array.isArray(row.notify_channels) ? row.notify_channels : [],
+    raw_query: row.raw_query || "",
+    created_by: row.created_by || "user",
+    is_active: Boolean(row.is_active),
+  }));
+}
+
+function buildFormalEventPolicyListReport(
+  builtIns: EventResponsePolicyRecord[],
+  userPolicies: EventResponsePolicyRecord[],
+): string {
+  const lines: string[] = [];
+  lines.push("## Event Response Policies");
+  lines.push("");
+  lines.push(`Built-in policies: ${builtIns.length}`);
+  lines.push(`User-defined active policies: ${userPolicies.length}`);
+  lines.push("");
+
+  if (builtIns.length > 0) {
+    lines.push("### Built-In Policies");
+    lines.push("");
+    for (const policy of builtIns) {
+      lines.push(`- ${policy.name}: Trigger \`${policy.trigger_event}\`, minimum risk ${policy.risk_threshold}, response \`${policy.response_type}\`.`);
+    }
+    lines.push("");
+  }
+
+  if (userPolicies.length > 0) {
+    lines.push("### User-Defined Policies");
+    lines.push("");
+    for (const policy of userPolicies) {
+      lines.push(`- ${policy.name}: Trigger \`${policy.trigger_event}\`, minimum risk ${policy.risk_threshold}, response \`${policy.response_type}\`, channels ${policy.notify_channels.join(", ") || "none"}.`);
+    }
+  } else {
+    lines.push("No user-defined event response policies are currently active.");
+  }
+
+  return lines.join("\n");
+}
+
+function buildFormalCreatedEventPolicyReport(policy: EventResponsePolicyRecord): string {
+  const lines: string[] = [];
+  lines.push("## Event Response Policy Created");
+  lines.push("");
+  lines.push(`Name: ${policy.name}`);
+  lines.push(`Policy ID: ${policy.policy_id}`);
+  lines.push(`Trigger event: ${policy.trigger_event}`);
+  lines.push(`Risk threshold: ${policy.risk_threshold}`);
+  lines.push(`Response type: ${policy.response_type}`);
+  lines.push(`Response action: ${policy.response_action}`);
+  lines.push(`Notify channels: ${policy.notify_channels.join(", ") || "none"}`);
+  lines.push(`Original request: ${policy.raw_query}`);
+  return lines.join("\n");
+}
+
+function parseCloudTrailLookupEvent(event: any): Record<string, any> | null {
+  try {
+    const parsed = event.CloudTrailEvent ? JSON.parse(event.CloudTrailEvent) : {};
+    return {
+      ...parsed,
+      eventID: parsed.eventID || event.EventId || crypto.randomUUID(),
+      eventName: parsed.eventName || event.EventName || "Unknown",
+      eventTime: parsed.eventTime || toIsoString(event.EventTime) || new Date().toISOString(),
+      awsRegion: parsed.awsRegion || event.AwsRegion || "unknown",
+      username: parsed.username || event.Username || null,
+      readOnly: parsed.readOnly ?? event.ReadOnly ?? null,
+      resources: parsed.resources || event.Resources || [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+function getCloudTrailItems(value: any): any[] {
+  if (Array.isArray(value)) return value;
+  if (Array.isArray(value?.items)) return value.items;
+  return [];
+}
+
+function extractEventPortsAndCidrs(detail: Record<string, any>): { ports: number[]; cidrs: string[] } {
+  const ports = new Set<number>();
+  const cidrs = new Set<string>();
+  const params = detail.requestParameters || {};
+
+  for (const permission of getCloudTrailItems(params.ipPermissions)) {
+    const fromPort = Number(permission.fromPort);
+    const toPort = Number(permission.toPort);
+    if (Number.isInteger(fromPort)) ports.add(fromPort);
+    if (Number.isInteger(toPort)) ports.add(toPort);
+
+    for (const range of getCloudTrailItems(permission.ipRanges)) {
+      if (range?.cidrIp) cidrs.add(String(range.cidrIp));
+    }
+    for (const range of getCloudTrailItems(permission.ipv6Ranges)) {
+      if (range?.cidrIpv6) cidrs.add(String(range.cidrIpv6));
+    }
+  }
+
+  return {
+    ports: Array.from(ports),
+    cidrs: Array.from(cidrs),
+  };
+}
+
+function extractCloudTrailResource(detail: Record<string, any>): [string, string] {
+  const eventName = String(detail.eventName || "");
+  const params = detail.requestParameters || {};
+  const extractors: Record<string, (value: Record<string, any>) => [string, string]> = {
+    AuthorizeSecurityGroupIngress: (value) => [value.groupId || "unknown", "security_group"],
+    AuthorizeSecurityGroupEgress: (value) => [value.groupId || "unknown", "security_group"],
+    RevokeSecurityGroupIngress: (value) => [value.groupId || "unknown", "security_group"],
+    RevokeSecurityGroupEgress: (value) => [value.groupId || "unknown", "security_group"],
+    DeleteBucketPublicAccessBlock: (value) => [value.bucketName || "unknown", "s3_bucket"],
+    PutBucketPublicAccessBlock: (value) => [value.bucketName || "unknown", "s3_bucket"],
+    PutBucketPolicy: (value) => [value.bucketName || "unknown", "s3_bucket"],
+    DeleteBucketPolicy: (value) => [value.bucketName || "unknown", "s3_bucket"],
+    DeleteBucketEncryption: (value) => [value.bucketName || "unknown", "s3_bucket"],
+    PutBucketEncryption: (value) => [value.bucketName || "unknown", "s3_bucket"],
+    PutBucketAcl: (value) => [value.bucketName || "unknown", "s3_bucket"],
+    AttachUserPolicy: (value) => [value.userName || "unknown", "iam_user"],
+    DetachUserPolicy: (value) => [value.userName || "unknown", "iam_user"],
+    PutUserPolicy: (value) => [value.userName || "unknown", "iam_user"],
+    CreateUser: (value) => [value.userName || "unknown", "iam_user"],
+    DeleteUser: (value) => [value.userName || "unknown", "iam_user"],
+    CreateAccessKey: (value) => [value.userName || "unknown", "iam_user"],
+    DeleteAccessKey: (value) => [value.userName || "unknown", "iam_user"],
+    UpdateAccessKey: (value) => [value.userName || "unknown", "iam_user"],
+    DeactivateMFADevice: (value) => [value.userName || "unknown", "iam_user"],
+    DeleteTrail: (value) => [value.name || "unknown", "cloudtrail"],
+    StopLogging: (value) => [value.name || "unknown", "cloudtrail"],
+    RunInstances: () => ["new_instance", "ec2_instance"],
+  };
+
+  const extractor = extractors[eventName];
+  if (extractor) return extractor(params);
+
+  const firstResource = Array.isArray(detail.resources) ? detail.resources[0] : null;
+  if (firstResource?.ARN) return [String(firstResource.ARN), "resource"];
+  if (firstResource?.resourceName) return [String(firstResource.resourceName), "resource"];
+  return [params.resourceId || "unknown", "unknown"];
+}
+
+function scoreCloudTrailEventRisk(detail: Record<string, any>, actorType: string, resourceId: string): { level: UnifiedAuditSeverity; reason: string } {
+  const eventName = String(detail.eventName || "");
+  const params = detail.requestParameters || {};
+  const extracted = extractEventPortsAndCidrs(detail);
+
+  if (actorType === "root") {
+    return { level: "CRITICAL", reason: "The root account was used. Root usage should not occur during normal operations." };
+  }
+
+  if (eventName === "AuthorizeSecurityGroupIngress" && extracted.cidrs.includes(IPV4_ANYWHERE)) {
+    return { level: "CRITICAL", reason: "A world-open inbound security group rule was added." };
+  }
+  if (eventName === "DeleteBucketPublicAccessBlock") {
+    return { level: "CRITICAL", reason: "An S3 public access block was removed." };
+  }
+  if (eventName === "DeleteTrail" || eventName === "StopLogging") {
+    return { level: "CRITICAL", reason: "CloudTrail logging was disabled or deleted." };
+  }
+  if (eventName === "DeactivateMFADevice") {
+    return { level: "CRITICAL", reason: "An MFA device was deactivated for an IAM user." };
+  }
+  if (eventName === "AttachUserPolicy" && JSON.stringify(params).includes("AdministratorAccess")) {
+    return { level: "HIGH", reason: "AdministratorAccess was attached to an IAM user." };
+  }
+  if (eventName === "CreateAccessKey" && actorType !== "iam_user") {
+    return { level: "HIGH", reason: "An access key was created by a non-owner identity." };
+  }
+  if (eventName === "PutBucketPolicy") {
+    return { level: "HIGH", reason: "An S3 bucket policy was modified." };
+  }
+  if (eventName === "CreateUser") {
+    return { level: "HIGH", reason: "A new IAM user was created." };
+  }
+
+  return { level: "MEDIUM", reason: `${eventName} was detected on ${resourceId}.` };
+}
+
+function classifyAndEnrichCloudTrailEvent(detail: Record<string, any>): EnrichedEvent {
+  const identity = detail.userIdentity || {};
+  const actorArn = String(identity.arn || identity.sessionContext?.sessionIssuer?.arn || "unknown");
+  const actorType = ({
+    Root: "root",
+    IAMUser: "iam_user",
+    AssumedRole: "assumed_role",
+    AWSService: "service",
+    AWSAccount: "account",
+  } as Record<string, string>)[String(identity.type || "")] || "unknown";
+
+  const actorIsGuardian =
+    actorArn.toLowerCase().includes("guardian") ||
+    actorArn.includes("GuardianExecutionRole") ||
+    String(identity.sessionContext?.sessionIssuer?.userName || "").toLowerCase().startsWith("guardian");
+
+  const [resourceId, resourceType] = extractCloudTrailResource(detail);
+  const { level, reason } = scoreCloudTrailEventRisk(detail, actorType, resourceId);
+  const { ports, cidrs } = extractEventPortsAndCidrs(detail);
+
+  return {
+    event_id: String(detail.eventID || crypto.randomUUID()),
+    event_name: String(detail.eventName || "Unknown"),
+    event_time: toIsoString(detail.eventTime) || new Date().toISOString(),
+    actor_arn: actorArn,
+    actor_type: actorType,
+    actor_is_guardian: actorIsGuardian,
+    source_ip: String(detail.sourceIPAddress || "unknown"),
+    resource_id: String(resourceId || "unknown"),
+    resource_type: String(resourceType || "unknown"),
+    region: String(detail.awsRegion || "unknown"),
+    risk_level: level,
+    risk_reason: reason,
+    requested_ports: ports,
+    source_cidrs: cidrs,
+    raw_event: detail,
+  };
+}
+
+function eventMatchesPolicy(event: EnrichedEvent, policy: EventResponsePolicyRecord): boolean {
+  if (policy.trigger_event !== "*" && policy.trigger_event !== event.event_name) return false;
+  if (SEVERITY_ORDER[event.risk_level] > SEVERITY_ORDER[policy.risk_threshold]) return false;
+
+  const conditions = policy.trigger_conditions || {};
+  if (conditions.actor_type && conditions.actor_type !== event.actor_type) return false;
+  if (typeof conditions.actor_is_guardian === "boolean" && conditions.actor_is_guardian !== event.actor_is_guardian) return false;
+  if (conditions.source_cidr && !event.source_cidrs.includes(String(conditions.source_cidr))) return false;
+  if (conditions.port && !event.requested_ports.includes(Number(conditions.port))) return false;
+
+  return true;
+}
+
+async function fetchCloudTrailEventsForReplay(awsConfig: any, hoursBack: number): Promise<EnrichedEvent[]> {
+  const cloudTrail = new AWS.CloudTrail(awsConfig);
+  const endTime = new Date();
+  const startTime = new Date(endTime.getTime() - hoursBack * 60 * 60 * 1000);
+  const events: EnrichedEvent[] = [];
+  let nextToken: string | undefined;
+  let pages = 0;
+
+  do {
+    const response = await cloudTrail.lookupEvents({
+      StartTime: startTime,
+      EndTime: endTime,
+      MaxResults: 50,
+      NextToken: nextToken,
+    }).promise();
+
+    for (const event of response.Events || []) {
+      const detail = parseCloudTrailLookupEvent(event);
+      if (!detail?.eventName) continue;
+      if (!WATCHED_CLOUDTRAIL_EVENTS.has(String(detail.eventName))) continue;
+      events.push(classifyAndEnrichCloudTrailEvent(detail));
+    }
+
+    nextToken = response.NextToken;
+    pages += 1;
+  } while (nextToken && pages < 5);
+
+  return events;
+}
+
+function deduplicateReplayEvents(events: EnrichedEvent[]): { deduplicated: EnrichedEvent[]; suppressed: number } {
+  const dedup = new Set<string>();
+  const deduplicated: EnrichedEvent[] = [];
+  let suppressed = 0;
+
+  for (const event of events) {
+    const key = `${event.event_name}:${event.resource_id}:${event.event_time.slice(0, 16)}`;
+    if (dedup.has(key)) {
+      suppressed += 1;
+      continue;
+    }
+    dedup.add(key);
+    deduplicated.push(event);
+  }
+
+  return { deduplicated, suppressed };
+}
+
+function describePolicyOutcome(policy: EventResponsePolicyRecord): string {
+  if (policy.response_type === "auto_fix") {
+    return `Would auto-fix using ${policy.response_action}`;
+  }
+  if (policy.response_type === "notify") {
+    return `Would notify ${policy.notify_channels.join(", ") || "configured channels"}`;
+  }
+  if (policy.response_type === "runbook") {
+    return `Would trigger runbook ${policy.response_params?.runbook || policy.response_action}`;
+  }
+  return `Would auto-fix and notify, with runbook escalation where configured`;
+}
+
+function buildFormalEventReplayReport(result: EventReplayResult): string {
+  const lines: string[] = [];
+  lines.push("## CloudTrail Event Replay Report");
+  lines.push("");
+  lines.push(`Generated at: ${result.generatedAt}`);
+  lines.push(`Replay window: last ${result.hoursBack} hour(s)`);
+  lines.push(`Watched events evaluated: ${result.watchedEvents}`);
+  lines.push(`Duplicate events suppressed: ${result.deduplicatedEvents}`);
+  lines.push(`Policies evaluated: ${result.policiesEvaluated}`);
+  lines.push(`Matched events: ${result.matchedEvents}`);
+  lines.push("");
+
+  if (result.matches.length === 0) {
+    lines.push("No replayed CloudTrail events matched the active built-in or user-defined response policies in the selected time window.");
+    return lines.join("\n");
+  }
+
+  lines.push("### Matching Events");
+  lines.push("");
+  for (const match of result.matches) {
+    const event = match.event;
+    lines.push(`- ${event.event_time} | ${event.risk_level} | ${event.event_name} on ${event.resource_id} in ${event.region}. ${event.risk_reason}`);
+    lines.push(`  Actor: ${event.actor_arn}`);
+    for (const policy of match.policies) {
+      lines.push(`  Policy: ${policy.name}. ${describePolicyOutcome(policy)}.`);
+    }
+  }
+  lines.push("");
+  lines.push("Replay mode is a backtest only. No remediation or notification actions were executed during this analysis.");
+  return lines.join("\n");
+}
+
+async function replayCloudTrailEvents(
+  supabaseAdmin: any,
+  userId: string | null,
+  awsConfig: any,
+  hoursBack: number,
+): Promise<EventReplayResult> {
+  const replayedEvents = await fetchCloudTrailEventsForReplay(awsConfig, hoursBack);
+  const { deduplicated, suppressed } = deduplicateReplayEvents(replayedEvents);
+  const userPolicies = userId ? await fetchUserEventResponsePolicies(supabaseAdmin, userId) : [];
+  const policies = [...BUILT_IN_EVENT_RESPONSE_POLICIES, ...userPolicies];
+  const matches: EventReplayMatch[] = [];
+
+  for (const event of deduplicated) {
+    const matchedPolicies = policies.filter((policy) => eventMatchesPolicy(event, policy));
+    if (matchedPolicies.length > 0) {
+      matches.push({
+        event,
+        policies: matchedPolicies,
+      });
+    }
+  }
+
+  matches.sort((left, right) => {
+    const severityDelta = SEVERITY_ORDER[left.event.risk_level] - SEVERITY_ORDER[right.event.risk_level];
+    if (severityDelta !== 0) return severityDelta;
+    return left.event.event_time.localeCompare(right.event.event_time);
+  });
+
+  const result: EventReplayResult = {
+    hoursBack,
+    totalEvents: replayedEvents.length,
+    watchedEvents: deduplicated.length,
+    deduplicatedEvents: suppressed,
+    matchedEvents: matches.length,
+    policiesEvaluated: policies.length,
+    matches,
+    formalReport: "",
+    generatedAt: new Date().toISOString(),
+  };
+  result.formalReport = buildFormalEventReplayReport(result);
+  return result;
 }
 
 function normalizeJsonForFingerprint(value: any): any {
@@ -5346,6 +6191,178 @@ serve(async (req) => {
                 content: JSON.stringify({ error: errorMessage }),
               } as any);
             }
+          } else if (toolCall.function.name === "manage_event_response_policy") {
+            const startTime = Date.now();
+            try {
+              if (!userId) {
+                throw new Error("Authentication is required to manage event response policies.");
+              }
+
+              const rawArgs = JSON.parse(toolCall.function.arguments || "{}");
+              const rawQuery = sanitizeString(rawArgs.rawQuery, 2000);
+              if (!rawQuery) {
+                throw new Error("An event response policy request is required.");
+              }
+
+              const normalizedQuery = rawQuery.toLowerCase();
+              const isListRequest =
+                /\blist\b/.test(normalizedQuery) ||
+                /\bshow\b/.test(normalizedQuery) ||
+                /\bwhat\b/.test(normalizedQuery) ||
+                /\bmy event rules\b/.test(normalizedQuery) ||
+                /\bresponse policies\b/.test(normalizedQuery);
+
+              if (isListRequest) {
+                const userPolicies = await fetchUserEventResponsePolicies(supabaseAdmin, userId);
+                const execTime = Date.now() - startTime;
+
+                if (userId) {
+                  supabaseAdmin.from("agent_audit_log").insert({
+                    user_id: userId,
+                    aws_service: "CLOUDTRAIL",
+                    aws_operation: "listEventResponsePolicies",
+                    aws_region: awsConfig.region,
+                    status: "success",
+                    validator_result: "ALLOWED",
+                    execution_time_ms: execTime,
+                  }).then();
+                }
+
+                apiMessages.push({
+                  role: "tool",
+                  tool_call_id: toolCall.id,
+                  content: JSON.stringify({
+                    status: "listed",
+                    builtInPolicies: BUILT_IN_EVENT_RESPONSE_POLICIES,
+                    userPolicies,
+                    formalReport: buildFormalEventPolicyListReport(BUILT_IN_EVENT_RESPONSE_POLICIES, userPolicies),
+                  }),
+                } as any);
+                continue;
+              }
+
+              const policy = parseEventResponsePolicyFromQuery(rawQuery, notificationEmail || null);
+              await saveEventResponsePolicy(supabaseAdmin, userId, policy);
+              const execTime = Date.now() - startTime;
+
+              if (userId) {
+                supabaseAdmin.from("agent_audit_log").insert({
+                  user_id: userId,
+                  aws_service: "CLOUDTRAIL",
+                  aws_operation: "manageEventResponsePolicy",
+                  aws_region: awsConfig.region,
+                  status: "success",
+                  validator_result: "ALLOWED",
+                  execution_time_ms: execTime,
+                }).then();
+              }
+
+              pushAuditToAws(awsConfig, {
+                timestamp: new Date().toISOString(),
+                userId,
+                service: "CLOUDTRAIL",
+                operation: "manageEventResponsePolicy",
+                region: awsConfig.region,
+                status: "success",
+                policyId: policy.policy_id,
+                triggerEvent: policy.trigger_event,
+                executionTimeMs: execTime,
+              });
+
+              apiMessages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify({
+                  status: "stored",
+                  policy,
+                  formalReport: buildFormalCreatedEventPolicyReport(policy),
+                }),
+              } as any);
+            } catch (err: any) {
+              const execTime = Date.now() - startTime;
+              const errorMessage = err?.message || "Event response policy request failed.";
+
+              if (userId) {
+                supabaseAdmin.from("agent_audit_log").insert({
+                  user_id: userId,
+                  aws_service: "CLOUDTRAIL",
+                  aws_operation: "manageEventResponsePolicy",
+                  aws_region: awsConfig.region,
+                  status: "error",
+                  error_code: err?.code || null,
+                  error_message: errorMessage.slice(0, 2000),
+                  validator_result: "ALLOWED",
+                  execution_time_ms: execTime,
+                }).then();
+              }
+
+              apiMessages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify({ error: errorMessage }),
+              } as any);
+            }
+          } else if (toolCall.function.name === "replay_cloudtrail_events") {
+            const startTime = Date.now();
+            try {
+              const rawArgs = JSON.parse(toolCall.function.arguments || "{}");
+              const hoursBack = Math.max(1, Math.min(168, Number(rawArgs.hoursBack || 24)));
+              const replayResult = await replayCloudTrailEvents(supabaseAdmin, userId || null, awsConfig, hoursBack);
+              const execTime = Date.now() - startTime;
+
+              if (userId) {
+                supabaseAdmin.from("agent_audit_log").insert({
+                  user_id: userId,
+                  aws_service: "CLOUDTRAIL",
+                  aws_operation: "replayCloudTrailEvents",
+                  aws_region: awsConfig.region,
+                  status: "success",
+                  validator_result: "ALLOWED",
+                  execution_time_ms: execTime,
+                }).then();
+              }
+
+              pushAuditToAws(awsConfig, {
+                timestamp: new Date().toISOString(),
+                userId,
+                service: "CLOUDTRAIL",
+                operation: "replayCloudTrailEvents",
+                region: awsConfig.region,
+                status: "success",
+                hoursBack,
+                matchedEvents: replayResult.matchedEvents,
+                executionTimeMs: execTime,
+              });
+
+              apiMessages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify(replayResult),
+              } as any);
+            } catch (err: any) {
+              const execTime = Date.now() - startTime;
+              const errorMessage = err?.message || "CloudTrail replay failed.";
+
+              if (userId) {
+                supabaseAdmin.from("agent_audit_log").insert({
+                  user_id: userId,
+                  aws_service: "CLOUDTRAIL",
+                  aws_operation: "replayCloudTrailEvents",
+                  aws_region: awsConfig.region,
+                  status: "error",
+                  error_code: err?.code || null,
+                  error_message: errorMessage.slice(0, 2000),
+                  validator_result: "ALLOWED",
+                  execution_time_ms: execTime,
+                }).then();
+              }
+
+              apiMessages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify({ error: errorMessage }),
+              } as any);
+            }
           } else if (toolCall.function.name === "run_org_query") {
             const startTime = Date.now();
             try {
@@ -5462,6 +6479,18 @@ serve(async (req) => {
               );
 
               if (!blastRadius.safe_to_proceed) {
+                await persistOrgOperationHistory(supabaseAdmin, userId, {
+                  action,
+                  scope,
+                  scpTemplate,
+                  accountCount: resolution.accounts.length,
+                  envBreakdown: blastRadius.by_env,
+                  warnings: previewPayload.warnings,
+                  blocked: previewPayload.blocked,
+                  rollbackPlan,
+                  status: "blocked",
+                  previewPayload,
+                });
                 apiMessages.push({
                   role: "tool",
                   tool_call_id: toolCall.id,
@@ -5471,17 +6500,30 @@ serve(async (req) => {
               }
 
               if (highestTier.rollback_plan === "required" && !rollbackPlan) {
+                const rollbackPreviewPayload = {
+                  ...previewPayload,
+                  status: "preview_only",
+                  warnings: [
+                    ...previewPayload.warnings,
+                    "A rollback plan is required before this operation can be executed for production or unknown environments.",
+                  ],
+                };
+                await persistOrgOperationHistory(supabaseAdmin, userId, {
+                  action,
+                  scope,
+                  scpTemplate,
+                  accountCount: resolution.accounts.length,
+                  envBreakdown: blastRadius.by_env,
+                  warnings: rollbackPreviewPayload.warnings,
+                  blocked: rollbackPreviewPayload.blocked,
+                  rollbackPlan,
+                  status: "preview_only",
+                  previewPayload: rollbackPreviewPayload,
+                });
                 apiMessages.push({
                   role: "tool",
                   tool_call_id: toolCall.id,
-                  content: JSON.stringify({
-                    ...previewPayload,
-                    status: "preview_only",
-                    warnings: [
-                      ...previewPayload.warnings,
-                      "A rollback plan is required before this operation can be executed for production or unknown environments.",
-                    ],
-                  }),
+                  content: JSON.stringify(rollbackPreviewPayload),
                 } as any);
                 continue;
               }
@@ -5491,6 +6533,18 @@ serve(async (req) => {
                 : userHasConfirmedMutation || hasRequiredCountConfirmation;
 
               if (!confirmed) {
+                await persistOrgOperationHistory(supabaseAdmin, userId, {
+                  action,
+                  scope,
+                  scpTemplate,
+                  accountCount: resolution.accounts.length,
+                  envBreakdown: blastRadius.by_env,
+                  warnings: previewPayload.warnings,
+                  blocked: previewPayload.blocked,
+                  rollbackPlan,
+                  status: "preview_only",
+                  previewPayload,
+                });
                 apiMessages.push({
                   role: "tool",
                   tool_call_id: toolCall.id,
@@ -5502,6 +6556,19 @@ serve(async (req) => {
               const execution = await executeOrgSCPRollout(awsConfig, resolution.accounts, scpTemplate, policyDocument);
               const execTime = Date.now() - startTime;
               const summary = buildOrgExecutionSummary(scope, execution.policyName, execution.policyId, execution.results);
+              await persistOrgOperationHistory(supabaseAdmin, userId, {
+                action,
+                scope,
+                scpTemplate,
+                accountCount: resolution.accounts.length,
+                envBreakdown: blastRadius.by_env,
+                warnings: previewPayload.warnings,
+                blocked: previewPayload.blocked,
+                rollbackPlan,
+                status: String(summary.status),
+                previewPayload,
+                executionSummary: summary,
+              });
 
               if (userId) {
                 supabaseAdmin.from("agent_audit_log").insert({
