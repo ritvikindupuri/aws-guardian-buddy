@@ -62,6 +62,48 @@ export type Database = {
         }
         Relationships: []
       }
+      automation_idempotency_keys: {
+        Row: {
+          created_at: string
+          error_payload: Json | null
+          expires_at: string
+          id: string
+          operation_name: string
+          request_hash: string
+          request_key: string
+          response_payload: Json | null
+          status: string
+          updated_at: string
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          error_payload?: Json | null
+          expires_at?: string
+          id?: string
+          operation_name: string
+          request_hash: string
+          request_key: string
+          response_payload?: Json | null
+          status?: string
+          updated_at?: string
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          error_payload?: Json | null
+          expires_at?: string
+          id?: string
+          operation_name?: string
+          request_hash?: string
+          request_key?: string
+          response_payload?: Json | null
+          status?: string
+          updated_at?: string
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       conversations: {
         Row: {
           created_at: string
@@ -117,6 +159,45 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      unified_audit_cache: {
+        Row: {
+          account_id: string
+          cache_key: string
+          created_at: string
+          expires_at: string
+          id: string
+          last_refreshed_at: string
+          planner: Json
+          response: Json
+          updated_at: string
+          user_id: string | null
+        }
+        Insert: {
+          account_id: string
+          cache_key: string
+          created_at?: string
+          expires_at: string
+          id?: string
+          last_refreshed_at?: string
+          planner?: Json
+          response: Json
+          updated_at?: string
+          user_id?: string | null
+        }
+        Update: {
+          account_id?: string
+          cache_key?: string
+          created_at?: string
+          expires_at?: string
+          id?: string
+          last_refreshed_at?: string
+          planner?: Json
+          response?: Json
+          updated_at?: string
+          user_id?: string | null
+        }
+        Relationships: []
       }
     }
     Views: {
