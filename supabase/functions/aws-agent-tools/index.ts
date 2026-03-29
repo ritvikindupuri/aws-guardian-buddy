@@ -1,0 +1,5167 @@
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+};
+
+function requireEnv(name: string): string {
+  const value = Deno.env.get(name);
+  if (!value) throw new Error(`Missing required environment variable: ${name}`);
+  return value;
+}
+
+const ENV = {
+  supabaseUrl: requireEnv("SUPABASE_URL"),
+  supabaseServiceRoleKey: requireEnv("SUPABASE_SERVICE_ROLE_KEY"),
+};
+
+// ── AWS SDK v3 Dynamic Module Loader ────────────────────────────────────────
+// Replaces the monolithic AWS SDK v2 import with lazy-loaded v3 clients.
+// This eliminates the ~200MB bundle that caused deploy timeouts.
+const _awsModuleCache: Record<string, any> = {};
+
+async function loadAwsModule(service: string): Promise<any> {
+  if (_awsModuleCache[service]) return _awsModuleCache[service];
+  let mod: any;
+  switch (service) {
+    case "IAM": mod = await import("npm:@aws-sdk/client-iam@3.744.0"); break;
+    case "EC2": mod = await import("npm:@aws-sdk/client-ec2@3.744.0"); break;
+    case "S3": mod = await import("npm:@aws-sdk/client-s3@3.744.0"); break;
+    case "STS": mod = await import("npm:@aws-sdk/client-sts@3.744.0"); break;
+    case "Organizations": mod = await import("npm:@aws-sdk/client-organizations@3.744.0"); break;
+    case "CloudWatch": mod = await import("npm:@aws-sdk/client-cloudwatch@3.744.0"); break;
+    case "CostExplorer": mod = await import("npm:@aws-sdk/client-cost-explorer@3.744.0"); break;
+    case "SNS": mod = await import("npm:@aws-sdk/client-sns@3.744.0"); break;
+    case "CloudTrail": mod = await import("npm:@aws-sdk/client-cloudtrail@3.744.0"); break;
+    case "CloudWatchLogs": mod = await import("npm:@aws-sdk/client-cloudwatch-logs@3.744.0"); break;
+    case "GuardDuty": mod = await import("npm:@aws-sdk/client-guardduty@3.744.0"); break;
+    case "SecurityHub": mod = await import("npm:@aws-sdk/client-securityhub@3.744.0"); break;
+    case "Config": mod = await import("npm:@aws-sdk/client-config-service@3.744.0"); break;
+    case "RDS": mod = await import("npm:@aws-sdk/client-rds@3.744.0"); break;
+    case "Lambda": mod = await import("npm:@aws-sdk/client-lambda@3.744.0"); break;
+    case "EKS": mod = await import("npm:@aws-sdk/client-eks@3.744.0"); break;
+    case "ECS": mod = await import("npm:@aws-sdk/client-ecs@3.744.0"); break;
+    case "KMS": mod = await import("npm:@aws-sdk/client-kms@3.744.0"); break;
+    case "SecretsManager": mod = await import("npm:@aws-sdk/client-secrets-manager@3.744.0"); break;
+    case "SSM": mod = await import("npm:@aws-sdk/client-ssm@3.744.0"); break;
+    case "WAFv2": mod = await import("npm:@aws-sdk/client-wafv2@3.744.0"); break;
+    case "CloudFront": mod = await import("npm:@aws-sdk/client-cloudfront@3.744.0"); break;
+    case "SQS": mod = await import("npm:@aws-sdk/client-sqs@3.744.0"); break;
+    case "ECR": mod = await import("npm:@aws-sdk/client-ecr@3.744.0"); break;
+    case "Athena": mod = await import("npm:@aws-sdk/client-athena@3.744.0"); break;
+    case "Inspector2": mod = await import("npm:@aws-sdk/client-inspector2@3.744.0"); break;
+    case "AccessAnalyzer": mod = await import("npm:@aws-sdk/client-accessanalyzer@3.744.0"); break;
+    case "Macie2": mod = await import("npm:@aws-sdk/client-macie2@3.744.0"); break;
+    case "NetworkFirewall": mod = await import("npm:@aws-sdk/client-network-firewall@3.744.0"); break;
+    case "Shield": mod = await import("npm:@aws-sdk/client-shield@3.744.0"); break;
+    case "ACM": mod = await import("npm:@aws-sdk/client-acm@3.744.0"); break;
+    case "APIGateway": mod = await import("npm:@aws-sdk/client-api-gateway@3.744.0"); break;
+    case "CognitoIdentityServiceProvider": mod = await import("npm:@aws-sdk/client-cognito-identity-provider@3.744.0"); break;
+    case "EventBridge": mod = await import("npm:@aws-sdk/client-eventbridge@3.744.0"); break;
+    case "StepFunctions": mod = await import("npm:@aws-sdk/client-sfn@3.744.0"); break;
+    case "ElastiCache": mod = await import("npm:@aws-sdk/client-elasticache@3.744.0"); break;
+    case "Redshift": mod = await import("npm:@aws-sdk/client-redshift@3.744.0"); break;
+    case "DynamoDB": mod = await import("npm:@aws-sdk/client-dynamodb@3.744.0"); break;
+    case "Route53": mod = await import("npm:@aws-sdk/client-route53@3.744.0"); break;
+    case "ELBv2": mod = await import("npm:@aws-sdk/client-elastic-load-balancing-v2@3.744.0"); break;
+    case "AutoScaling": mod = await import("npm:@aws-sdk/client-auto-scaling@3.744.0"); break;
+    default: throw new Error(`Unsupported AWS service: ${service}`);
+  }
+  _awsModuleCache[service] = mod;
+  return mod;
+}
+
+const V3_CLIENT_NAMES: Record<string, string> = {
+  IAM: "IAMClient", EC2: "EC2Client", S3: "S3Client", STS: "STSClient",
+  Organizations: "OrganizationsClient", CloudWatch: "CloudWatchClient",
+  CostExplorer: "CostExplorerClient", SNS: "SNSClient", CloudTrail: "CloudTrailClient",
+  CloudWatchLogs: "CloudWatchLogsClient", GuardDuty: "GuardDutyClient",
+  SecurityHub: "SecurityHubClient", Config: "ConfigServiceClient",
+  RDS: "RDSClient", Lambda: "LambdaClient", EKS: "EKSClient", ECS: "ECSClient",
+  KMS: "KMSClient", SecretsManager: "SecretsManagerClient", SSM: "SSMClient",
+  WAFv2: "WAFv2Client", CloudFront: "CloudFrontClient", SQS: "SQSClient",
+  ECR: "ECRClient", Athena: "AthenaClient", Inspector2: "Inspector2Client",
+  AccessAnalyzer: "AccessAnalyzerClient", Macie2: "Macie2Client",
+  NetworkFirewall: "NetworkFirewallClient", Shield: "ShieldClient",
+  ACM: "ACMClient", APIGateway: "APIGatewayClient",
+  CognitoIdentityServiceProvider: "CognitoIdentityProviderClient",
+  EventBridge: "EventBridgeClient", StepFunctions: "SFNClient",
+  ElastiCache: "ElastiCacheClient", Redshift: "RedshiftClient",
+  DynamoDB: "DynamoDBClient", Route53: "Route53Client",
+  ELBv2: "ElasticLoadBalancingV2Client", AutoScaling: "AutoScalingClient",
+};
+
+// v2-compatible Proxy wrapper: allows `v2Client("IAM", config).listUsers({}).promise()`
+// This preserves all existing .promise() call patterns while using v3 under the hood
+function v2Client(service: string, config: any): any {
+  return new Proxy({}, {
+    get(_target, method: string) {
+      if (method === "then" || method === "catch" || typeof method === "symbol") return undefined;
+      return (params: any = {}) => ({
+        promise: async () => {
+          const mod = await loadAwsModule(service);
+          const clientName = V3_CLIENT_NAMES[service] || `${service}Client`;
+          const client = new mod[clientName]({ ...config, maxAttempts: 4 });
+          const commandName = method.charAt(0).toUpperCase() + method.slice(1) + "Command";
+          const CommandClass = mod[commandName];
+          if (!CommandClass) throw new Error(`Unknown command: ${service}.${commandName}`);
+          return client.send(new CommandClass(params));
+        },
+      });
+    },
+  });
+}
+
+// Direct v3 send helper for pushAuditToAws and other functions that use v3 directly
+async function v3Send(service: string, commandName: string, config: any, params: any): Promise<any> {
+  const mod = await loadAwsModule(service);
+  const clientName = V3_CLIENT_NAMES[service] || `${service}Client`;
+  const client = new mod[clientName](config);
+  const CommandClass = mod[commandName];
+  if (!CommandClass) throw new Error(`Unknown v3 command: ${service}.${commandName}`);
+  return client.send(new CommandClass(params));
+}
+
+
+type ErrorCategory =
+  | "validation"
+  | "authentication"
+  | "authorization"
+  | "aws_retryable"
+  | "aws_non_retryable"
+  | "conflict"
+  | "configuration"
+  | "internal";
+
+class CloudPilotError extends Error {
+  code: string;
+  category: ErrorCategory;
+  status: number;
+  retryable: boolean;
+
+  constructor(message: string, options: {
+    code: string;
+    category: ErrorCategory;
+    status?: number;
+    retryable?: boolean;
+  }) {
+    super(message);
+    this.name = "CloudPilotError";
+    this.code = options.code;
+    this.category = options.category;
+    this.status = options.status ?? 500;
+    this.retryable = options.retryable ?? false;
+  }
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetryableAwsError(err: any): boolean {
+  const code = String(err?.code || err?.name || "");
+  const statusCode = Number(err?.statusCode || err?.$metadata?.httpStatusCode || 0);
+  return [
+    "Throttling",
+    "ThrottlingException",
+    "TooManyRequestsException",
+    "RequestLimitExceeded",
+    "ProvisionedThroughputExceededException",
+    "ECONNRESET",
+    "NetworkingError",
+    "TimeoutError",
+    "RequestTimeout",
+    "ServiceUnavailable",
+  ].includes(code) || statusCode === 429 || statusCode >= 500;
+}
+
+async function withAwsRetry<T>(operationName: string, fn: () => Promise<T>, maxAttempts = 4): Promise<T> {
+  let attempt = 0;
+  let lastError: unknown;
+  while (attempt < maxAttempts) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err;
+      attempt += 1;
+      if (attempt >= maxAttempts || !isRetryableAwsError(err)) {
+        throw err;
+      }
+      await sleep(250 * Math.pow(2, attempt - 1));
+      console.warn(`[CloudPilot] Retrying AWS operation ${operationName} (attempt ${attempt + 1}/${maxAttempts})`);
+    }
+  }
+  throw lastError;
+}
+
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(stableStringify).join(",")}]`;
+  }
+  const entries = Object.entries(value as Record<string, unknown>)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, nested]) => `${JSON.stringify(key)}:${stableStringify(nested)}`);
+  return `{${entries.join(",")}}`;
+}
+
+async function sha256(input: string): Promise<string> {
+  const bytes = new TextEncoder().encode(input);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function toCloudPilotError(err: any): CloudPilotError {
+  if (err instanceof CloudPilotError) return err;
+  const code = String(err?.code || err?.name || "INTERNAL_ERROR");
+  if (isRetryableAwsError(err)) {
+    return new CloudPilotError(err?.message || "A temporary AWS error occurred. Please retry.", {
+      code,
+      category: "aws_retryable",
+      status: 503,
+      retryable: true,
+    });
+  }
+  if (code.includes("AccessDenied") || code.includes("Unauthorized")) {
+    return new CloudPilotError(err?.message || "AWS rejected the requested operation.", {
+      code,
+      category: "authorization",
+      status: 403,
+    });
+  }
+  return new CloudPilotError(err?.message || "An unexpected internal error occurred.", {
+    code,
+    category: "internal",
+    status: 500,
+  });
+}
+
+async function claimIdempotencyKey(
+  supabaseAdmin: any,
+  userId: string | null,
+  operationName: string,
+  requestKey: string,
+  requestHash: string,
+) {
+  const { data: existing, error: fetchError } = await supabaseAdmin
+    .from("automation_idempotency_keys")
+    .select("*")
+    .eq("operation_name", operationName)
+    .eq("request_key", requestKey)
+    .maybeSingle();
+
+  if (fetchError) throw new CloudPilotError(`Failed to check idempotency state: ${fetchError.message}`, {
+    code: "IDEMPOTENCY_LOOKUP_FAILED",
+    category: "internal",
+  });
+
+  if (existing) {
+    if (existing.request_hash !== requestHash) {
+      throw new CloudPilotError("An idempotency key collision was detected for a different request.", {
+        code: "IDEMPOTENCY_CONFLICT",
+        category: "conflict",
+        status: 409,
+      });
+    }
+    return { existing };
+  }
+
+  const { error: insertError } = await supabaseAdmin.from("automation_idempotency_keys").insert({
+    user_id: userId,
+    operation_name: operationName,
+    request_key: requestKey,
+    request_hash: requestHash,
+    status: "pending",
+  });
+
+  if (insertError) {
+    throw new CloudPilotError(`Failed to create idempotency record: ${insertError.message}`, {
+      code: "IDEMPOTENCY_INSERT_FAILED",
+      category: "internal",
+    });
+  }
+
+  return { existing: null };
+}
+
+async function storeIdempotencySuccess(supabaseAdmin: any, operationName: string, requestKey: string, responsePayload: unknown) {
+  await supabaseAdmin.from("automation_idempotency_keys").update({
+    status: "success",
+    response_payload: responsePayload,
+    updated_at: new Date().toISOString(),
+  }).eq("operation_name", operationName).eq("request_key", requestKey);
+}
+
+async function storeIdempotencyFailure(supabaseAdmin: any, operationName: string, requestKey: string, errorPayload: unknown) {
+  await supabaseAdmin.from("automation_idempotency_keys").update({
+    status: "failed",
+    error_payload: errorPayload,
+    updated_at: new Date().toISOString(),
+  }).eq("operation_name", operationName).eq("request_key", requestKey);
+}
+
+
+
+type IamPrincipalType = "user" | "group" | "role";
+type IamAutomationAction = "attach_policy";
+type IamAutomationService = "s3";
+type IamAutomationScope = "read-only";
+
+interface IamAutomationArgs {
+  action: IamAutomationAction;
+  principalType: IamPrincipalType;
+  principalIdentifier: string;
+  service: IamAutomationService;
+  scope: IamAutomationScope;
+  resources?: string[];
+}
+
+interface IamPolicyTemplate {
+  actions: string[];
+  defaultResources: string[];
+  warning?: string;
+}
+
+const IAM_POLICY_TEMPLATES: Record<string, IamPolicyTemplate> = {
+  "s3:read-only": {
+    actions: ["s3:GetObject", "s3:ListBucket", "s3:GetBucketLocation"],
+    defaultResources: ["arn:aws:s3:::*", "arn:aws:s3:::*/*"],
+    warning: "Resource scope is broad (all buckets). Prefer specifying exact bucket ARNs when possible.",
+  },
+};
+
+function isExplicitConfirmation(input: string): boolean {
+  const text = sanitizeString(input, 200).trim();
+  return IAM_CONFIRM_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function sanitizePrincipalIdentifier(value: unknown): string {
+  return sanitizeString(value, 128).replace(/[^\w+=,.@-]/g, "");
+}
+
+function sanitizeArnList(values: unknown): string[] {
+  if (!Array.isArray(values)) return [];
+  return values
+    .map((value) => sanitizeString(value, 512).trim())
+    .filter(Boolean)
+    .slice(0, 25);
+}
+
+function buildPolicyName(principalIdentifier: string, service: string, scope: string): string {
+  const safePrincipal = principalIdentifier.toLowerCase().replace(/[^a-z0-9+=,.@-]/g, "-").slice(0, 48);
+  const safeService = service.toLowerCase().replace(/[^a-z0-9-]/g, "-");
+  const safeScope = scope.toLowerCase().replace(/[^a-z0-9-]/g, "-");
+  return `guardian-${safePrincipal}-${safeService}-${safeScope}-${Date.now()}`;
+}
+
+function validateIamPolicyActions(actions: string[]): { valid: boolean; reason?: string } {
+  for (const action of actions) {
+    if (IAM_BLOCKED_ACTIONS.has(action) || action.endsWith(":*")) {
+      return {
+        valid: false,
+        reason: `Action '${action}' is blocked because it is too broad or creates an escalation path.`,
+      };
+    }
+  }
+  return { valid: true };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function buildIamAccessPlan(rawArgs: Record<string, any>) {
+  const args: IamAutomationArgs = {
+    action: rawArgs.action,
+    principalType: rawArgs.principalType,
+    principalIdentifier: sanitizePrincipalIdentifier(rawArgs.principalIdentifier),
+    service: rawArgs.service,
+    scope: rawArgs.scope,
+    resources: sanitizeArnList(rawArgs.resources),
+  };
+
+  if (!args.principalIdentifier) {
+    throw new Error("A valid IAM principal identifier is required.");
+  }
+
+  const template = IAM_POLICY_TEMPLATES[`${args.service}:${args.scope}`];
+  if (!template) {
+    throw new Error(`Unsupported IAM automation request: ${args.service}:${args.scope}.`);
+  }
+
+  const resources = args.resources && args.resources.length > 0
+    ? args.resources
+    : template.defaultResources;
+
+  const actionValidation = validateIamPolicyActions(template.actions);
+  if (!actionValidation.valid) {
+    throw new Error(actionValidation.reason);
+  }
+
+  const policyDocument = {
+    Version: "2012-10-17",
+    Statement: [
+      {
+        Effect: "Allow",
+        Action: template.actions,
+        Resource: resources,
+      },
+    ],
+  };
+
+  const policyName = buildPolicyName(args.principalIdentifier, args.service, args.scope);
+  const warnings: string[] = [];
+  if (!args.resources || args.resources.length === 0) {
+    warnings.push(template.warning || "Resource scope is broad.");
+  }
+
+  const attachOperation = args.principalType === "group"
+    ? "attachGroupPolicy"
+    : args.principalType === "role"
+      ? "attachRolePolicy"
+      : "attachUserPolicy";
+
+  return {
+    args,
+    policyName,
+    policyDocument,
+    warnings,
+    attachOperation,
+  };
+}
+
+async function ensureIamPrincipalExists(iam: any, principalType: IamPrincipalType, identifier: string) {
+  if (principalType === "group") {
+    await iam.getGroup({ GroupName: identifier }).promise();
+    return;
+  }
+  if (principalType === "role") {
+    await iam.getRole({ RoleName: identifier }).promise();
+    return;
+  }
+  await iam.getUser({ UserName: identifier }).promise();
+}
+
+type SecurityGroupAction = "allow_ingress" | "revoke_ingress" | "allow_egress" | "revoke_egress";
+
+interface SecurityGroupRuleArgs {
+  action: SecurityGroupAction;
+  targetGroupIdentifier: string;
+  protocol: "tcp" | "udp" | "icmp" | "-1";
+  fromPort: number;
+  toPort: number;
+  cidr?: string;
+  sourceGroupIdentifier?: string;
+  description?: string;
+}
+
+interface SecurityGroupSummary {
+  groupId: string;
+  groupName: string;
+  vpcId?: string;
+  tags: Record<string, string>;
+  ingressPermissions: any[];
+  egressPermissions: any[];
+}
+
+interface SecurityGroupRiskResult {
+  allowed: boolean;
+  riskLevel: "LOW" | "MEDIUM" | "HIGH" | "BLOCKED";
+  reasons: string[];
+}
+
+const SENSITIVE_PORTS = new Set([22, 3389, 3306, 5432, 1433, 27017, 6379, 9200]);
+const LOW_RISK_PORTS = new Set([80, 443, 53]);
+const IPV4_ANYWHERE = "0.0.0.0/0";
+const IPV6_ANYWHERE = "::/0";
+
+function getSecurityGroupDirection(action: SecurityGroupAction): "ingress" | "egress" {
+  return action.endsWith("egress") ? "egress" : "ingress";
+}
+
+function isAllowAction(action: SecurityGroupAction): boolean {
+  return action.startsWith("allow_");
+}
+
+function isSecurityGroupId(value: string): boolean {
+  return /^sg-[a-z0-9]+$/i.test(value);
+}
+
+function sanitizeSecurityGroupIdentifier(value: unknown): string {
+  return sanitizeString(value, 128).replace(/[^\w+=,.@:-]/g, "");
+}
+
+function sanitizeCidr(value: unknown): string {
+  return sanitizeString(value, 64).trim();
+}
+
+function sanitizeProtocol(value: unknown): "tcp" | "udp" | "icmp" | "-1" {
+  const protocol = sanitizeString(value, 16).toLowerCase();
+  if (protocol === "tcp" || protocol === "udp" || protocol === "icmp" || protocol === "-1") {
+    return protocol;
+  }
+  throw new Error(`Unsupported protocol '${protocol}'.`);
+}
+
+function normalizePort(value: unknown): number {
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < -1 || port > 65535) {
+    throw new Error(`Invalid port '${value}'.`);
+  }
+  return port;
+}
+
+function summarizeTags(tags: any[] | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const tag of tags || []) {
+    if (tag.Key && tag.Value) out[tag.Key.toLowerCase()] = tag.Value.toLowerCase();
+  }
+  return out;
+}
+
+function isBroadCidr(cidr?: string): boolean {
+  return cidr === IPV4_ANYWHERE || cidr === IPV6_ANYWHERE;
+}
+
+function isProdLikeGroup(summary: SecurityGroupSummary): boolean {
+  return (
+    summary.groupName.toLowerCase().includes("prod") ||
+    summary.tags.env === "prod" ||
+    summary.tags.env === "production" ||
+    summary.tags.environment === "prod" ||
+    summary.tags.environment === "production" ||
+    summary.tags.stage === "prod" ||
+    summary.tags.stage === "production" ||
+    summary.tags.tier === "prod" ||
+    summary.tags.tier === "production" ||
+    summary.tags.name?.includes("prod") === true
+  );
+}
+
+function classifySecurityGroupRisk(
+  targetGroup: SecurityGroupSummary,
+  args: SecurityGroupRuleArgs,
+  hasSourceGroup: boolean,
+): SecurityGroupRiskResult {
+  const reasons: string[] = [];
+  const direction = getSecurityGroupDirection(args.action);
+  const broad = isBroadCidr(args.cidr);
+  const prodLike = isProdLikeGroup(targetGroup);
+  const singlePort = args.fromPort === args.toPort ? args.fromPort : null;
+  const allTraffic = args.protocol === "-1" || (args.fromPort === -1 && args.toPort === -1);
+
+  if (args.action === "allow_ingress" && broad && (singlePort === 22 || singlePort === 3389)) {
+    return {
+      allowed: false,
+      riskLevel: "BLOCKED",
+      reasons: [`Opening port ${singlePort} to the internet is hard-blocked.`],
+    };
+  }
+
+  if (direction === "ingress" && isAllowAction(args.action) && broad) {
+    reasons.push("Rule exposes the security group to the public internet.");
+  }
+  if (direction === "egress" && isAllowAction(args.action) && broad) {
+    reasons.push("Rule allows outbound internet access.");
+  }
+  if (singlePort !== null && SENSITIVE_PORTS.has(singlePort)) {
+    reasons.push(`Port ${singlePort} is considered sensitive.`);
+  }
+  if (allTraffic) {
+    reasons.push("Rule applies to all traffic.");
+  }
+  if (prodLike) {
+    reasons.push("Target security group appears to be production-scoped.");
+  }
+  if (hasSourceGroup) {
+    reasons.push("Rule is scoped to another security group instead of a public CIDR.");
+  }
+
+  if (!isAllowAction(args.action)) {
+    return { allowed: true, riskLevel: "LOW", reasons: ["Revoking access is low risk."] };
+  }
+
+  if (direction === "ingress" && hasSourceGroup && singlePort !== null && LOW_RISK_PORTS.has(singlePort) && !prodLike) {
+    return { allowed: true, riskLevel: "LOW", reasons };
+  }
+
+  if (direction === "egress" && allTraffic && broad && prodLike) {
+    return { allowed: true, riskLevel: "HIGH", reasons };
+  }
+
+  if (broad || prodLike || allTraffic || (singlePort !== null && SENSITIVE_PORTS.has(singlePort))) {
+    return {
+      allowed: true,
+      riskLevel: (broad && (prodLike || allTraffic || (singlePort !== null && SENSITIVE_PORTS.has(singlePort)))) || (prodLike && allTraffic)
+        ? "HIGH"
+        : "MEDIUM",
+      reasons,
+    };
+  }
+
+  return { allowed: true, riskLevel: "LOW", reasons: reasons.length > 0 ? reasons : ["Scoped security group rule."] };
+}
+
+async function resolveSecurityGroup(ec2: any, identifier: string): Promise<SecurityGroupSummary> {
+  const params = isSecurityGroupId(identifier)
+    ? { GroupIds: [identifier] }
+    : { Filters: [{ Name: "group-name", Values: [identifier] }] };
+
+  const response = await ec2.describeSecurityGroups(params).promise();
+  const groups = response.SecurityGroups || [];
+  if (groups.length === 0) {
+    throw new Error(`Security group '${identifier}' was not found.`);
+  }
+  if (!isSecurityGroupId(identifier) && groups.length > 1) {
+    throw new Error(`Security group name '${identifier}' is ambiguous. Use the security group ID instead.`);
+  }
+
+  const group = groups[0];
+  if (!group.GroupId || !group.GroupName) {
+    throw new Error(`Security group '${identifier}' is missing required metadata.`);
+  }
+
+  return {
+    groupId: group.GroupId,
+    groupName: group.GroupName,
+    vpcId: group.VpcId,
+    tags: summarizeTags(group.Tags),
+    ingressPermissions: group.IpPermissions || [],
+    egressPermissions: group.IpPermissionsEgress || [],
+  };
+}
+
+function ipPermissionTargets(permission: any): string[] {
+  const cidrs = (permission.IpRanges || []).map((range) => range.CidrIp).filter(Boolean) as string[];
+  const ipv6Cidrs = (permission.Ipv6Ranges || []).map((range) => range.CidrIpv6).filter(Boolean) as string[];
+  const groups = (permission.UserIdGroupPairs || []).map((pair) => pair.GroupId).filter(Boolean) as string[];
+  return [...cidrs, ...ipv6Cidrs, ...groups];
+}
+
+function permissionMatchesRequested(
+  existing: any,
+  requested: any,
+  args: SecurityGroupRuleArgs,
+  sourceGroupId?: string,
+): boolean {
+  if ((existing.IpProtocol || "") !== requested.IpProtocol) return false;
+  if ((existing.FromPort ?? -1) !== (requested.FromPort ?? -1)) return false;
+  if ((existing.ToPort ?? -1) !== (requested.ToPort ?? -1)) return false;
+
+  const existingTargets = new Set(ipPermissionTargets(existing));
+  if (sourceGroupId) {
+    return existingTargets.has(sourceGroupId);
+  }
+  if (args.cidr) {
+    return existingTargets.has(args.cidr);
+  }
+  return false;
+}
+
+function findExistingMatchingPermission(
+  targetGroup: SecurityGroupSummary,
+  args: SecurityGroupRuleArgs,
+  requestedPermission: any,
+  sourceGroupId?: string,
+): any | null {
+  const permissions = getSecurityGroupDirection(args.action) === "egress"
+    ? targetGroup.egressPermissions
+    : targetGroup.ingressPermissions;
+
+  for (const permission of permissions || []) {
+    if (permissionMatchesRequested(permission, requestedPermission, args, sourceGroupId)) {
+      return permission;
+    }
+  }
+  return null;
+}
+
+function buildSecurityGroupOperationName(action: SecurityGroupAction): string {
+  switch (action) {
+    case "allow_ingress":
+      return "authorizeSecurityGroupIngress";
+    case "revoke_ingress":
+      return "revokeSecurityGroupIngress";
+    case "allow_egress":
+      return "authorizeSecurityGroupEgress";
+    case "revoke_egress":
+      return "revokeSecurityGroupEgress";
+  }
+}
+
+type UnifiedAuditIntent = "full_audit" | "security_audit" | "cost_audit" | "compliance" | "single_service";
+type UnifiedAuditSeverity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFO";
+type UnifiedAuditScanner = "iam" | "s3" | "sg" | "ec2" | "cost";
+
+interface UnifiedAuditPlan {
+  intent: UnifiedAuditIntent;
+  scanners: UnifiedAuditScanner[];
+  scope: string;
+  filters: Record<string, string>;
+  format: "summary" | "detailed" | "exportable";
+  rawQuery: string;
+}
+
+interface UnifiedFinding {
+  id: string;
+  service: string;
+  severity: UnifiedAuditSeverity;
+  title: string;
+  resource: string;
+  detail: string;
+  fix_prompt: string;
+  remediation: string;
+  tags: Record<string, string>;
+  timestamp: string;
+}
+
+interface UnifiedScannerResult {
+  findings: UnifiedFinding[];
+  limitations: string[];
+  resourcesEvaluated: number;
+  servicesAssessed: string[];
+}
+
+interface CostRule {
+  rule_id: string;
+  type: "daily_threshold" | "multiplier_spike";
+  threshold?: number;
+  multiplier?: number;
+  scope: string;
+  action: "notify" | "auto_stop_idle_ec2" | "require_confirm";
+  requires_confirm: boolean;
+  channels: string[];
+  created: string;
+  raw_query: string;
+}
+
+interface CostEntry {
+  date: string;
+  label: string;
+  amount: number;
+  unit: string;
+}
+
+interface CostAnomaly {
+  type: string;
+  service: string;
+  today?: number;
+  mean?: number;
+  z_score?: number;
+  threshold?: number;
+  actual?: number;
+  growth_pct?: number;
+  severity: UnifiedAuditSeverity;
+}
+
+interface CostRemediation {
+  action: string;
+  resource: string;
+  saving: number;
+  auto: boolean;
+  prompt: string;
+}
+
+type DriftScope = "full" | "security_groups" | "iam" | "s3";
+type DriftChangeType = "ADDED" | "MODIFIED" | "DELETED";
+
+interface ResourceSnapshot {
+  resource_id: string;
+  resource_type: string;
+  account_id: string;
+  region: string;
+  state: Record<string, any>;
+  fingerprint: string;
+  captured_at: string;
+}
+
+interface DriftEventRecord {
+  id: string;
+  user_id: string;
+  account_id: string;
+  region: string;
+  resource_id: string;
+  resource_type: string;
+  change_type: DriftChangeType;
+  severity: UnifiedAuditSeverity;
+  title: string;
+  baseline_state: Record<string, any> | null;
+  current_state: Record<string, any> | null;
+  diff: Record<string, any>;
+  explanation: string;
+  fix_prompt: string;
+  resolved: boolean;
+  detected_at: string;
+}
+
+interface DriftScanResult {
+  scope: DriftScope;
+  accountId: string;
+  baselineCount: number;
+  snapshotCount: number;
+  driftCount: number;
+  healthScore: number;
+  events: DriftEventRecord[];
+  digest: string;
+  generatedAt: string;
+}
+
+type OrgQueryType =
+  | "accounts_without_mfa"
+  | "accounts_with_public_s3"
+  | "list_org_scps"
+  | "untagged_env_accounts"
+  | "org_structure"
+  | "guardian_onboarding_status";
+
+type OrgOperationAction = "attach_scp";
+type OrgScpTemplate =
+  | "deny_non_approved_regions"
+  | "deny_root_account_usage"
+  | "require_mfa_for_all_actions"
+  | "deny_leaving_org"
+  | "enforce_s3_encryption";
+
+interface OrgAccountSummary {
+  id: string;
+  name: string;
+  email: string;
+  env: string;
+  team: string;
+  ou: string;
+  tags: Record<string, string>;
+}
+
+interface OrgScopeResolution {
+  scope: string;
+  accounts: OrgAccountSummary[];
+}
+
+interface OrgBlastRadiusResult {
+  blocked: string[];
+  warnings: string[];
+  by_env: Record<string, number>;
+  total: number;
+  safe_to_proceed: boolean;
+  highestRiskEnv: string;
+}
+
+interface OrgAccountResult {
+  account_id: string;
+  account_name: string;
+  status: "SUCCESS" | "FAILED" | "SKIPPED";
+  action_taken: string;
+  error?: string;
+  duration_ms: number;
+}
+
+interface OrgQueryResult {
+  queryType: OrgQueryType;
+  scope: string;
+  totalAccountsConsidered: number;
+  formalReport: string;
+  results: Record<string, any>;
+  generatedAt: string;
+}
+
+type RunbookStepRisk = "auto" | "confirm" | "manual";
+type RunbookStepType = "aws_action" | "query" | "notify" | "wait" | "branch" | "human_task";
+type RunbookExecutionStatus =
+  | "PLANNED"
+  | "IN_PROGRESS"
+  | "WAITING_CONFIRMATION"
+  | "COMPLETED"
+  | "ABORTED"
+  | "FAILED_ABORTED"
+  | "ROLLED_BACK"
+  | "DRY_RUN_COMPLETED";
+
+interface RunbookStepTemplate {
+  id: string;
+  name: string;
+  type: RunbookStepType;
+  risk: RunbookStepRisk;
+  action: string;
+  params: Record<string, any>;
+  rollback?: {
+    action: string;
+    params: Record<string, any> | string;
+  } | null;
+  on_failure?: "pause" | "skip" | "abort" | "rollback_all";
+  timeout_sec?: number;
+  depends_on?: string[];
+}
+
+interface RunbookTemplate {
+  id: string;
+  name: string;
+  description: string;
+  trigger: string;
+  steps: RunbookStepTemplate[];
+  tags: string[];
+}
+
+interface ResolvedRunbookStep extends RunbookStepTemplate {
+  human_readable: string;
+  estimated_impact: string;
+}
+
+interface RunbookExecutionRecord {
+  id: string;
+  user_id: string;
+  conversation_id: string | null;
+  runbook_id: string;
+  runbook_name: string;
+  trigger_query: string;
+  dry_run: boolean;
+  status: RunbookExecutionStatus;
+  current_step_index: number;
+  steps: ResolvedRunbookStep[];
+  results: Array<Record<string, any>>;
+  created_at: string;
+  updated_at: string;
+  approved_by: string | null;
+  last_error: string | null;
+}
+
+type EventResponseType = "auto_fix" | "notify" | "runbook" | "all";
+
+interface EventResponsePolicyRecord {
+  id: string;
+  policy_id: string;
+  name: string;
+  trigger_event: string;
+  trigger_conditions: Record<string, any>;
+  risk_threshold: UnifiedAuditSeverity;
+  response_type: EventResponseType;
+  response_action: string;
+  response_params: Record<string, any>;
+  notify_channels: string[];
+  raw_query: string;
+  created_by: string;
+  is_active: boolean;
+  built_in?: boolean;
+}
+
+interface EnrichedEvent {
+  event_id: string;
+  event_name: string;
+  event_time: string;
+  actor_arn: string;
+  actor_type: string;
+  actor_is_guardian: boolean;
+  source_ip: string;
+  resource_id: string;
+  resource_type: string;
+  region: string;
+  risk_level: UnifiedAuditSeverity;
+  risk_reason: string;
+  requested_ports: number[];
+  source_cidrs: string[];
+  raw_event: Record<string, any>;
+}
+
+interface EventReplayMatch {
+  event: EnrichedEvent;
+  policies: EventResponsePolicyRecord[];
+}
+
+interface EventReplayResult {
+  hoursBack: number;
+  totalEvents: number;
+  watchedEvents: number;
+  deduplicatedEvents: number;
+  matchedEvents: number;
+  policiesEvaluated: number;
+  matches: EventReplayMatch[];
+  formalReport: string;
+  generatedAt: string;
+}
+
+const SEVERITY_ORDER: Record<UnifiedAuditSeverity, number> = {
+  CRITICAL: 0,
+  HIGH: 1,
+  MEDIUM: 2,
+  LOW: 3,
+  INFO: 4,
+};
+
+function calculateAccountHealthScore(counts: Record<UnifiedAuditSeverity, number>): number {
+  const score =
+    100 -
+    counts.CRITICAL * 20 -
+    counts.HIGH * 10 -
+    counts.MEDIUM * 5 -
+    counts.LOW * 2;
+  return Math.max(0, score);
+}
+
+function parseCostResponse(response: any): CostEntry[] {
+  const results: CostEntry[] = [];
+  for (const day of response.ResultsByTime || []) {
+    const date = day.TimePeriod?.Start || "";
+    for (const group of day.Groups || []) {
+      results.push({
+        date,
+        label: group.Keys?.[0] || "Unknown",
+        amount: Number(group.Metrics?.UnblendedCost?.Amount || 0),
+        unit: group.Metrics?.UnblendedCost?.Unit || "USD",
+      });
+    }
+  }
+  return results;
+}
+
+function average(values: number[]): number {
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function stdev(values: number[]): number {
+  if (values.length <= 1) return 0;
+  const mean = average(values);
+  const variance = values.reduce((sum, value) => sum + Math.pow(value - mean, 2), 0) / (values.length - 1);
+  return Math.sqrt(variance);
+}
+
+const ORG_CONFIRM_PATTERNS = [
+  /^apply to (\d+) accounts?$/i,
+  /^confirm apply to (\d+) accounts?$/i,
+];
+
+const ORG_EXTERNAL_ID = Deno.env.get("GUARDIAN_ORG_EXTERNAL_ID") || "";
+const ORG_ROLE_NAME = Deno.env.get("GUARDIAN_EXECUTION_ROLE_NAME") || "GuardianExecutionRole";
+const orgClientCache = new Map<string, { expiresAt: number; config: Record<string, any> }>();
+
+const ENV_TIERS: Record<string, { confirmation: "single" | "double"; auto_execute: boolean; max_accounts: number; require_mfa: boolean; rollback_plan: "auto" | "manual" | "required" }> = {
+  dev: {
+    confirmation: "single",
+    auto_execute: true,
+    max_accounts: 50,
+    require_mfa: false,
+    rollback_plan: "auto",
+  },
+  staging: {
+    confirmation: "single",
+    auto_execute: false,
+    max_accounts: 20,
+    require_mfa: false,
+    rollback_plan: "manual",
+  },
+  prod: {
+    confirmation: "double",
+    auto_execute: false,
+    max_accounts: 5,
+    require_mfa: true,
+    rollback_plan: "required",
+  },
+  unknown: {
+    confirmation: "double",
+    auto_execute: false,
+    max_accounts: 1,
+    require_mfa: true,
+    rollback_plan: "required",
+  },
+};
+
+const SCP_TEMPLATES: Record<OrgScpTemplate, { description: string; build: (args: { allowedRegions?: string[] }) => Record<string, any> }> = {
+  deny_non_approved_regions: {
+    description: "Deny actions outside approved regions",
+    build: ({ allowedRegions }) => {
+      if (!allowedRegions || allowedRegions.length === 0) {
+        throw new Error("allowedRegions is required for the deny_non_approved_regions template.");
+      }
+      return {
+        Version: "2012-10-17",
+        Statement: [{
+          Sid: "DenyNonApprovedRegions",
+          Effect: "Deny",
+          Action: "*",
+          Resource: "*",
+          Condition: {
+            StringNotEquals: {
+              "aws:RequestedRegion": allowedRegions,
+            },
+          },
+        }],
+      };
+    },
+  },
+  deny_root_account_usage: {
+    description: "Deny actions performed by the root account",
+    build: () => ({
+      Version: "2012-10-17",
+      Statement: [{
+        Sid: "DenyRootUserActions",
+        Effect: "Deny",
+        Action: "*",
+        Resource: "*",
+        Condition: {
+          StringLike: {
+            "aws:PrincipalArn": "arn:aws:iam::*:root",
+          },
+        },
+      }],
+    }),
+  },
+  require_mfa_for_all_actions: {
+    description: "Deny actions when MFA is not present",
+    build: () => ({
+      Version: "2012-10-17",
+      Statement: [{
+        Sid: "RequireMfaForAllActions",
+        Effect: "Deny",
+        Action: "*",
+        Resource: "*",
+        Condition: {
+          BoolIfExists: {
+            "aws:MultiFactorAuthPresent": "false",
+          },
+        },
+      }],
+    }),
+  },
+  deny_leaving_org: {
+    description: "Prevent accounts from leaving the organization",
+    build: () => ({
+      Version: "2012-10-17",
+      Statement: [{
+        Sid: "DenyLeaveOrganization",
+        Effect: "Deny",
+        Action: "organizations:LeaveOrganization",
+        Resource: "*",
+      }],
+    }),
+  },
+  enforce_s3_encryption: {
+    description: "Deny S3 PutObject without server-side encryption",
+    build: () => ({
+      Version: "2012-10-17",
+      Statement: [{
+        Sid: "DenyUnencryptedObjectUploads",
+        Effect: "Deny",
+        Action: "s3:PutObject",
+        Resource: "*",
+        Condition: {
+          Null: {
+            "s3:x-amz-server-side-encryption": "true",
+          },
+        },
+      }],
+    }),
+  },
+};
+
+const WATCHED_CLOUDTRAIL_EVENTS = new Set([
+  "AuthorizeSecurityGroupIngress",
+  "AuthorizeSecurityGroupEgress",
+  "RevokeSecurityGroupIngress",
+  "RevokeSecurityGroupEgress",
+  "CreateSecurityGroup",
+  "DeleteSecurityGroup",
+  "DeleteBucketPublicAccessBlock",
+  "PutBucketPublicAccessBlock",
+  "PutBucketPolicy",
+  "DeleteBucketPolicy",
+  "DeleteBucketEncryption",
+  "PutBucketEncryption",
+  "PutBucketAcl",
+  "AttachUserPolicy",
+  "DetachUserPolicy",
+  "AttachRolePolicy",
+  "PutUserPolicy",
+  "CreateUser",
+  "DeleteUser",
+  "CreateAccessKey",
+  "DeleteAccessKey",
+  "UpdateAccessKey",
+  "DeactivateMFADevice",
+  "CreateLoginProfile",
+  "CreateVpc",
+  "DeleteVpc",
+  "CreateInternetGateway",
+  "AttachInternetGateway",
+  "CreateNatGateway",
+  "RunInstances",
+  "TerminateInstances",
+  "StopInstances",
+  "CreateAccount",
+  "LeaveOrganization",
+  "DisableAWSServiceAccess",
+  "DeleteTrail",
+  "StopLogging",
+  "PutEventSelectors",
+]);
+
+const BUILT_IN_EVENT_RESPONSE_POLICIES: EventResponsePolicyRecord[] = [
+  {
+    id: "builtin-auto-block-public-s3",
+    policy_id: "auto_block_public_s3",
+    name: "Auto-block public S3 access",
+    trigger_event: "DeleteBucketPublicAccessBlock",
+    trigger_conditions: {},
+    risk_threshold: "CRITICAL",
+    response_type: "auto_fix",
+    response_action: "put_public_access_block",
+    response_params: { block_all: true },
+    notify_channels: ["slack:#security"],
+    raw_query: "If a public access block is removed from an S3 bucket, restore it immediately.",
+    created_by: "guardian_builtin",
+    is_active: true,
+    built_in: true,
+  },
+  {
+    id: "builtin-alert-new-iam-user",
+    policy_id: "alert_new_iam_user",
+    name: "Alert on new IAM user creation",
+    trigger_event: "CreateUser",
+    trigger_conditions: { actor_is_guardian: false },
+    risk_threshold: "HIGH",
+    response_type: "notify",
+    response_action: "send_alert",
+    response_params: { message: "New IAM user {resource_id} created by {actor_arn}" },
+    notify_channels: ["slack:#security"],
+    raw_query: "Alert the security team whenever a new IAM user is created outside Guardian.",
+    created_by: "guardian_builtin",
+    is_active: true,
+    built_in: true,
+  },
+  {
+    id: "builtin-restore-cloudtrail",
+    policy_id: "restore_cloudtrail",
+    name: "Restore CloudTrail if disabled",
+    trigger_event: "DeleteTrail",
+    trigger_conditions: {},
+    risk_threshold: "CRITICAL",
+    response_type: "all",
+    response_action: "restore_cloudtrail_and_alert",
+    response_params: { runbook: "cloudtrail_disabled_response" },
+    notify_channels: ["slack:#security", "pagerduty"],
+    raw_query: "If CloudTrail is disabled, restore it immediately and alert the security team.",
+    created_by: "guardian_builtin",
+    is_active: true,
+    built_in: true,
+  },
+  {
+    id: "builtin-flag-root-usage",
+    policy_id: "flag_root_usage",
+    name: "Alert on any root account usage",
+    trigger_event: "*",
+    trigger_conditions: { actor_type: "root" },
+    risk_threshold: "CRITICAL",
+    response_type: "all",
+    response_action: "root_usage_response",
+    response_params: { runbook: "root_account_usage_response" },
+    notify_channels: ["slack:#security", "pagerduty"],
+    raw_query: "If the root account is used for anything, alert immediately and start the root-account response workflow.",
+    created_by: "guardian_builtin",
+    is_active: true,
+    built_in: true,
+  },
+];
+
+function parseOrgConfirmationCount(input: string): number | null {
+  const text = sanitizeString(input, 200).trim();
+  for (const pattern of ORG_CONFIRM_PATTERNS) {
+    const match = text.match(pattern);
+    if (match) return Number(match[1]);
+  }
+  return null;
+}
+
+async function getAssumedAwsConfig(accountId: string, region: string, externalId?: string): Promise<Record<string, any>> {
+  const cacheKey = `${accountId}:${region}`;
+  const cached = orgClientCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now() + 60_000) {
+    return cached.config;
+  }
+
+  const resolvedExternalId = externalId || ORG_EXTERNAL_ID;
+  if (!resolvedExternalId) {
+    throw new Error("GUARDIAN_ORG_EXTERNAL_ID is not configured for cross-account role assumption.");
+  }
+
+  const sts = v2Client("STS", { region });
+  const roleArn = `arn:aws:iam::${accountId}:role/${ORG_ROLE_NAME}`;
+  const assumed = await sts.assumeRole({
+    RoleArn: roleArn,
+    RoleSessionName: `guardian-${Date.now()}`,
+    DurationSeconds: 3600,
+    ExternalId: resolvedExternalId,
+  }).promise();
+
+  const credentials = assumed.Credentials;
+  if (!credentials?.AccessKeyId || !credentials.SecretAccessKey || !credentials.SessionToken || !credentials.Expiration) {
+    throw new Error(`AssumeRole returned incomplete credentials for account ${accountId}.`);
+  }
+
+  const config: Record<string, any> = {
+    region,
+    accessKeyId: credentials.AccessKeyId,
+    secretAccessKey: credentials.SecretAccessKey,
+    sessionToken: credentials.SessionToken,
+  };
+  orgClientCache.set(cacheKey, {
+    config,
+    expiresAt: credentials.Expiration.getTime(),
+  });
+  return config;
+}
+
+async function getAccountTags(org: any, accountId: string): Promise<Record<string, string>> {
+  const response = await org.listTagsForResource({ ResourceId: accountId }).promise();
+  const tags: Record<string, string> = {};
+  for (const tag of response.Tags || []) {
+    if (tag.Key && tag.Value) {
+      tags[tag.Key.toLowerCase()] = tag.Value.toLowerCase();
+    }
+  }
+  return tags;
+}
+
+async function resolveParentPath(org: any, parentId: string): Promise<string> {
+  if (parentId.startsWith("r-")) {
+    return "/root";
+  }
+  const ou = await org.describeOrganizationalUnit({ OrganizationalUnitId: parentId }).promise();
+  const name = ou.OrganizationalUnit?.Name || parentId;
+  const parent = await org.listParents({ ChildId: parentId }).promise();
+  const nextParentId = parent.Parents?.[0]?.Id;
+  if (!nextParentId) return `/root/${name}`;
+  const prefix = await resolveParentPath(org, nextParentId);
+  return `${prefix}/${name}`;
+}
+
+async function getAccountOuPath(org: any, accountId: string): Promise<string> {
+  const parents = await org.listParents({ ChildId: accountId }).promise();
+  const parentId = parents.Parents?.[0]?.Id;
+  if (!parentId) return "/root";
+  return resolveParentPath(org, parentId);
+}
+
+async function listOrgAccounts(awsConfig: any): Promise<OrgAccountSummary[]> {
+  const org = v2Client("Organizations", awsConfig);
+  const accounts: OrgAccountSummary[] = [];
+  let nextToken: string | undefined;
+
+  do {
+    const page = await org.listAccounts({ NextToken: nextToken }).promise();
+    for (const acct of page.Accounts || []) {
+      if (!acct.Id || !acct.Name || acct.Status !== "ACTIVE") continue;
+      const tags = await getAccountTags(org, acct.Id);
+      const ou = await getAccountOuPath(org, acct.Id);
+      accounts.push({
+        id: acct.Id,
+        name: acct.Name,
+        email: acct.Email || "",
+        env: tags.env || "unknown",
+        team: tags.team || "unknown",
+        ou,
+        tags,
+      });
+    }
+    nextToken = page.NextToken;
+  } while (nextToken);
+
+  return accounts;
+}
+
+function applyOrgScope(accounts: OrgAccountSummary[], scope: string): OrgAccountSummary[] {
+  if (!scope || scope === "all") return accounts;
+  const normalized = scope.toLowerCase();
+  if (normalized.startsWith("env:")) {
+    const env = normalized.split(":")[1];
+    return accounts.filter((account) => account.env === env);
+  }
+  if (normalized.startsWith("ou:")) {
+    const ouName = normalized.split(":")[1];
+    return accounts.filter((account) => account.ou.toLowerCase().includes(ouName));
+  }
+  if (normalized.startsWith("team:")) {
+    const team = normalized.split(":")[1];
+    return accounts.filter((account) => account.team === team);
+  }
+  if (normalized.startsWith("exclude:")) {
+    const excluded = normalized.split(":")[1];
+    return accounts.filter((account) => account.env !== excluded);
+  }
+  const explicitIds = normalized.split(/[,\s]+/).filter((token) => /^\d{12}$/.test(token));
+  if (explicitIds.length > 0) {
+    const idSet = new Set(explicitIds);
+    return accounts.filter((account) => idSet.has(account.id));
+  }
+  return accounts;
+}
+
+async function resolveOrgScope(scope: string, awsConfig: any): Promise<OrgScopeResolution> {
+  const accounts = await listOrgAccounts(awsConfig);
+  return {
+    scope: scope || "all",
+    accounts: applyOrgScope(accounts, scope || "all"),
+  };
+}
+
+function checkOrgBlastRadius(accounts: OrgAccountSummary[]): OrgBlastRadiusResult {
+  const byEnv: Record<string, OrgAccountSummary[]> = {};
+  for (const account of accounts) {
+    const env = account.env || "unknown";
+    byEnv[env] ||= [];
+    byEnv[env].push(account);
+  }
+
+  const blocked: string[] = [];
+  const warnings: string[] = [];
+  let highestRiskEnv = "dev";
+  const riskRank = ["dev", "staging", "prod", "unknown"];
+
+  for (const [env, envAccounts] of Object.entries(byEnv)) {
+    const tier = ENV_TIERS[env] || ENV_TIERS.unknown;
+    if (riskRank.indexOf(env) > riskRank.indexOf(highestRiskEnv)) {
+      highestRiskEnv = env;
+    }
+    if (envAccounts.length > tier.max_accounts) {
+      blocked.push(`Operation targets ${envAccounts.length} ${env} accounts, which exceeds the maximum allowed batch size of ${tier.max_accounts}. Split the rollout into smaller batches.`);
+    }
+    if (env === "prod" && envAccounts.length > 1) {
+      warnings.push(`The scope includes ${envAccounts.length} production accounts. A phased rollout is recommended.`);
+    }
+    if (env === "unknown") {
+      warnings.push("One or more target accounts are not tagged with a recognized environment. They are being treated as production-risk.");
+    }
+  }
+
+  return {
+    blocked,
+    warnings,
+    by_env: Object.fromEntries(Object.entries(byEnv).map(([env, envAccounts]) => [env, envAccounts.length])),
+    total: accounts.length,
+    safe_to_proceed: blocked.length === 0,
+    highestRiskEnv,
+  };
+}
+
+function buildScpDocument(template: OrgScpTemplate, allowedRegions?: string[]): Record<string, any> {
+  const builder = SCP_TEMPLATES[template];
+  if (!builder) {
+    throw new Error(`Unsupported SCP template '${template}'.`);
+  }
+  return builder.build({ allowedRegions });
+}
+
+function buildOrgPreview(
+  scope: string,
+  accounts: OrgAccountSummary[],
+  blastRadius: OrgBlastRadiusResult,
+  template: OrgScpTemplate,
+  policyDocument: Record<string, any>,
+  rollbackPlan: string,
+): Record<string, any> {
+  const tier = ENV_TIERS[blastRadius.highestRiskEnv] || ENV_TIERS.unknown;
+  return {
+    status: blastRadius.safe_to_proceed ? "preview_only" : "blocked",
+    confirmationRequired: true,
+    confirmationMode: tier.confirmation,
+    scope,
+    accountCount: accounts.length,
+    byEnv: blastRadius.by_env,
+    warnings: blastRadius.warnings,
+    blocked: blastRadius.blocked,
+    operation: {
+      action: "attach_scp",
+      template,
+      description: SCP_TEMPLATES[template].description,
+    },
+    accounts: accounts.map((account) => ({
+      id: account.id,
+      name: account.name,
+      env: account.env,
+      team: account.team,
+      ou: account.ou,
+    })),
+    policyDocument,
+    rollbackPlan: rollbackPlan || null,
+    confirmationHint: tier.confirmation === "double"
+      ? `Reply with 'apply to ${accounts.length} accounts' after reviewing the blast radius and rollback plan.`
+      : "Reply with 'confirm' to execute this organization-wide operation.",
+  };
+}
+
+async function executeOrgSCPRollout(
+  awsConfig: any,
+  accounts: OrgAccountSummary[],
+  template: OrgScpTemplate,
+  policyDocument: Record<string, any>,
+): Promise<{ policyId: string; policyName: string; results: OrgAccountResult[] }> {
+  const org = v2Client("Organizations", awsConfig);
+  const policyName = `guardian-${template}-${Date.now()}`;
+  const created = await withAwsRetry("Organizations.createPolicy", () => org.createPolicy({
+    Content: JSON.stringify(policyDocument),
+    Description: `Guardian managed SCP rollout for template ${template}`,
+    Name: policyName,
+    Type: "SERVICE_CONTROL_POLICY",
+  }).promise());
+
+  const policyId = created.Policy?.PolicySummary?.Id;
+  if (!policyId) {
+    throw new Error("Organizations did not return a policy ID for the created SCP.");
+  }
+
+  const results = await Promise.all(accounts.map(async (account): Promise<OrgAccountResult> => {
+    const started = Date.now();
+    try {
+      await withAwsRetry("Organizations.attachPolicy", () => org.attachPolicy({
+        PolicyId: policyId,
+        TargetId: account.id,
+      }).promise());
+      return {
+        account_id: account.id,
+        account_name: account.name,
+        status: "SUCCESS",
+        action_taken: `Attached ${policyName}`,
+        duration_ms: Date.now() - started,
+      };
+    } catch (err: any) {
+      return {
+        account_id: account.id,
+        account_name: account.name,
+        status: "FAILED",
+        action_taken: `Attach ${policyName}`,
+        error: err?.message || "Unknown Organizations attachment failure.",
+        duration_ms: Date.now() - started,
+      };
+    }
+  }));
+
+  return { policyId, policyName, results };
+}
+
+function buildOrgExecutionSummary(
+  scope: string,
+  policyName: string,
+  policyId: string,
+  results: OrgAccountResult[],
+): Record<string, any> {
+  const successCount = results.filter((result) => result.status === "SUCCESS").length;
+  const failedCount = results.filter((result) => result.status === "FAILED").length;
+  const lines = [
+    "## Organization Operation Summary",
+    "",
+    `Scope: ${scope}`,
+    `Policy: ${policyName} (${policyId})`,
+    `Successful targets: ${successCount}`,
+    `Failed targets: ${failedCount}`,
+    "",
+    "### Per-Account Results",
+    "",
+  ];
+  for (const result of results) {
+    if (result.status === "SUCCESS") {
+      lines.push(`- ${result.account_name} (${result.account_id}) succeeded in ${result.duration_ms} ms.`);
+    } else {
+      lines.push(`- ${result.account_name} (${result.account_id}) failed. Error: ${result.error || "Unknown error"}`);
+    }
+  }
+  return {
+    status: failedCount === 0 ? "executed" : successCount > 0 ? "partial_success" : "failed",
+    scope,
+    policyName,
+    policyId,
+    successCount,
+    failedCount,
+    results,
+    formalReport: lines.join("\n"),
+  };
+}
+
+async function persistOrgOperationHistory(
+  supabaseAdmin: any,
+  userId: string,
+  payload: {
+    action: OrgOperationAction;
+    scope: string;
+    scpTemplate?: OrgScpTemplate;
+    accountCount: number;
+    envBreakdown: Record<string, number>;
+    warnings: string[];
+    blocked: string[];
+    rollbackPlan?: string;
+    status: string;
+    previewPayload: Record<string, any>;
+    executionSummary?: Record<string, any> | null;
+  },
+) {
+  const { error } = await supabaseAdmin.from("org_operation_history").insert({
+    user_id: userId,
+    action: payload.action,
+    scope: payload.scope,
+    scp_template: payload.scpTemplate || null,
+    account_count: payload.accountCount,
+    env_breakdown: payload.envBreakdown,
+    warnings: payload.warnings,
+    blocked: payload.blocked,
+    rollback_plan: payload.rollbackPlan || null,
+    status: payload.status,
+    preview_payload: payload.previewPayload,
+    execution_summary: payload.executionSummary || null,
+  });
+
+  if (error) {
+    console.error("Failed to persist org operation history:", error.message);
+  }
+}
+
+function buildOrgQueryReport(title: string, bodyLines: string[]): string {
+  return ["## Organization Query Report", "", `Summary: ${title}`, "", ...bodyLines].join("\n");
+}
+
+async function runAccountsWithoutMfaQuery(scope: string, awsConfig: any): Promise<OrgQueryResult> {
+  const resolution = await resolveOrgScope(scope, awsConfig);
+  const accountsWithoutMfa: Array<{ accountId: string; accountName: string; nonCompliantUsers: string[]; error?: string }> = [];
+
+  for (const account of resolution.accounts) {
+    try {
+      const assumedConfig = await getAssumedAwsConfig(account.id, awsConfig.region);
+      const iam = v2Client("IAM", assumedConfig);
+      const users = await iam.listUsers({ MaxItems: 1000 }).promise();
+      const nonCompliantUsers: string[] = [];
+      for (const user of users.Users || []) {
+        if (!user.UserName) continue;
+        const mfa = await iam.listMFADevices({ UserName: user.UserName }).promise();
+        if ((mfa.MFADevices || []).length === 0) {
+          nonCompliantUsers.push(user.UserName);
+        }
+      }
+      if (nonCompliantUsers.length > 0) {
+        accountsWithoutMfa.push({ accountId: account.id, accountName: account.name, nonCompliantUsers });
+      }
+    } catch (err: any) {
+      accountsWithoutMfa.push({
+        accountId: account.id,
+        accountName: account.name,
+        nonCompliantUsers: [],
+        error: err?.message || "Unable to inspect IAM MFA posture for this account.",
+      });
+    }
+  }
+
+  const lines = accountsWithoutMfa.length === 0
+    ? ["All inspected accounts either had no IAM users without MFA or could not be conclusively identified as non-compliant."]
+    : accountsWithoutMfa.map((entry) => entry.error
+        ? `- ${entry.accountName} (${entry.accountId}) could not be evaluated. Error: ${entry.error}`
+        : `- ${entry.accountName} (${entry.accountId}) has ${entry.nonCompliantUsers.length} IAM user(s) without MFA: ${entry.nonCompliantUsers.join(", ")}.`);
+
+  return {
+    queryType: "accounts_without_mfa",
+    scope: resolution.scope,
+    totalAccountsConsidered: resolution.accounts.length,
+    formalReport: buildOrgQueryReport("Accounts with IAM users lacking MFA were identified across the selected scope.", lines),
+    results: { accounts: accountsWithoutMfa },
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+async function runAccountsWithPublicS3Query(scope: string, awsConfig: any): Promise<OrgQueryResult> {
+  const resolution = await resolveOrgScope(scope, awsConfig);
+  const findings: Array<{ accountId: string; accountName: string; bucket: string; issue: string }> = [];
+
+  for (const account of resolution.accounts) {
+    try {
+      const assumedConfig = await getAssumedAwsConfig(account.id, awsConfig.region);
+      const s3 = v2Client("S3", assumedConfig);
+      const buckets = await s3.listBuckets().promise();
+      for (const bucket of buckets.Buckets || []) {
+        if (!bucket.Name) continue;
+        try {
+          const pub = await s3.getPublicAccessBlock({ Bucket: bucket.Name }).promise();
+          const cfg = pub.PublicAccessBlockConfiguration || {};
+          if (![cfg.BlockPublicAcls, cfg.IgnorePublicAcls, cfg.BlockPublicPolicy, cfg.RestrictPublicBuckets].every(Boolean)) {
+            findings.push({
+              accountId: account.id,
+              accountName: account.name,
+              bucket: bucket.Name,
+              issue: "Public access block is not fully enabled.",
+            });
+          }
+        } catch {
+          findings.push({
+            accountId: account.id,
+            accountName: account.name,
+            bucket: bucket.Name,
+            issue: "Public access block configuration is missing or unreadable.",
+          });
+        }
+      }
+    } catch (err: any) {
+      findings.push({
+        accountId: account.id,
+        accountName: account.name,
+        bucket: "(account scan failed)",
+        issue: err?.message || "Unable to inspect S3 configuration in this account.",
+      });
+    }
+  }
+
+  const lines = findings.length === 0
+    ? ["No public S3 exposure findings were identified across the selected scope."]
+    : findings.map((finding) => `- ${finding.accountName} (${finding.accountId}) bucket ${finding.bucket}: ${finding.issue}`);
+
+  return {
+    queryType: "accounts_with_public_s3",
+    scope: resolution.scope,
+    totalAccountsConsidered: resolution.accounts.length,
+    formalReport: buildOrgQueryReport("Public S3 exposure review completed across the selected scope.", lines),
+    results: { findings },
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+async function runListOrgScpsQuery(scope: string, awsConfig: any): Promise<OrgQueryResult> {
+  const org = v2Client("Organizations", awsConfig);
+  const policies = await org.listPolicies({ Filter: "SERVICE_CONTROL_POLICY" }).promise();
+  const summaries: Array<{ policyId: string; name: string; attachments: string[] }> = [];
+  for (const policy of policies.Policies || []) {
+    if (!policy.Id || !policy.Name) continue;
+    const targets = await org.listTargetsForPolicy({ PolicyId: policy.Id }).promise();
+    summaries.push({
+      policyId: policy.Id,
+      name: policy.Name,
+      attachments: (targets.Targets || []).map((target) => `${target.Name || target.TargetId} (${target.TargetId})`),
+    });
+  }
+  const lines = summaries.length === 0
+    ? ["No service control policies were returned by AWS Organizations."]
+    : summaries.map((summary) => `- ${summary.name} (${summary.policyId}) is attached to ${summary.attachments.length} target(s): ${summary.attachments.join(", ") || "none"}.`);
+
+  return {
+    queryType: "list_org_scps",
+    scope: scope || "all",
+    totalAccountsConsidered: 0,
+    formalReport: buildOrgQueryReport("Service control policy inventory generated from AWS Organizations.", lines),
+    results: { policies: summaries },
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+async function runUntaggedEnvAccountsQuery(scope: string, awsConfig: any): Promise<OrgQueryResult> {
+  const resolution = await resolveOrgScope(scope, awsConfig);
+  const untagged = resolution.accounts.filter((account) => !account.tags.env);
+  const lines = untagged.length === 0
+    ? ["All accounts in scope have an env tag."]
+    : untagged.map((account) => `- ${account.name} (${account.id}) is missing the env tag. Current OU path: ${account.ou}.`);
+  return {
+    queryType: "untagged_env_accounts",
+    scope: resolution.scope,
+    totalAccountsConsidered: resolution.accounts.length,
+    formalReport: buildOrgQueryReport("Environment tagging review completed across the selected scope.", lines),
+    results: { accounts: untagged },
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+async function runOrgStructureQuery(_scope: string, awsConfig: any): Promise<OrgQueryResult> {
+  const accounts = await listOrgAccounts(awsConfig);
+  const lines = accounts.map((account) => `- ${account.ou} :: ${account.name} (${account.id}) env=${account.env} team=${account.team}`);
+  return {
+    queryType: "org_structure",
+    scope: "all",
+    totalAccountsConsidered: accounts.length,
+    formalReport: buildOrgQueryReport("Organization structure rendered from AWS Organizations.", lines),
+    results: { accounts },
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+async function runGuardianOnboardingStatusQuery(scope: string, awsConfig: any): Promise<OrgQueryResult> {
+  const resolution = await resolveOrgScope(scope, awsConfig);
+  const status: Array<{ accountId: string; accountName: string; onboarded: boolean; detail: string }> = [];
+  for (const account of resolution.accounts) {
+    try {
+      await getAssumedAwsConfig(account.id, awsConfig.region);
+      status.push({
+        accountId: account.id,
+        accountName: account.name,
+        onboarded: true,
+        detail: `${ORG_ROLE_NAME} could be assumed successfully.`,
+      });
+    } catch (err: any) {
+      status.push({
+        accountId: account.id,
+        accountName: account.name,
+        onboarded: false,
+        detail: err?.message || `${ORG_ROLE_NAME} could not be assumed.`,
+      });
+    }
+  }
+  const lines = status.map((entry) => `- ${entry.accountName} (${entry.accountId}) onboarding status: ${entry.onboarded ? "READY" : "NOT READY"}. ${entry.detail}`);
+  return {
+    queryType: "guardian_onboarding_status",
+    scope: resolution.scope,
+    totalAccountsConsidered: resolution.accounts.length,
+    formalReport: buildOrgQueryReport("Guardian cross-account onboarding status evaluated across the selected scope.", lines),
+    results: { accounts: status },
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+async function runOrgQuery(queryType: OrgQueryType, scope: string, awsConfig: any): Promise<OrgQueryResult> {
+  switch (queryType) {
+    case "accounts_without_mfa":
+      return runAccountsWithoutMfaQuery(scope, awsConfig);
+    case "accounts_with_public_s3":
+      return runAccountsWithPublicS3Query(scope, awsConfig);
+    case "list_org_scps":
+      return runListOrgScpsQuery(scope, awsConfig);
+    case "untagged_env_accounts":
+      return runUntaggedEnvAccountsQuery(scope, awsConfig);
+    case "org_structure":
+      return runOrgStructureQuery(scope, awsConfig);
+    case "guardian_onboarding_status":
+      return runGuardianOnboardingStatusQuery(scope, awsConfig);
+  }
+}
+
+const RUNBOOK_LIBRARY: Record<string, RunbookTemplate> = {
+  data_breach_response: {
+    id: "data_breach_response",
+    name: "Data breach incident response",
+    description: "Contain, investigate, and remediate a suspected data exposure incident.",
+    trigger: "suspected_data_exfiltration",
+    tags: ["security", "incident-response"],
+    steps: [
+      { id: "snapshot_iam", name: "Snapshot current IAM state", type: "query", risk: "auto", action: "capture_iam_snapshot", params: {}, on_failure: "pause" },
+      { id: "identify_exposure", name: "Identify exposed resources", type: "query", risk: "auto", action: "scan_public_resources", params: { services: ["s3", "ec2", "rds"] }, on_failure: "pause" },
+      { id: "block_public_s3", name: "Block public S3 access", type: "aws_action", risk: "confirm", action: "put_public_access_block", params: { bucket: "{bucket_name}", block_all: true }, rollback: { action: "restore_public_access_block", params: "{previous_public_access_block}" }, on_failure: "pause" },
+      { id: "rotate_keys", name: "Rotate all active access keys", type: "aws_action", risk: "confirm", action: "rotate_access_keys", params: { users: "{all_active_users}" }, on_failure: "pause" },
+      { id: "revoke_sessions", name: "Revoke active IAM sessions", type: "human_task", risk: "manual", action: "attach_deny_all_policy", params: { scope: "all_non_guardian_roles" }, on_failure: "abort" },
+      { id: "notify_team", name: "Notify security team", type: "notify", risk: "auto", action: "send_incident_alert", params: { severity: "CRITICAL", summary: "{incident_summary}" }, on_failure: "skip" },
+      { id: "verify_cloudtrail", name: "Verify CloudTrail is enabled", type: "query", risk: "auto", action: "verify_cloudtrail_enabled", params: { all_regions: true }, on_failure: "skip" },
+      { id: "generate_report", name: "Generate incident report", type: "query", risk: "auto", action: "generate_incident_report", params: { include: ["timeline", "affected_resources", "actions_taken", "open_items"] }, on_failure: "skip" },
+    ],
+  },
+  public_s3_lockdown: {
+    id: "public_s3_lockdown",
+    name: "Public S3 bucket lockdown",
+    description: "Immediately secure a bucket that was made public.",
+    trigger: "s3_public_access_block_removed",
+    tags: ["security", "s3", "incident-response"],
+    steps: [
+      { id: "capture_config", name: "Capture current bucket config", type: "query", risk: "auto", action: "get_bucket_full_config", params: { bucket: "{bucket_name}" }, on_failure: "pause" },
+      { id: "block_public", name: "Re-enable public access block", type: "aws_action", risk: "auto", action: "put_public_access_block", params: { bucket: "{bucket_name}", block_all: true }, rollback: { action: "restore_public_access_block", params: "{previous_public_access_block}" }, on_failure: "pause" },
+      { id: "audit_objects", name: "Check for publicly exposed objects", type: "query", risk: "auto", action: "list_public_objects", params: { bucket: "{bucket_name}" }, on_failure: "skip" },
+      { id: "check_who_changed", name: "Identify who removed the block", type: "query", risk: "auto", action: "query_cloudtrail", params: { event: "DeleteBucketPublicAccessBlock", resource: "{bucket_name}", hours_back: 2 }, on_failure: "skip" },
+      { id: "notify", name: "Notify team with findings", type: "notify", risk: "auto", action: "send_incident_alert", params: { summary: "{findings_summary}" }, on_failure: "skip" },
+    ],
+  },
+  cost_spike_remediation: {
+    id: "cost_spike_remediation",
+    name: "Cost spike remediation",
+    description: "Identify and contain an unexpected cost spike.",
+    trigger: "cost_anomaly_detected",
+    tags: ["cost", "automation"],
+    steps: [
+      { id: "identify_driver", name: "Identify cost spike driver", type: "query", risk: "auto", action: "get_cost_breakdown_by_service", params: { days: 3 }, on_failure: "pause" },
+      { id: "find_idle", name: "Find idle resources in the spike service", type: "query", risk: "auto", action: "find_idle_resources", params: { service: "{spike_service}" }, on_failure: "pause" },
+      { id: "stop_idle_nonprod", name: "Stop idle non-production instances", type: "aws_action", risk: "confirm", action: "stop_ec2_instances", params: { instance_ids: "{idle_nonprod_instances}" }, rollback: { action: "start_ec2_instances", params: "{idle_nonprod_instances}" }, on_failure: "pause" },
+      { id: "set_budget_alert", name: "Set budget alert for next 7 days", type: "aws_action", risk: "auto", action: "create_budget_alert", params: { threshold: "{budget_threshold}", period: "DAILY" }, on_failure: "skip" },
+    ],
+  },
+};
+
+function inferRunbookId(rawQuery: string): string {
+  const query = rawQuery.toLowerCase();
+  if (/\bpublic s3\b|\bpublic bucket\b|\blockdown\b/.test(query)) return "public_s3_lockdown";
+  if (/\bcost spike\b|\bcost anomaly\b|\bspend spike\b/.test(query)) return "cost_spike_remediation";
+  if (/\bdata breach\b|\bincident response\b|\bbreach\b/.test(query)) return "data_breach_response";
+  throw new Error("No supported runbook matched the request.");
+}
+
+function isRunbookDryRun(rawQuery: string, dryRun?: boolean): boolean {
+  if (typeof dryRun === "boolean") return dryRun;
+  return /\bdry[- ]run\b/.test(rawQuery.toLowerCase());
+}
+
+function extractBucketName(rawQuery: string): string | null {
+  const bucketToken = rawQuery.match(/\b([a-z0-9][a-z0-9.-]{2,62})\b/gi)?.find((token) => token.includes("-") || token.includes("."));
+  return bucketToken || null;
+}
+
+async function findPublicBuckets(awsConfig: any): Promise<string[]> {
+  const s3 = v2Client("S3", awsConfig);
+  const buckets = await s3.listBuckets().promise();
+  const publicBuckets: string[] = [];
+  for (const bucket of buckets.Buckets || []) {
+    if (!bucket.Name) continue;
+    try {
+      const pub = await s3.getPublicAccessBlock({ Bucket: bucket.Name }).promise();
+      const cfg = pub.PublicAccessBlockConfiguration || {};
+      if (![cfg.BlockPublicAcls, cfg.IgnorePublicAcls, cfg.BlockPublicPolicy, cfg.RestrictPublicBuckets].every(Boolean)) {
+        publicBuckets.push(bucket.Name);
+      }
+    } catch {
+      publicBuckets.push(bucket.Name);
+    }
+  }
+  return publicBuckets;
+}
+
+async function listActiveIamUsers(awsConfig: any): Promise<string[]> {
+  const iam = v2Client("IAM", awsConfig);
+  const users = await iam.listUsers({ MaxItems: 1000 }).promise();
+  return (users.Users || []).map((user) => user.UserName).filter(Boolean) as string[];
+}
+
+async function captureIamSnapshotSummary(awsConfig: any): Promise<Record<string, any>> {
+  const iam = v2Client("IAM", awsConfig);
+  const users = await iam.listUsers({ MaxItems: 1000 }).promise();
+  const summary = [];
+  for (const user of users.Users || []) {
+    if (!user.UserName) continue;
+    const [mfa, keys] = await Promise.all([
+      iam.listMFADevices({ UserName: user.UserName }).promise(),
+      iam.listAccessKeys({ UserName: user.UserName }).promise(),
+    ]);
+    summary.push({
+      user: user.UserName,
+      mfaEnabled: (mfa.MFADevices || []).length > 0,
+      accessKeyCount: (keys.AccessKeyMetadata || []).length,
+    });
+  }
+  return { userCount: summary.length, users: summary };
+}
+
+async function scanPublicResourcesSummary(awsConfig: any): Promise<Record<string, any>> {
+  const publicBuckets = await findPublicBuckets(awsConfig);
+  return {
+    s3: { publicBuckets },
+    ec2: { note: "EC2 public resource expansion is not yet automated in this runbook slice." },
+    rds: { note: "RDS public resource expansion is not yet automated in this runbook slice." },
+  };
+}
+
+async function getBucketFullConfig(awsConfig: any, bucket: string): Promise<Record<string, any>> {
+  const s3 = v2Client("S3", awsConfig);
+  let publicAccessBlock = null;
+  let versioning = null;
+  let encryption = null;
+  try {
+    publicAccessBlock = (await s3.getPublicAccessBlock({ Bucket: bucket }).promise()).PublicAccessBlockConfiguration || null;
+  } catch { /* noop */ }
+  try {
+    versioning = await s3.getBucketVersioning({ Bucket: bucket }).promise();
+  } catch { /* noop */ }
+  try {
+    encryption = await s3.getBucketEncryption({ Bucket: bucket }).promise();
+  } catch { /* noop */ }
+  return { bucket, publicAccessBlock, versioning, encryption };
+}
+
+async function listPublicObjectsSummary(awsConfig: any, bucket: string): Promise<Record<string, any>> {
+  const s3 = v2Client("S3", awsConfig);
+  const listed = await s3.listObjectsV2({ Bucket: bucket, MaxKeys: 25 }).promise();
+  return {
+    bucket,
+    objectCountSampled: (listed.Contents || []).length,
+    sampledKeys: (listed.Contents || []).map((item) => item.Key).filter(Boolean),
+  };
+}
+
+async function queryCloudTrailSummary(awsConfig: any, eventName: string, resourceName: string, hoursBack: number): Promise<Record<string, any>> {
+  const cloudTrail = v2Client("CloudTrail", awsConfig);
+  const endTime = new Date();
+  const startTime = new Date(Date.now() - hoursBack * 60 * 60 * 1000);
+  const response = await cloudTrail.lookupEvents({
+    LookupAttributes: [{ AttributeKey: "EventName", AttributeValue: eventName }],
+    StartTime: startTime,
+    EndTime: endTime,
+    MaxResults: 20,
+  }).promise();
+  const events = (response.Events || []).filter((event) => (event.Resources || []).some((resource) => resource.ResourceName === resourceName));
+  const actor = events[0]?.Username || "Unknown";
+  return {
+    eventName,
+    resourceName,
+    actor,
+    eventCount: events.length,
+    events: events.map((event) => ({
+      time: toIsoString(event.EventTime),
+      username: event.Username || "Unknown",
+      eventId: event.EventId || "",
+    })),
+  };
+}
+
+async function verifyCloudTrailEnabledSummary(awsConfig: any): Promise<Record<string, any>> {
+  const cloudTrail = v2Client("CloudTrail", awsConfig);
+  const trails = await cloudTrail.describeTrails({ includeShadowTrails: true }).promise();
+  return {
+    trailCount: (trails.trailList || []).length,
+    trails: (trails.trailList || []).map((trail) => ({
+      name: trail.Name,
+      isMultiRegionTrail: trail.IsMultiRegionTrail,
+      homeRegion: trail.HomeRegion,
+    })),
+  };
+}
+
+async function stopEc2InstancesAction(awsConfig: any, instanceIds: string[]): Promise<Record<string, any>> {
+  const ec2 = v2Client("EC2", awsConfig);
+  if (instanceIds.length === 0) {
+    return { stoppedInstances: [], note: "No non-production idle instances were identified." };
+  }
+  const result = await ec2.stopInstances({ InstanceIds: instanceIds }).promise();
+  return {
+    stoppedInstances: (result.StoppingInstances || []).map((instance) => instance.InstanceId).filter(Boolean),
+  };
+}
+
+async function startEc2InstancesAction(awsConfig: any, instanceIds: string[]): Promise<Record<string, any>> {
+  const ec2 = v2Client("EC2", awsConfig);
+  if (instanceIds.length === 0) return { startedInstances: [] };
+  const result = await ec2.startInstances({ InstanceIds: instanceIds }).promise();
+  return {
+    startedInstances: (result.StartingInstances || []).map((instance) => instance.InstanceId).filter(Boolean),
+  };
+}
+
+async function createBudgetAlertAction(awsConfig: any, accountId: string, threshold: number, notificationEmail?: string | null): Promise<Record<string, any>> {
+  if (!notificationEmail) {
+    return { created: false, note: "No notification email is configured, so the budget alert was not created." };
+  }
+  const budgets = new (AWS as any).Budgets(awsConfig);
+  const budgetName = `guardian-budget-${Date.now()}`;
+  await budgets.createBudget({
+    AccountId: accountId,
+    Budget: {
+      BudgetName: budgetName,
+      BudgetLimit: { Amount: threshold.toFixed(2), Unit: "USD" },
+      BudgetType: "COST",
+      CostFilters: {},
+      CostTypes: { IncludeTax: true },
+      TimeUnit: "DAILY",
+    },
+    NotificationsWithSubscribers: [{
+      Notification: {
+        ComparisonOperator: "GREATER_THAN",
+        NotificationType: "ACTUAL",
+        Threshold: threshold,
+        ThresholdType: "ABSOLUTE_VALUE",
+      },
+      Subscribers: [{
+        Address: notificationEmail,
+        SubscriptionType: "EMAIL",
+      }],
+    }],
+  }).promise();
+  return { created: true, budgetName };
+}
+
+async function ensureAlertTopicAndSubscription(
+  awsConfig: any,
+  notificationEmail: string,
+): Promise<{ topicArn: string; subscriptionStatus: "existing" | "pending_confirmation" }> {
+  const sns = v2Client("SNS", awsConfig);
+  const accountId = await getAwsAccountId(awsConfig);
+  const topicName = `cloudpilot-alerts-${accountId}`;
+  const topic = await sns.createTopic({ Name: topicName }).promise();
+  const topicArn = topic.TopicArn;
+  if (!topicArn) {
+    throw new Error("Failed to resolve the SNS topic ARN for notifications.");
+  }
+
+  const subscriptions = await sns.listSubscriptionsByTopic({ TopicArn: topicArn }).promise();
+  const existing = (subscriptions.Subscriptions || []).find(
+    (subscription) => subscription.Protocol === "email" && subscription.Endpoint === notificationEmail,
+  );
+
+  if (existing) {
+    return {
+      topicArn,
+      subscriptionStatus: existing.SubscriptionArn === "PendingConfirmation" ? "pending_confirmation" : "existing",
+    };
+  }
+
+  await sns.subscribe({
+    TopicArn: topicArn,
+    Protocol: "email",
+    Endpoint: notificationEmail,
+  }).promise();
+
+  return { topicArn, subscriptionStatus: "pending_confirmation" };
+}
+
+async function sendIncidentNotification(
+  awsConfig: any,
+  notificationEmail: string | null,
+  subject: string,
+  message: string,
+): Promise<Record<string, any>> {
+  if (!notificationEmail) {
+    return { sent: false, target: "No notification email configured", note: "Notification was skipped because no email is configured." };
+  }
+
+  const sns = v2Client("SNS", awsConfig);
+  const { topicArn, subscriptionStatus } = await ensureAlertTopicAndSubscription(awsConfig, notificationEmail);
+
+  const publishResult = await sns.publish({
+    TopicArn: topicArn,
+    Subject: subject.slice(0, 100),
+    Message: message,
+  }).promise();
+
+  return {
+    sent: true,
+    target: notificationEmail,
+    topicArn,
+    subscriptionStatus,
+    messageId: publishResult.MessageId || null,
+  };
+}
+
+async function rotateAccessKeysAction(awsConfig: any, users: string[]): Promise<Record<string, any>> {
+  const iam = v2Client("IAM", awsConfig);
+  const rotated: Array<{ user: string; oldKeyIds: string[]; newKeyId?: string }> = [];
+  for (const user of users) {
+    const keys = await iam.listAccessKeys({ UserName: user }).promise();
+    const oldKeyIds = (keys.AccessKeyMetadata || []).map((key) => key.AccessKeyId).filter(Boolean) as string[];
+    const created = await iam.createAccessKey({ UserName: user }).promise();
+    rotated.push({
+      user,
+      oldKeyIds,
+      newKeyId: created.AccessKey?.AccessKeyId,
+    });
+  }
+  return { rotated };
+}
+
+function resolveTemplateValue(value: any, context: Record<string, any>): any {
+  if (typeof value === "string") {
+    if (/^\{[a-zA-Z0-9_]+\}$/.test(value)) {
+      const key = value.slice(1, -1);
+      return context[key];
+    }
+    return value.replace(/\{([a-zA-Z0-9_]+)\}/g, (_match, key) => {
+      const resolved = context[key];
+      return resolved === undefined || resolved === null ? "" : String(resolved);
+    });
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => resolveTemplateValue(item, context));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, nested]) => [key, resolveTemplateValue(nested, context)]));
+  }
+  return value;
+}
+
+function describeRunbookStep(step: RunbookStepTemplate, params: Record<string, any>): string {
+  switch (step.action) {
+    case "put_public_access_block":
+      return `Block all public access on bucket ${params.bucket}.`;
+    case "rotate_access_keys":
+      return `Rotate access keys for ${Array.isArray(params.users) ? params.users.length : 0} IAM users.`;
+    case "stop_ec2_instances":
+      return `Stop ${Array.isArray(params.instance_ids) ? params.instance_ids.length : 0} EC2 instances.`;
+    case "create_budget_alert":
+      return `Create a daily budget alert at $${params.threshold}.`;
+    case "send_incident_alert":
+      return `Send the incident notification summary.`;
+    default:
+      return step.name;
+  }
+}
+
+function estimateRunbookImpact(step: RunbookStepTemplate, params: Record<string, any>): string {
+  if (step.type === "query") return "Read-only inspection.";
+  if (step.type === "notify") return "Notification only.";
+  if (step.action === "rotate_access_keys") return "Existing key consumers will need updated credentials immediately.";
+  if (step.action === "stop_ec2_instances") return `${Array.isArray(params.instance_ids) ? params.instance_ids.length : 0} instances may become unavailable until restarted.`;
+  if (step.action === "put_public_access_block") return "Public S3 access will be blocked immediately.";
+  return "Operational change.";
+}
+
+async function planRunbookSteps(runbook: RunbookTemplate, rawQuery: string, awsConfig: any): Promise<ResolvedRunbookStep[]> {
+  const context: Record<string, any> = {
+    incident_summary: rawQuery,
+    findings_summary: rawQuery,
+  };
+  const lowerQuery = rawQuery.toLowerCase();
+
+  if (runbook.id === "public_s3_lockdown" || runbook.id === "data_breach_response") {
+    context.bucket_name = extractBucketName(rawQuery) || (await findPublicBuckets(awsConfig))[0] || null;
+    if (!context.bucket_name) {
+      throw new Error("No exposed bucket could be resolved for the requested runbook.");
+    }
+    const config = await getBucketFullConfig(awsConfig, context.bucket_name);
+    context.previous_public_access_block = { bucket: context.bucket_name, previousConfig: config.publicAccessBlock };
+    context.findings_summary = `The runbook identified bucket ${context.bucket_name} as the primary exposed S3 resource.`;
+  }
+
+  if (runbook.id === "data_breach_response") {
+    context.all_active_users = await listActiveIamUsers(awsConfig);
+  }
+
+  if (runbook.id === "cost_spike_remediation") {
+    const costData = await fetchCostData(awsConfig, 3);
+    const anomalies = detectCostAnomalies(costData.daily_by_service, []);
+    const topAnomaly = anomalies.sort((left, right) => SEVERITY_ORDER[left.severity] - SEVERITY_ORDER[right.severity])[0];
+    context.spike_service = topAnomaly?.service || "Amazon EC2";
+    const idle = await findIdleEc2Instances(awsConfig);
+    context.idle_nonprod_instances = idle.map((instance) => instance.id);
+    context.budget_threshold = Math.max(100, Number(((topAnomaly?.today || 100) * 2).toFixed(2)));
+  }
+
+  if (lowerQuery.includes("soc2")) {
+    context.incident_summary = "SOC 2 pre-audit runbook planning request.";
+  }
+
+  return runbook.steps.map((step) => {
+    const params = resolveTemplateValue(step.params, context);
+    return {
+      ...step,
+      params,
+      human_readable: describeRunbookStep(step, params),
+      estimated_impact: estimateRunbookImpact(step, params),
+    };
+  });
+}
+
+function buildRunbookPreview(runbook: RunbookTemplate, steps: ResolvedRunbookStep[], executionId: string, dryRun: boolean): string {
+  const lines = [
+    "## Runbook Preview",
+    "",
+    `Runbook: ${runbook.name}`,
+    `Execution ID: ${executionId}`,
+    `Mode: ${dryRun ? "Dry run" : "Execution ready"}`,
+    "",
+    `Guardian will execute ${steps.length} step(s) in sequence:`,
+    "",
+  ];
+  steps.forEach((step, index) => {
+    const riskLabel = step.risk.toUpperCase();
+    lines.push(`${index + 1}. ${riskLabel.padEnd(7)} ${step.name}`);
+    lines.push(`   Action: ${step.human_readable}`);
+    lines.push(`   Impact: ${step.estimated_impact}`);
+  });
+  lines.push("");
+  lines.push(dryRun
+    ? "Dry-run mode will execute query and notification steps, but will stop before any AWS action steps."
+    : "Automatic steps can proceed immediately. Guardian will pause whenever a confirmation step is reached.");
+  lines.push(`Type "run playbook" to begin${dryRun ? " the dry run" : ""}.`);
+  return lines.join("\n");
+}
+
+async function createRunbookExecution(
+  supabaseAdmin: any,
+  payload: Omit<RunbookExecutionRecord, "created_at" | "updated_at">,
+) {
+  const record = {
+    ...payload,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+  const { error } = await supabaseAdmin.from("runbook_executions").insert({
+    id: record.id,
+    user_id: record.user_id,
+    conversation_id: record.conversation_id,
+    runbook_id: record.runbook_id,
+    runbook_name: record.runbook_name,
+    trigger_query: record.trigger_query,
+    dry_run: record.dry_run,
+    status: record.status,
+    current_step_index: record.current_step_index,
+    steps: record.steps,
+    results: record.results,
+    approved_by: record.approved_by,
+    last_error: record.last_error,
+  });
+  if (error) throw new Error(`Failed to create runbook execution: ${error.message}`);
+}
+
+async function updateRunbookExecution(
+  supabaseAdmin: any,
+  executionId: string,
+  patch: Record<string, any>,
+) {
+  const { error } = await supabaseAdmin
+    .from("runbook_executions")
+    .update({ ...patch, updated_at: new Date().toISOString() })
+    .eq("id", executionId);
+  if (error) throw new Error(`Failed to update runbook execution: ${error.message}`);
+}
+
+async function upsertRunbookStepStatus(
+  supabaseAdmin: any,
+  executionId: string,
+  step: ResolvedRunbookStep,
+  stepOrder: number,
+  status: string,
+  output: string,
+) {
+  const { error } = await supabaseAdmin
+    .from("runbook_execution_steps")
+    .upsert({
+      execution_id: executionId,
+      step_id: step.id,
+      step_order: stepOrder,
+      step_name: step.name,
+      risk: step.risk,
+      status,
+      output: output.slice(0, 2000),
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "execution_id,step_id" });
+  if (error) throw new Error(`Failed to update runbook step status: ${error.message}`);
+}
+
+async function getLatestRunbookExecution(
+  supabaseAdmin: any,
+  userId: string,
+  conversationId: string | null,
+): Promise<any | null> {
+  let query = supabaseAdmin
+    .from("runbook_executions")
+    .select("*")
+    .eq("user_id", userId)
+    .in("status", ["PLANNED", "IN_PROGRESS", "WAITING_CONFIRMATION"])
+    .order("updated_at", { ascending: false })
+    .limit(1);
+
+  if (conversationId) {
+    query = query.eq("conversation_id", conversationId);
+  }
+
+  const { data, error } = await query;
+  if (error) throw new Error(`Failed to fetch runbook execution: ${error.message}`);
+  return data?.[0] || null;
+}
+
+async function executeRunbookStep(
+  step: ResolvedRunbookStep,
+  awsConfig: any,
+  notificationEmail: string | null,
+): Promise<Record<string, any>> {
+  switch (step.action) {
+    case "capture_iam_snapshot":
+      return captureIamSnapshotSummary(awsConfig);
+    case "scan_public_resources":
+      return scanPublicResourcesSummary(awsConfig);
+    case "get_bucket_full_config":
+      return getBucketFullConfig(awsConfig, String(step.params.bucket));
+    case "put_public_access_block": {
+      const s3 = v2Client("S3", awsConfig);
+      await s3.putPublicAccessBlock({
+        Bucket: String(step.params.bucket),
+        PublicAccessBlockConfiguration: {
+          BlockPublicAcls: true,
+          IgnorePublicAcls: true,
+          BlockPublicPolicy: true,
+          RestrictPublicBuckets: true,
+        },
+      }).promise();
+      return { bucket: step.params.bucket, status: "Public access block applied." };
+    }
+    case "list_public_objects":
+      return listPublicObjectsSummary(awsConfig, String(step.params.bucket));
+    case "query_cloudtrail":
+      return queryCloudTrailSummary(awsConfig, String(step.params.event), String(step.params.resource), Number(step.params.hours_back || 2));
+    case "send_incident_alert":
+      return sendIncidentNotification(
+        awsConfig,
+        notificationEmail,
+        "CloudPilot incident notification",
+        String(step.params.summary || "Incident notification prepared."),
+      );
+    case "verify_cloudtrail_enabled":
+      return verifyCloudTrailEnabledSummary(awsConfig);
+    case "generate_incident_report":
+      return { reportGenerated: true, included: step.params.include || [] };
+    case "get_cost_breakdown_by_service": {
+      const cost = await fetchCostData(awsConfig, Number(step.params.days || 3));
+      return { period: cost.period, topEntries: cost.daily_by_service.slice(-15) };
+    }
+    case "find_idle_resources": {
+      const idle = await findIdleEc2Instances(awsConfig);
+      return { service: step.params.service, idleInstances: idle };
+    }
+    case "stop_ec2_instances":
+      return stopEc2InstancesAction(awsConfig, Array.isArray(step.params.instance_ids) ? step.params.instance_ids : []);
+    case "start_ec2_instances":
+      return startEc2InstancesAction(awsConfig, Array.isArray(step.params.instance_ids) ? step.params.instance_ids : []);
+    case "create_budget_alert":
+      return createBudgetAlertAction(awsConfig, await getAwsAccountId(awsConfig), Number(step.params.threshold || 100), notificationEmail);
+    case "rotate_access_keys":
+      return rotateAccessKeysAction(awsConfig, Array.isArray(step.params.users) ? step.params.users : []);
+    default:
+      return { status: "manual", note: `No automatic executor is available for ${step.action}.` };
+  }
+}
+
+async function continueRunbookExecution(
+  supabaseAdmin: any,
+  execution: any,
+  awsConfig: any,
+  notificationEmail: string | null,
+  approvedBy: string,
+  latestUserMessage: string,
+): Promise<Record<string, any>> {
+  const steps = (execution.steps || []) as ResolvedRunbookStep[];
+  const results = Array.isArray(execution.results) ? [...execution.results] : [];
+  let rollbackAvailable = 0;
+
+  await updateRunbookExecution(supabaseAdmin, execution.id, {
+    status: "IN_PROGRESS",
+    approved_by: approvedBy,
+  });
+
+  for (let index = Number(execution.current_step_index || 0); index < steps.length; index += 1) {
+    const step = steps[index];
+
+    if (execution.dry_run && step.type === "aws_action") {
+      await upsertRunbookStepStatus(supabaseAdmin, execution.id, step, index + 1, "DRY_RUN_SKIPPED", "Dry-run mode skipped this AWS action step.");
+      results.push({
+        step_id: step.id,
+        status: "DRY_RUN_SKIPPED",
+        output: "Dry-run mode skipped this AWS action step.",
+        timestamp: new Date().toISOString(),
+      });
+      continue;
+    }
+
+    if (step.risk === "confirm" && execution.status !== "WAITING_CONFIRMATION") {
+      await updateRunbookExecution(supabaseAdmin, execution.id, {
+        status: "WAITING_CONFIRMATION",
+        current_step_index: index,
+        results,
+      });
+      await upsertRunbookStepStatus(supabaseAdmin, execution.id, step, index + 1, "WAITING_CONFIRMATION", step.human_readable);
+      return {
+        status: "WAITING_CONFIRMATION",
+        executionId: execution.id,
+        currentStep: index + 1,
+        totalSteps: steps.length,
+        step,
+        message: `Step ${index + 1}/${steps.length} is waiting for confirmation. Reply with 'confirm' to proceed or 'abort' to stop the runbook.`,
+      };
+    }
+
+    if (step.risk === "confirm" && execution.status === "WAITING_CONFIRMATION" && !isExplicitConfirmation(latestUserMessage)) {
+      return {
+        status: "WAITING_CONFIRMATION",
+        executionId: execution.id,
+        currentStep: index + 1,
+        totalSteps: steps.length,
+        step,
+        message: `Step ${index + 1}/${steps.length} remains paused. Reply with 'confirm' to proceed or 'abort' to stop the runbook.`,
+      };
+    }
+
+    if (step.risk === "manual") {
+      await upsertRunbookStepStatus(supabaseAdmin, execution.id, step, index + 1, "MANUAL_REQUIRED", step.human_readable);
+      results.push({
+        step_id: step.id,
+        status: "MANUAL_REQUIRED",
+        output: step.human_readable,
+        timestamp: new Date().toISOString(),
+      });
+      await updateRunbookExecution(supabaseAdmin, execution.id, {
+        status: "WAITING_CONFIRMATION",
+        current_step_index: index + 1,
+        results,
+      });
+      return {
+        status: "WAITING_CONFIRMATION",
+        executionId: execution.id,
+        currentStep: index + 1,
+        totalSteps: steps.length,
+        step,
+        message: `Step ${index + 1}/${steps.length} requires a human task. Review the instruction and reply with 'confirm' when you are ready for Guardian to continue.`,
+      };
+    }
+
+    try {
+      const output = await executeRunbookStep(step, awsConfig, notificationEmail);
+      await upsertRunbookStepStatus(supabaseAdmin, execution.id, step, index + 1, "SUCCESS", JSON.stringify(output));
+      results.push({
+        step_id: step.id,
+        status: "SUCCESS",
+        output,
+        timestamp: new Date().toISOString(),
+      });
+      if (step.rollback) rollbackAvailable += 1;
+      await updateRunbookExecution(supabaseAdmin, execution.id, {
+        current_step_index: index + 1,
+        results,
+      });
+      execution.status = "IN_PROGRESS";
+    } catch (err: any) {
+      const errorMessage = err?.message || `Runbook step ${step.id} failed.`;
+      await upsertRunbookStepStatus(supabaseAdmin, execution.id, step, index + 1, "FAILED", errorMessage);
+      results.push({
+        step_id: step.id,
+        status: "FAILED",
+        error: errorMessage,
+        timestamp: new Date().toISOString(),
+      });
+      const failureStatus = step.on_failure === "abort" ? "FAILED_ABORTED" : "WAITING_CONFIRMATION";
+      await updateRunbookExecution(supabaseAdmin, execution.id, {
+        status: failureStatus,
+        current_step_index: index,
+        results,
+        last_error: errorMessage,
+      });
+      return {
+        status: failureStatus,
+        executionId: execution.id,
+        currentStep: index + 1,
+        totalSteps: steps.length,
+        step,
+        error: errorMessage,
+        message: failureStatus === "FAILED_ABORTED"
+          ? "The runbook aborted because a required step failed."
+          : "The runbook paused because a step failed. Review the error and decide whether to retry manually or abort.",
+      };
+    }
+  }
+
+  const finalStatus: RunbookExecutionStatus = execution.dry_run ? "DRY_RUN_COMPLETED" : "COMPLETED";
+  await updateRunbookExecution(supabaseAdmin, execution.id, {
+    status: finalStatus,
+    current_step_index: steps.length,
+    results,
+    last_error: null,
+  });
+
+  const completionLines = [
+    "## Runbook Completion Report",
+    "",
+    `Runbook: ${execution.runbook_name}`,
+    `Execution ID: ${execution.id}`,
+    `Status: ${finalStatus}`,
+    "",
+    "### Timeline",
+    "",
+    ...results.map((result: any) => `- ${result.timestamp}: ${result.step_id} -> ${result.status}`),
+    "",
+    `Rollback-ready steps completed: ${rollbackAvailable}`,
+  ];
+
+  return {
+    status: finalStatus,
+    executionId: execution.id,
+    results,
+    formalReport: completionLines.join("\n"),
+  };
+}
+
+function parseEventNotifyChannels(rawQuery: string, notificationEmail: string | null): string[] {
+  const query = rawQuery.toLowerCase();
+  const channels = new Set<string>();
+
+  const slackMatch = rawQuery.match(/slack:\s*(#[\w-]+)/i);
+  if (slackMatch?.[1]) {
+    channels.add(`slack:${slackMatch[1]}`);
+  } else if (/\bsecurity team\b/.test(query) || /\bslack\b/.test(query)) {
+    channels.add("slack:#security");
+  }
+
+  if (/\bpage\b|\bpagerduty\b|\bon-call\b|\bwake up\b/.test(query)) {
+    channels.add("pagerduty");
+  }
+
+  if ((/\bemail\b/.test(query) || channels.size === 0) && notificationEmail) {
+    channels.add(`email:${sanitizeString(notificationEmail, 320)}`);
+  }
+
+  return Array.from(channels);
+}
+
+function buildEventPolicyName(rawQuery: string): string {
+  const normalized = rawQuery
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  return normalized || `event-policy-${Date.now()}`;
+}
+
+function parseEventResponsePolicyFromQuery(
+  rawQuery: string,
+  notificationEmail: string | null,
+): EventResponsePolicyRecord {
+  const query = rawQuery.toLowerCase();
+  const notifyChannels = parseEventNotifyChannels(rawQuery, notificationEmail);
+
+  if ((/\bport 22\b/.test(query) || /\bssh\b/.test(query)) && (/\bworld\b/.test(query) || /0\.0\.0\.0\/0/.test(query))) {
+    return {
+      id: crypto.randomUUID(),
+      policy_id: `policy-${crypto.randomUUID().slice(0, 8)}`,
+      name: "Auto-close world-open SSH",
+      trigger_event: "AuthorizeSecurityGroupIngress",
+      trigger_conditions: {
+        source_cidr: IPV4_ANYWHERE,
+        port: 22,
+      },
+      risk_threshold: "CRITICAL",
+      response_type: "all",
+      response_action: "revoke_sg_rule",
+      response_params: {},
+      notify_channels: notifyChannels,
+      raw_query: rawQuery,
+      created_by: "user",
+      is_active: true,
+    };
+  }
+
+  if (/\bnew iam user\b/.test(query) || (/\biam user\b/.test(query) && /\bcreated\b/.test(query))) {
+    return {
+      id: crypto.randomUUID(),
+      policy_id: `policy-${crypto.randomUUID().slice(0, 8)}`,
+      name: "Alert on new IAM user creation",
+      trigger_event: "CreateUser",
+      trigger_conditions: {
+        actor_is_guardian: false,
+      },
+      risk_threshold: "HIGH",
+      response_type: "notify",
+      response_action: "send_alert",
+      response_params: {},
+      notify_channels: notifyChannels,
+      raw_query: rawQuery,
+      created_by: "user",
+      is_active: true,
+    };
+  }
+
+  if (/\broot account\b/.test(query) || (/\broot\b/.test(query) && /\bused\b/.test(query))) {
+    return {
+      id: crypto.randomUUID(),
+      policy_id: `policy-${crypto.randomUUID().slice(0, 8)}`,
+      name: "Alert on root account usage",
+      trigger_event: "*",
+      trigger_conditions: {
+        actor_type: "root",
+      },
+      risk_threshold: "CRITICAL",
+      response_type: "all",
+      response_action: "trigger_runbook",
+      response_params: {
+        runbook: "root_account_usage_response",
+      },
+      notify_channels: notifyChannels,
+      raw_query: rawQuery,
+      created_by: "user",
+      is_active: true,
+    };
+  }
+
+  if ((/\bcloudtrail\b/.test(query) || /\btrail\b/.test(query)) && (/\bdisabled\b/.test(query) || /\bstop logging\b/.test(query) || /\bdelete trail\b/.test(query))) {
+    return {
+      id: crypto.randomUUID(),
+      policy_id: `policy-${crypto.randomUUID().slice(0, 8)}`,
+      name: "Restore CloudTrail if disabled",
+      trigger_event: "StopLogging",
+      trigger_conditions: {},
+      risk_threshold: "CRITICAL",
+      response_type: "all",
+      response_action: "restore_cloudtrail_logging",
+      response_params: {
+        runbook: "cloudtrail_disabled_response",
+      },
+      notify_channels: notifyChannels,
+      raw_query: rawQuery,
+      created_by: "user",
+      is_active: true,
+    };
+  }
+
+  throw new Error("Unsupported event response policy request. Supported rules currently include world-open SSH, new IAM user creation, root account usage, and CloudTrail disablement.");
+}
+
+async function saveEventResponsePolicy(supabaseAdmin: any, userId: string, policy: EventResponsePolicyRecord) {
+  const { error } = await supabaseAdmin.from("event_response_policies").insert({
+    id: policy.id,
+    user_id: userId,
+    policy_id: policy.policy_id,
+    name: policy.name,
+    trigger_event: policy.trigger_event,
+    trigger_conditions: policy.trigger_conditions,
+    risk_threshold: policy.risk_threshold,
+    response_type: policy.response_type,
+    response_action: policy.response_action,
+    response_params: policy.response_params,
+    notify_channels: policy.notify_channels,
+    raw_query: policy.raw_query,
+    created_by: userId,
+    is_active: policy.is_active,
+  });
+
+  if (error) {
+    throw new Error(`Failed to store the event response policy: ${error.message}`);
+  }
+}
+
+async function fetchUserEventResponsePolicies(supabaseAdmin: any, userId: string): Promise<EventResponsePolicyRecord[]> {
+  const { data, error } = await supabaseAdmin
+    .from("event_response_policies")
+    .select("*")
+    .eq("user_id", userId)
+    .eq("is_active", true)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    throw new Error(`Failed to fetch event response policies: ${error.message}`);
+  }
+
+  return (data || []).map((row: any) => ({
+    id: row.id,
+    policy_id: row.policy_id,
+    name: row.name,
+    trigger_event: row.trigger_event,
+    trigger_conditions: row.trigger_conditions || {},
+    risk_threshold: row.risk_threshold,
+    response_type: row.response_type,
+    response_action: row.response_action,
+    response_params: row.response_params || {},
+    notify_channels: Array.isArray(row.notify_channels) ? row.notify_channels : [],
+    raw_query: row.raw_query || "",
+    created_by: row.created_by || "user",
+    is_active: Boolean(row.is_active),
+  }));
+}
+
+function buildFormalEventPolicyListReport(
+  builtIns: EventResponsePolicyRecord[],
+  userPolicies: EventResponsePolicyRecord[],
+): string {
+  const lines: string[] = [];
+  lines.push("## Event Response Policies");
+  lines.push("");
+  lines.push(`Built-in policies: ${builtIns.length}`);
+  lines.push(`User-defined active policies: ${userPolicies.length}`);
+  lines.push("");
+
+  if (builtIns.length > 0) {
+    lines.push("### Built-In Policies");
+    lines.push("");
+    for (const policy of builtIns) {
+      lines.push(`- ${policy.name}: Trigger \`${policy.trigger_event}\`, minimum risk ${policy.risk_threshold}, response \`${policy.response_type}\`.`);
+    }
+    lines.push("");
+  }
+
+  if (userPolicies.length > 0) {
+    lines.push("### User-Defined Policies");
+    lines.push("");
+    for (const policy of userPolicies) {
+      lines.push(`- ${policy.name}: Trigger \`${policy.trigger_event}\`, minimum risk ${policy.risk_threshold}, response \`${policy.response_type}\`, channels ${policy.notify_channels.join(", ") || "none"}.`);
+    }
+  } else {
+    lines.push("No user-defined event response policies are currently active.");
+  }
+
+  return lines.join("\n");
+}
+
+function buildFormalCreatedEventPolicyReport(policy: EventResponsePolicyRecord): string {
+  const lines: string[] = [];
+  lines.push("## Event Response Policy Created");
+  lines.push("");
+  lines.push(`Name: ${policy.name}`);
+  lines.push(`Policy ID: ${policy.policy_id}`);
+  lines.push(`Trigger event: ${policy.trigger_event}`);
+  lines.push(`Risk threshold: ${policy.risk_threshold}`);
+  lines.push(`Response type: ${policy.response_type}`);
+  lines.push(`Response action: ${policy.response_action}`);
+  lines.push(`Notify channels: ${policy.notify_channels.join(", ") || "none"}`);
+  lines.push(`Original request: ${policy.raw_query}`);
+  return lines.join("\n");
+}
+
+function parseCloudTrailLookupEvent(event: any): Record<string, any> | null {
+  try {
+    const parsed = event.CloudTrailEvent ? JSON.parse(event.CloudTrailEvent) : {};
+    return {
+      ...parsed,
+      eventID: parsed.eventID || event.EventId || crypto.randomUUID(),
+      eventName: parsed.eventName || event.EventName || "Unknown",
+      eventTime: parsed.eventTime || toIsoString(event.EventTime) || new Date().toISOString(),
+      awsRegion: parsed.awsRegion || event.AwsRegion || "unknown",
+      username: parsed.username || event.Username || null,
+      readOnly: parsed.readOnly ?? event.ReadOnly ?? null,
+      resources: parsed.resources || event.Resources || [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+function getCloudTrailItems(value: any): any[] {
+  if (Array.isArray(value)) return value;
+  if (Array.isArray(value?.items)) return value.items;
+  return [];
+}
+
+function extractEventPortsAndCidrs(detail: Record<string, any>): { ports: number[]; cidrs: string[] } {
+  const ports = new Set<number>();
+  const cidrs = new Set<string>();
+  const params = detail.requestParameters || {};
+
+  for (const permission of getCloudTrailItems(params.ipPermissions)) {
+    const fromPort = Number(permission.fromPort);
+    const toPort = Number(permission.toPort);
+    if (Number.isInteger(fromPort)) ports.add(fromPort);
+    if (Number.isInteger(toPort)) ports.add(toPort);
+
+    for (const range of getCloudTrailItems(permission.ipRanges)) {
+      if (range?.cidrIp) cidrs.add(String(range.cidrIp));
+    }
+    for (const range of getCloudTrailItems(permission.ipv6Ranges)) {
+      if (range?.cidrIpv6) cidrs.add(String(range.cidrIpv6));
+    }
+  }
+
+  return {
+    ports: Array.from(ports),
+    cidrs: Array.from(cidrs),
+  };
+}
+
+function extractCloudTrailResource(detail: Record<string, any>): [string, string] {
+  const eventName = String(detail.eventName || "");
+  const params = detail.requestParameters || {};
+  const extractors: Record<string, (value: Record<string, any>) => [string, string]> = {
+    AuthorizeSecurityGroupIngress: (value) => [value.groupId || "unknown", "security_group"],
+    AuthorizeSecurityGroupEgress: (value) => [value.groupId || "unknown", "security_group"],
+    RevokeSecurityGroupIngress: (value) => [value.groupId || "unknown", "security_group"],
+    RevokeSecurityGroupEgress: (value) => [value.groupId || "unknown", "security_group"],
+    DeleteBucketPublicAccessBlock: (value) => [value.bucketName || "unknown", "s3_bucket"],
+    PutBucketPublicAccessBlock: (value) => [value.bucketName || "unknown", "s3_bucket"],
+    PutBucketPolicy: (value) => [value.bucketName || "unknown", "s3_bucket"],
+    DeleteBucketPolicy: (value) => [value.bucketName || "unknown", "s3_bucket"],
+    DeleteBucketEncryption: (value) => [value.bucketName || "unknown", "s3_bucket"],
+    PutBucketEncryption: (value) => [value.bucketName || "unknown", "s3_bucket"],
+    PutBucketAcl: (value) => [value.bucketName || "unknown", "s3_bucket"],
+    AttachUserPolicy: (value) => [value.userName || "unknown", "iam_user"],
+    DetachUserPolicy: (value) => [value.userName || "unknown", "iam_user"],
+    PutUserPolicy: (value) => [value.userName || "unknown", "iam_user"],
+    CreateUser: (value) => [value.userName || "unknown", "iam_user"],
+    DeleteUser: (value) => [value.userName || "unknown", "iam_user"],
+    CreateAccessKey: (value) => [value.userName || "unknown", "iam_user"],
+    DeleteAccessKey: (value) => [value.userName || "unknown", "iam_user"],
+    UpdateAccessKey: (value) => [value.userName || "unknown", "iam_user"],
+    DeactivateMFADevice: (value) => [value.userName || "unknown", "iam_user"],
+    DeleteTrail: (value) => [value.name || "unknown", "cloudtrail"],
+    StopLogging: (value) => [value.name || "unknown", "cloudtrail"],
+    RunInstances: () => ["new_instance", "ec2_instance"],
+  };
+
+  const extractor = extractors[eventName];
+  if (extractor) return extractor(params);
+
+  const firstResource = Array.isArray(detail.resources) ? detail.resources[0] : null;
+  if (firstResource?.ARN) return [String(firstResource.ARN), "resource"];
+  if (firstResource?.resourceName) return [String(firstResource.resourceName), "resource"];
+  return [params.resourceId || "unknown", "unknown"];
+}
+
+function scoreCloudTrailEventRisk(detail: Record<string, any>, actorType: string, resourceId: string): { level: UnifiedAuditSeverity; reason: string } {
+  const eventName = String(detail.eventName || "");
+  const params = detail.requestParameters || {};
+  const extracted = extractEventPortsAndCidrs(detail);
+
+  if (actorType === "root") {
+    return { level: "CRITICAL", reason: "The root account was used. Root usage should not occur during normal operations." };
+  }
+
+  if (eventName === "AuthorizeSecurityGroupIngress" && extracted.cidrs.includes(IPV4_ANYWHERE)) {
+    return { level: "CRITICAL", reason: "A world-open inbound security group rule was added." };
+  }
+  if (eventName === "DeleteBucketPublicAccessBlock") {
+    return { level: "CRITICAL", reason: "An S3 public access block was removed." };
+  }
+  if (eventName === "DeleteTrail" || eventName === "StopLogging") {
+    return { level: "CRITICAL", reason: "CloudTrail logging was disabled or deleted." };
+  }
+  if (eventName === "DeactivateMFADevice") {
+    return { level: "CRITICAL", reason: "An MFA device was deactivated for an IAM user." };
+  }
+  if (eventName === "AttachUserPolicy" && JSON.stringify(params).includes("AdministratorAccess")) {
+    return { level: "HIGH", reason: "AdministratorAccess was attached to an IAM user." };
+  }
+  if (eventName === "CreateAccessKey" && actorType !== "iam_user") {
+    return { level: "HIGH", reason: "An access key was created by a non-owner identity." };
+  }
+  if (eventName === "PutBucketPolicy") {
+    return { level: "HIGH", reason: "An S3 bucket policy was modified." };
+  }
+  if (eventName === "CreateUser") {
+    return { level: "HIGH", reason: "A new IAM user was created." };
+  }
+
+  return { level: "MEDIUM", reason: `${eventName} was detected on ${resourceId}.` };
+}
+
+function classifyAndEnrichCloudTrailEvent(detail: Record<string, any>): EnrichedEvent {
+  const identity = detail.userIdentity || {};
+  const actorArn = String(identity.arn || identity.sessionContext?.sessionIssuer?.arn || "unknown");
+  const actorType = ({
+    Root: "root",
+    IAMUser: "iam_user",
+    AssumedRole: "assumed_role",
+    AWSService: "service",
+    AWSAccount: "account",
+  } as Record<string, string>)[String(identity.type || "")] || "unknown";
+
+  const actorIsGuardian =
+    actorArn.toLowerCase().includes("guardian") ||
+    actorArn.includes("GuardianExecutionRole") ||
+    String(identity.sessionContext?.sessionIssuer?.userName || "").toLowerCase().startsWith("guardian");
+
+  const [resourceId, resourceType] = extractCloudTrailResource(detail);
+  const { level, reason } = scoreCloudTrailEventRisk(detail, actorType, resourceId);
+  const { ports, cidrs } = extractEventPortsAndCidrs(detail);
+
+  return {
+    event_id: String(detail.eventID || crypto.randomUUID()),
+    event_name: String(detail.eventName || "Unknown"),
+    event_time: toIsoString(detail.eventTime) || new Date().toISOString(),
+    actor_arn: actorArn,
+    actor_type: actorType,
+    actor_is_guardian: actorIsGuardian,
+    source_ip: String(detail.sourceIPAddress || "unknown"),
+    resource_id: String(resourceId || "unknown"),
+    resource_type: String(resourceType || "unknown"),
+    region: String(detail.awsRegion || "unknown"),
+    risk_level: level,
+    risk_reason: reason,
+    requested_ports: ports,
+    source_cidrs: cidrs,
+    raw_event: detail,
+  };
+}
+
+function eventMatchesPolicy(event: EnrichedEvent, policy: EventResponsePolicyRecord): boolean {
+  if (policy.trigger_event !== "*" && policy.trigger_event !== event.event_name) return false;
+  if (SEVERITY_ORDER[event.risk_level] > SEVERITY_ORDER[policy.risk_threshold]) return false;
+
+  const conditions = policy.trigger_conditions || {};
+  if (conditions.actor_type && conditions.actor_type !== event.actor_type) return false;
+  if (typeof conditions.actor_is_guardian === "boolean" && conditions.actor_is_guardian !== event.actor_is_guardian) return false;
+  if (conditions.source_cidr && !event.source_cidrs.includes(String(conditions.source_cidr))) return false;
+  if (conditions.port && !event.requested_ports.includes(Number(conditions.port))) return false;
+
+  return true;
+}
+
+async function fetchCloudTrailEventsForReplay(awsConfig: any, hoursBack: number): Promise<EnrichedEvent[]> {
+  const cloudTrail = v2Client("CloudTrail", awsConfig);
+  const endTime = new Date();
+  const startTime = new Date(endTime.getTime() - hoursBack * 60 * 60 * 1000);
+  const events: EnrichedEvent[] = [];
+  let nextToken: string | undefined;
+  let pages = 0;
+
+  do {
+    const response = await cloudTrail.lookupEvents({
+      StartTime: startTime,
+      EndTime: endTime,
+      MaxResults: 50,
+      NextToken: nextToken,
+    }).promise();
+
+    for (const event of response.Events || []) {
+      const detail = parseCloudTrailLookupEvent(event);
+      if (!detail?.eventName) continue;
+      if (!WATCHED_CLOUDTRAIL_EVENTS.has(String(detail.eventName))) continue;
+      events.push(classifyAndEnrichCloudTrailEvent(detail));
+    }
+
+    nextToken = response.NextToken;
+    pages += 1;
+  } while (nextToken && pages < 5);
+
+  return events;
+}
+
+function deduplicateReplayEvents(events: EnrichedEvent[]): { deduplicated: EnrichedEvent[]; suppressed: number } {
+  const dedup = new Set<string>();
+  const deduplicated: EnrichedEvent[] = [];
+  let suppressed = 0;
+
+  for (const event of events) {
+    const key = `${event.event_name}:${event.resource_id}:${event.event_time.slice(0, 16)}`;
+    if (dedup.has(key)) {
+      suppressed += 1;
+      continue;
+    }
+    dedup.add(key);
+    deduplicated.push(event);
+  }
+
+  return { deduplicated, suppressed };
+}
+
+function describePolicyOutcome(policy: EventResponsePolicyRecord): string {
+  if (policy.response_type === "auto_fix") {
+    return `Would auto-fix using ${policy.response_action}`;
+  }
+  if (policy.response_type === "notify") {
+    return `Would notify ${policy.notify_channels.join(", ") || "configured channels"}`;
+  }
+  if (policy.response_type === "runbook") {
+    return `Would trigger runbook ${policy.response_params?.runbook || policy.response_action}`;
+  }
+  return `Would auto-fix and notify, with runbook escalation where configured`;
+}
+
+function buildFormalEventReplayReport(result: EventReplayResult): string {
+  const lines: string[] = [];
+  lines.push("## CloudTrail Event Replay Report");
+  lines.push("");
+  lines.push(`Generated at: ${result.generatedAt}`);
+  lines.push(`Replay window: last ${result.hoursBack} hour(s)`);
+  lines.push(`Watched events evaluated: ${result.watchedEvents}`);
+  lines.push(`Duplicate events suppressed: ${result.deduplicatedEvents}`);
+  lines.push(`Policies evaluated: ${result.policiesEvaluated}`);
+  lines.push(`Matched events: ${result.matchedEvents}`);
+  lines.push("");
+
+  if (result.matches.length === 0) {
+    lines.push("No replayed CloudTrail events matched the active built-in or user-defined response policies in the selected time window.");
+    return lines.join("\n");
+  }
+
+  lines.push("### Matching Events");
+  lines.push("");
+  for (const match of result.matches) {
+    const event = match.event;
+    lines.push(`- ${event.event_time} | ${event.risk_level} | ${event.event_name} on ${event.resource_id} in ${event.region}. ${event.risk_reason}`);
+    lines.push(`  Actor: ${event.actor_arn}`);
+    for (const policy of match.policies) {
+      lines.push(`  Policy: ${policy.name}. ${describePolicyOutcome(policy)}.`);
+    }
+  }
+  lines.push("");
+  lines.push("Replay mode is a backtest only. No remediation or notification actions were executed during this analysis.");
+  return lines.join("\n");
+}
+
+async function replayCloudTrailEvents(
+  supabaseAdmin: any,
+  userId: string | null,
+  awsConfig: any,
+  hoursBack: number,
+): Promise<EventReplayResult> {
+  const replayedEvents = await fetchCloudTrailEventsForReplay(awsConfig, hoursBack);
+  const { deduplicated, suppressed } = deduplicateReplayEvents(replayedEvents);
+  const userPolicies = userId ? await fetchUserEventResponsePolicies(supabaseAdmin, userId) : [];
+  const policies = [...BUILT_IN_EVENT_RESPONSE_POLICIES, ...userPolicies];
+  const matches: EventReplayMatch[] = [];
+
+  for (const event of deduplicated) {
+    const matchedPolicies = policies.filter((policy) => eventMatchesPolicy(event, policy));
+    if (matchedPolicies.length > 0) {
+      matches.push({
+        event,
+        policies: matchedPolicies,
+      });
+    }
+  }
+
+  matches.sort((left, right) => {
+    const severityDelta = SEVERITY_ORDER[left.event.risk_level] - SEVERITY_ORDER[right.event.risk_level];
+    if (severityDelta !== 0) return severityDelta;
+    return left.event.event_time.localeCompare(right.event.event_time);
+  });
+
+  const result: EventReplayResult = {
+    hoursBack,
+    totalEvents: replayedEvents.length,
+    watchedEvents: deduplicated.length,
+    deduplicatedEvents: suppressed,
+    matchedEvents: matches.length,
+    policiesEvaluated: policies.length,
+    matches,
+    formalReport: "",
+    generatedAt: new Date().toISOString(),
+  };
+  result.formalReport = buildFormalEventReplayReport(result);
+  return result;
+}
+
+function normalizeJsonForFingerprint(value: any): any {
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeJsonForFingerprint(item));
+  }
+  if (value && typeof value === "object" && !(value instanceof Date)) {
+    const sortedEntries = Object.entries(value)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, nested]) => [key, normalizeJsonForFingerprint(nested)]);
+    return Object.fromEntries(sortedEntries);
+  }
+  return value;
+}
+
+async function computeStateFingerprint(state: Record<string, any>): Promise<string> {
+  const normalized = JSON.stringify(normalizeJsonForFingerprint(state), (_key, value) => {
+    if (value instanceof Date) return value.toISOString();
+    return value;
+  });
+  const data = new TextEncoder().encode(normalized);
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function getAwsAccountId(awsConfig: any): Promise<string> {
+  const sts = v2Client("STS", awsConfig);
+  const identity = await sts.getCallerIdentity({}).promise();
+  if (!identity.Account) {
+    throw new Error("Unable to resolve the AWS account ID for drift detection.");
+  }
+  return identity.Account;
+}
+
+async function buildResourceSnapshot(
+  resourceType: string,
+  resourceId: string,
+  accountId: string,
+  region: string,
+  state: Record<string, any>,
+): Promise<ResourceSnapshot> {
+  return {
+    resource_id: resourceId,
+    resource_type: resourceType,
+    account_id: accountId,
+    region,
+    state,
+    fingerprint: await computeStateFingerprint(state),
+    captured_at: new Date().toISOString(),
+  };
+}
+
+function toIsoString(value: any): string | null {
+  if (!value) return null;
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === "string") return value;
+  try {
+    return new Date(value).toISOString();
+  } catch {
+    return null;
+  }
+}
+
+async function captureSecurityGroupSnapshots(awsConfig: any, accountId: string): Promise<ResourceSnapshot[]> {
+  const ec2 = v2Client("EC2", awsConfig);
+  const snapshots: ResourceSnapshot[] = [];
+  const response = await ec2.describeSecurityGroups({ MaxResults: 1000 }).promise();
+
+  for (const sg of response.SecurityGroups || []) {
+    if (!sg.GroupId) continue;
+    snapshots.push(await buildResourceSnapshot(
+      "security_group",
+      sg.GroupId,
+      accountId,
+      awsConfig.region,
+      {
+        name: sg.GroupName || sg.GroupId,
+        ingress_rules: sg.IpPermissions || [],
+        egress_rules: sg.IpPermissionsEgress || [],
+        tags: Object.fromEntries((sg.Tags || []).filter((tag) => tag.Key).map((tag) => [String(tag.Key), tag.Value || ""])),
+        vpc_id: sg.VpcId || null,
+      },
+    ));
+  }
+
+  return snapshots;
+}
+
+async function captureIamUserSnapshots(awsConfig: any, accountId: string): Promise<ResourceSnapshot[]> {
+  const iam = v2Client("IAM", awsConfig);
+  const snapshots: ResourceSnapshot[] = [];
+  const response = await iam.listUsers({ MaxItems: 1000 }).promise();
+
+  for (const user of response.Users || []) {
+    if (!user.UserName) continue;
+    const [policies, mfa, keys] = await Promise.all([
+      iam.listAttachedUserPolicies({ UserName: user.UserName, MaxItems: 1000 }).promise(),
+      iam.listMFADevices({ UserName: user.UserName }).promise(),
+      iam.listAccessKeys({ UserName: user.UserName }).promise(),
+    ]);
+
+    snapshots.push(await buildResourceSnapshot(
+      "iam_user",
+      user.UserName,
+      accountId,
+      awsConfig.region,
+      {
+        attached_policies: (policies.AttachedPolicies || []).map((policy) => policy.PolicyName || policy.PolicyArn || "unknown"),
+        mfa_enabled: (mfa.MFADevices || []).length > 0,
+        access_keys: (keys.AccessKeyMetadata || []).map((key) => ({
+          id: key.AccessKeyId || "",
+          status: key.Status || "Unknown",
+          created: toIsoString(key.CreateDate),
+        })),
+        created: toIsoString(user.CreateDate),
+      },
+    ));
+  }
+
+  return snapshots;
+}
+
+async function captureS3BucketSnapshots(awsConfig: any, accountId: string): Promise<ResourceSnapshot[]> {
+  const s3 = v2Client("S3", awsConfig);
+  const snapshots: ResourceSnapshot[] = [];
+  const response = await s3.listBuckets().promise();
+
+  for (const bucket of response.Buckets || []) {
+    if (!bucket.Name) continue;
+    const bucketName = bucket.Name;
+    let publicAccessBlock: Record<string, any> | null = null;
+    let encryptionRules: Record<string, any>[] | null = null;
+    let versioning = "Unknown";
+
+    try {
+      const pub = await s3.getPublicAccessBlock({ Bucket: bucketName }).promise();
+      publicAccessBlock = pub.PublicAccessBlockConfiguration || null;
+    } catch {
+      publicAccessBlock = null;
+    }
+
+    try {
+      const enc = await s3.getBucketEncryption({ Bucket: bucketName }).promise();
+      encryptionRules = enc.ServerSideEncryptionConfiguration?.Rules || null;
+    } catch {
+      encryptionRules = null;
+    }
+
+    try {
+      const ver = await s3.getBucketVersioning({ Bucket: bucketName }).promise();
+      versioning = ver.Status || "Disabled";
+    } catch {
+      versioning = "Unknown";
+    }
+
+    snapshots.push(await buildResourceSnapshot(
+      "s3_bucket",
+      bucketName,
+      accountId,
+      awsConfig.region,
+      {
+        public_access_block: publicAccessBlock,
+        encryption: encryptionRules,
+        versioning,
+      },
+    ));
+  }
+
+  return snapshots;
+}
+
+function inferDriftScope(rawQuery: string): DriftScope {
+  const query = rawQuery.toLowerCase();
+  if (/\bsecurity group\b|\bsg\b|ingress|egress|port\b/.test(query)) return "security_groups";
+  if (/\biam\b|access key|mfa|policy\b/.test(query)) return "iam";
+  if (/\bs3\b|bucket|versioning|encryption|public access block\b/.test(query)) return "s3";
+  return "full";
+}
+
+function getDriftResourceTypes(scope: DriftScope): string[] {
+  switch (scope) {
+    case "security_groups":
+      return ["security_group"];
+    case "iam":
+      return ["iam_user"];
+    case "s3":
+      return ["s3_bucket"];
+    default:
+      return ["security_group", "iam_user", "s3_bucket"];
+  }
+}
+
+async function captureSnapshotsForScope(scope: DriftScope, awsConfig: any, accountId: string): Promise<ResourceSnapshot[]> {
+  const snapshots: ResourceSnapshot[] = [];
+  if (scope === "full" || scope === "security_groups") {
+    snapshots.push(...await captureSecurityGroupSnapshots(awsConfig, accountId));
+  }
+  if (scope === "full" || scope === "iam") {
+    snapshots.push(...await captureIamUserSnapshots(awsConfig, accountId));
+  }
+  if (scope === "full" || scope === "s3") {
+    snapshots.push(...await captureS3BucketSnapshots(awsConfig, accountId));
+  }
+  return snapshots;
+}
+
+async function upsertBaselineSnapshots(
+  supabaseAdmin: any,
+  userId: string,
+  snapshots: ResourceSnapshot[],
+) {
+  if (snapshots.length === 0) return;
+  const rows = snapshots.map((snapshot) => ({
+    user_id: userId,
+    resource_id: snapshot.resource_id,
+    resource_type: snapshot.resource_type,
+    account_id: snapshot.account_id,
+    region: snapshot.region,
+    state: snapshot.state,
+    fingerprint: snapshot.fingerprint,
+    captured_at: snapshot.captured_at,
+    is_baseline: true,
+  }));
+
+  const { error } = await supabaseAdmin
+    .from("resource_snapshots")
+    .upsert(rows, { onConflict: "user_id,resource_id,resource_type,account_id" });
+  if (error) {
+    throw new Error(`Failed to store baseline snapshots: ${error.message}`);
+  }
+}
+
+async function fetchBaselineSnapshots(
+  supabaseAdmin: any,
+  userId: string,
+  accountId: string,
+  scope: DriftScope,
+): Promise<Map<string, any>> {
+  const { data, error } = await supabaseAdmin
+    .from("resource_snapshots")
+    .select("*")
+    .eq("user_id", userId)
+    .eq("account_id", accountId)
+    .eq("is_baseline", true);
+
+  if (error) {
+    throw new Error(`Failed to fetch baseline snapshots: ${error.message}`);
+  }
+
+  const allowedTypes = new Set(getDriftResourceTypes(scope));
+  const baselineMap = new Map<string, any>();
+  for (const row of data || []) {
+    if (!allowedTypes.has(row.resource_type)) continue;
+    baselineMap.set(`${row.resource_type}:${row.resource_id}`, row);
+  }
+  return baselineMap;
+}
+
+function computeStructuredDiff(
+  baselineState: Record<string, any>,
+  currentState: Record<string, any>,
+): Record<string, { before: any; after: any }> {
+  const diff: Record<string, { before: any; after: any }> = {};
+  const keys = new Set([...Object.keys(baselineState || {}), ...Object.keys(currentState || {})]);
+  for (const key of keys) {
+    const before = baselineState?.[key];
+    const after = currentState?.[key];
+    if (JSON.stringify(before) !== JSON.stringify(after)) {
+      diff[key] = { before, after };
+    }
+  }
+  return diff;
+}
+
+function hasWorldOpenRule(rules: any[] | undefined): boolean {
+  for (const rule of rules || []) {
+    for (const range of rule?.IpRanges || []) {
+      if (range?.CidrIp === IPV4_ANYWHERE) return true;
+    }
+    for (const range of rule?.Ipv6Ranges || []) {
+      if (range?.CidrIpv6 === IPV6_ANYWHERE) return true;
+    }
+  }
+  return false;
+}
+
+function isPublicAccessBlockMissingOrDisabled(value: any): boolean {
+  if (!value) return true;
+  return ![
+    value.BlockPublicAcls,
+    value.IgnorePublicAcls,
+    value.BlockPublicPolicy,
+    value.RestrictPublicBuckets,
+  ].every(Boolean);
+}
+
+function buildDriftExplanation(title: string, changeType: DriftChangeType, resourceId: string): string {
+  switch (title) {
+    case "World-open inbound rule added to security group":
+      return `Security group ${resourceId} now allows internet-originated traffic that was not present in the baseline. This materially increases exposure and should be reviewed immediately.`;
+    case "S3 public access block removed":
+      return `Bucket ${resourceId} no longer retains the expected public access block configuration. This increases the risk of unintended public exposure.`;
+    case "AdministratorAccess policy attached to IAM user":
+      return `IAM user ${resourceId} now has full administrative permissions relative to the baseline. This should be validated against least-privilege requirements.`;
+    case "MFA disabled on IAM user":
+      return `IAM user ${resourceId} no longer has MFA enabled compared with the baseline. This weakens account access controls.`;
+    case "Versioning disabled on S3 bucket":
+      return `Bucket ${resourceId} no longer has versioning enabled. Recovery options for overwritten or deleted objects are now reduced.`;
+    default:
+      return `${resourceId} differs from the stored baseline with a ${changeType.toLowerCase()} change that should be reviewed.`;
+  }
+}
+
+function scoreDriftEvent(
+  draft: Omit<DriftEventRecord, "severity" | "title" | "fix_prompt" | "explanation">,
+): DriftEventRecord {
+  let severity: UnifiedAuditSeverity = "LOW";
+  let title = `${draft.resource_type} configuration changed`;
+  let fixPrompt = `show me changes to ${draft.resource_id}`;
+
+  if (
+    draft.resource_type === "security_group" &&
+    draft.change_type === "MODIFIED" &&
+    hasWorldOpenRule(draft.diff.ingress_rules?.after)
+  ) {
+    severity = "CRITICAL";
+    title = "World-open inbound rule added to security group";
+    fixPrompt = `remove world-open rule from ${draft.resource_id}`;
+  } else if (
+    draft.resource_type === "s3_bucket" &&
+    draft.change_type === "MODIFIED" &&
+    isPublicAccessBlockMissingOrDisabled(draft.diff.public_access_block?.after)
+  ) {
+    severity = "CRITICAL";
+    title = "S3 public access block removed";
+    fixPrompt = `block all public access on ${draft.resource_id}`;
+  } else if (
+    draft.resource_type === "iam_user" &&
+    draft.change_type === "MODIFIED" &&
+    JSON.stringify(draft.diff.attached_policies?.after || []).includes("AdministratorAccess")
+  ) {
+    severity = "HIGH";
+    title = "AdministratorAccess policy attached to IAM user";
+    fixPrompt = `review admin access for ${draft.resource_id}`;
+  } else if (
+    draft.resource_type === "iam_user" &&
+    draft.change_type === "MODIFIED" &&
+    draft.diff.mfa_enabled?.after === false
+  ) {
+    severity = "HIGH";
+    title = "MFA disabled on IAM user";
+    fixPrompt = `re-enable MFA for ${draft.resource_id}`;
+  } else if (
+    draft.resource_type === "s3_bucket" &&
+    draft.change_type === "MODIFIED" &&
+    draft.diff.versioning?.after === "Disabled"
+  ) {
+    severity = "MEDIUM";
+    title = "Versioning disabled on S3 bucket";
+    fixPrompt = `re-enable versioning on ${draft.resource_id}`;
+  } else if (draft.change_type === "ADDED") {
+    title = `${draft.resource_type} resource added`;
+    fixPrompt = `review new ${draft.resource_type} ${draft.resource_id}`;
+  } else if (draft.change_type === "DELETED") {
+    title = `${draft.resource_type} resource deleted`;
+    fixPrompt = `review deletion of ${draft.resource_id}`;
+  }
+
+  return {
+    ...draft,
+    severity,
+    title,
+    fix_prompt: fixPrompt,
+    explanation: buildDriftExplanation(title, draft.change_type, draft.resource_id),
+  };
+}
+
+function calculateDriftHealthScore(events: DriftEventRecord[]): number {
+  const counts: Record<UnifiedAuditSeverity, number> = {
+    CRITICAL: 0,
+    HIGH: 0,
+    MEDIUM: 0,
+    LOW: 0,
+    INFO: 0,
+  };
+  for (const event of events) {
+    counts[event.severity] += 1;
+  }
+  return calculateAccountHealthScore(counts);
+}
+
+function buildFormalDriftDigest(result: DriftScanResult): string {
+  const lines: string[] = [];
+  lines.push("## Drift Detection Report");
+  lines.push("");
+  lines.push(`Generated at: ${result.generatedAt}`);
+  lines.push(`Scope: ${result.scope}`);
+  lines.push(`Baseline resources evaluated: ${result.baselineCount}`);
+  lines.push(`Current snapshots captured: ${result.snapshotCount}`);
+  lines.push(`Drift events detected: ${result.driftCount}`);
+  lines.push(`Health score: ${result.healthScore}/100`);
+  lines.push("");
+
+  if (result.events.length === 0) {
+    lines.push("No drift was detected against the stored baseline for the selected scope.");
+    return lines.join("\n");
+  }
+
+  const grouped = new Map<UnifiedAuditSeverity, DriftEventRecord[]>();
+  for (const severity of ["CRITICAL", "HIGH", "MEDIUM", "LOW"] as UnifiedAuditSeverity[]) {
+    grouped.set(severity, result.events.filter((event) => event.severity === severity));
+  }
+
+  for (const severity of ["CRITICAL", "HIGH", "MEDIUM", "LOW"] as UnifiedAuditSeverity[]) {
+    const events = grouped.get(severity) || [];
+    if (events.length === 0) continue;
+    lines.push(`### ${severity}`);
+    lines.push("");
+    for (const event of events) {
+      lines.push(`- ${event.title} on ${event.resource_id} (${event.change_type}). ${event.explanation} Suggested action: \`${event.fix_prompt}\`.`);
+    }
+    lines.push("");
+  }
+
+  const topSeverity = result.events[0]?.severity || "LOW";
+  lines.push(`Overall verdict: The account has ${result.driftCount} unresolved drift event(s). The highest detected severity is ${topSeverity}.`);
+  return lines.join("\n");
+}
+
+async function persistDriftEvents(supabaseAdmin: any, events: DriftEventRecord[]) {
+  if (events.length === 0) return;
+  const rows = events.map((event) => ({
+    id: event.id,
+    user_id: event.user_id,
+    account_id: event.account_id,
+    region: event.region,
+    resource_id: event.resource_id,
+    resource_type: event.resource_type,
+    change_type: event.change_type,
+    severity: event.severity,
+    title: event.title,
+    baseline_state: event.baseline_state,
+    current_state: event.current_state,
+    diff: event.diff,
+    explanation: event.explanation,
+    fix_prompt: event.fix_prompt,
+    resolved: event.resolved,
+    detected_at: event.detected_at,
+  }));
+
+  const { error } = await supabaseAdmin.from("drift_events").insert(rows);
+  if (error) {
+    throw new Error(`Failed to persist drift events: ${error.message}`);
+  }
+}
+
+async function runDriftDetection(
+  supabaseAdmin: any,
+  userId: string,
+  rawQuery: string,
+  awsConfig: any,
+): Promise<DriftScanResult> {
+  const scope = inferDriftScope(rawQuery);
+  const accountId = await getAwsAccountId(awsConfig);
+  const currentSnapshots = await captureSnapshotsForScope(scope, awsConfig, accountId);
+  const baselines = await fetchBaselineSnapshots(supabaseAdmin, userId, accountId, scope);
+
+  if (baselines.size === 0) {
+    throw new Error("No baseline exists for this scope. Capture a baseline before running drift detection.");
+  }
+
+  const currentIds = new Set<string>();
+  const events: DriftEventRecord[] = [];
+
+  for (const snapshot of currentSnapshots) {
+    const key = `${snapshot.resource_type}:${snapshot.resource_id}`;
+    currentIds.add(key);
+    const baseline = baselines.get(key);
+
+    if (!baseline) {
+      events.push(scoreDriftEvent({
+        id: crypto.randomUUID(),
+        user_id: userId,
+        account_id: accountId,
+        region: snapshot.region,
+        resource_id: snapshot.resource_id,
+        resource_type: snapshot.resource_type,
+        change_type: "ADDED",
+        baseline_state: null,
+        current_state: snapshot.state,
+        diff: { new_resource: snapshot.state },
+        resolved: false,
+        detected_at: new Date().toISOString(),
+      }));
+      continue;
+    }
+
+    if (snapshot.fingerprint !== baseline.fingerprint) {
+      const diff = computeStructuredDiff(baseline.state || {}, snapshot.state);
+      if (Object.keys(diff).length > 0) {
+        events.push(scoreDriftEvent({
+          id: crypto.randomUUID(),
+          user_id: userId,
+          account_id: accountId,
+          region: snapshot.region,
+          resource_id: snapshot.resource_id,
+          resource_type: snapshot.resource_type,
+          change_type: "MODIFIED",
+          baseline_state: baseline.state || null,
+          current_state: snapshot.state,
+          diff,
+          resolved: false,
+          detected_at: new Date().toISOString(),
+        }));
+      }
+    }
+  }
+
+  for (const [key, baseline] of baselines.entries()) {
+    if (currentIds.has(key)) continue;
+    events.push(scoreDriftEvent({
+      id: crypto.randomUUID(),
+      user_id: userId,
+      account_id: accountId,
+      region: baseline.region || awsConfig.region,
+      resource_id: baseline.resource_id,
+      resource_type: baseline.resource_type,
+      change_type: "DELETED",
+      baseline_state: baseline.state || null,
+      current_state: null,
+      diff: { deleted_resource: baseline.resource_id },
+      resolved: false,
+      detected_at: new Date().toISOString(),
+    }));
+  }
+
+  events.sort((left, right) => SEVERITY_ORDER[left.severity] - SEVERITY_ORDER[right.severity]);
+  await persistDriftEvents(supabaseAdmin, events);
+
+  const result: DriftScanResult = {
+    scope,
+    accountId,
+    baselineCount: baselines.size,
+    snapshotCount: currentSnapshots.length,
+    driftCount: events.length,
+    healthScore: calculateDriftHealthScore(events),
+    events,
+    digest: "",
+    generatedAt: new Date().toISOString(),
+  };
+  result.digest = buildFormalDriftDigest(result);
+  return result;
+}
+
+async function acknowledgeDriftEvent(
+  supabaseAdmin: any,
+  userId: string,
+  driftEventId: string,
+): Promise<{ driftEventId: string; resourceId: string; resourceType: string; acknowledgedAt: string }> {
+  const { data, error } = await supabaseAdmin
+    .from("drift_events")
+    .select("*")
+    .eq("id", driftEventId)
+    .eq("user_id", userId)
+    .single();
+
+  if (error || !data) {
+    throw new Error("Drift event was not found for acknowledgement.");
+  }
+  if (!data.current_state) {
+    throw new Error("This drift event does not have a current state that can be promoted to baseline.");
+  }
+
+  const capturedAt = new Date().toISOString();
+  const fingerprint = await computeStateFingerprint(data.current_state);
+
+  const { error: upsertError } = await supabaseAdmin
+    .from("resource_snapshots")
+    .upsert({
+      user_id: userId,
+      resource_id: data.resource_id,
+      resource_type: data.resource_type,
+      account_id: data.account_id,
+      region: data.region,
+      state: data.current_state,
+      fingerprint,
+      captured_at: capturedAt,
+      is_baseline: true,
+    }, { onConflict: "user_id,resource_id,resource_type,account_id" });
+
+  if (upsertError) {
+    throw new Error(`Failed to update the baseline snapshot: ${upsertError.message}`);
+  }
+
+  const { error: updateError } = await supabaseAdmin
+    .from("drift_events")
+    .update({
+      resolved: true,
+      resolved_by: userId,
+      resolved_at: capturedAt,
+    })
+    .eq("id", driftEventId)
+    .eq("user_id", userId);
+
+  if (updateError) {
+    throw new Error(`Failed to resolve the drift event: ${updateError.message}`);
+  }
+
+  return {
+    driftEventId,
+    resourceId: data.resource_id,
+    resourceType: data.resource_type,
+    acknowledgedAt: capturedAt,
+  };
+}
+
+function parseCostRuleFromQuery(rawQuery: string, notificationEmail: string | null): CostRule {
+  const query = rawQuery.toLowerCase();
+  const thresholdMatch = query.match(/\$(\d+(?:\.\d+)?)/);
+  const multiplierMatch = query.match(/(\d+(?:\.\d+)?)x/);
+  const created = new Date().toISOString().slice(0, 10);
+  const channels = notificationEmail ? ["email"] : [];
+
+  if (query.includes("spikes more than") || query.includes("weekly average")) {
+    return {
+      rule_id: `rule-${crypto.randomUUID().slice(0, 8)}`,
+      type: "multiplier_spike",
+      multiplier: Number(multiplierMatch?.[1] || 3),
+      scope: "per_service",
+      action: "notify",
+      requires_confirm: true,
+      channels,
+      created,
+      raw_query: rawQuery,
+    };
+  }
+
+  const threshold = Number(thresholdMatch?.[1] || 0);
+  const ec2Scoped = /\bec2\b/.test(query);
+  const autoStop = /shut down|stop idle/.test(query) && ec2Scoped;
+
+  return {
+    rule_id: `rule-${crypto.randomUUID().slice(0, 8)}`,
+    type: "daily_threshold",
+    threshold,
+    scope: ec2Scoped ? "service:EC2" : "total",
+    action: autoStop ? "auto_stop_idle_ec2" : "notify",
+    requires_confirm: !autoStop,
+    channels,
+    created,
+    raw_query: rawQuery,
+  };
+}
+
+async function saveCostRule(supabaseAdmin: any, userId: string, rule: CostRule) {
+  const { error } = await supabaseAdmin.from("cost_automation_rules").insert({
+    user_id: userId,
+    rule_id: rule.rule_id,
+    rule_type: rule.type,
+    threshold: rule.threshold ?? null,
+    multiplier: rule.multiplier ?? null,
+    scope: rule.scope,
+    action: rule.action,
+    requires_confirm: rule.requires_confirm,
+    channels: rule.channels,
+    raw_query: rule.raw_query,
+  });
+  if (error) throw new Error(`Failed to save cost rule: ${error.message}`);
+}
+
+async function fetchCostRules(supabaseAdmin: any, userId: string): Promise<CostRule[]> {
+  const { data, error } = await supabaseAdmin
+    .from("cost_automation_rules")
+    .select("*")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false });
+  if (error) throw new Error(`Failed to fetch cost rules: ${error.message}`);
+
+  return (data || []).map((row: any) => ({
+    rule_id: row.rule_id,
+    type: row.rule_type,
+    threshold: row.threshold === null ? undefined : Number(row.threshold),
+    multiplier: row.multiplier === null ? undefined : Number(row.multiplier),
+    scope: row.scope,
+    action: row.action,
+    requires_confirm: Boolean(row.requires_confirm),
+    channels: Array.isArray(row.channels) ? row.channels : [],
+    created: row.created_at?.slice(0, 10) || new Date().toISOString().slice(0, 10),
+    raw_query: row.raw_query,
+  }));
+}
+
+async function fetchCostData(awsConfig: any, daysBack = 14) {
+  const ce = new (AWS as any).CostExplorer(awsConfig);
+  const endDate = new Date();
+  const startDate = new Date();
+  startDate.setDate(endDate.getDate() - daysBack);
+  const start = startDate.toISOString().slice(0, 10);
+  const end = endDate.toISOString().slice(0, 10);
+
+  const daily = await ce.getCostAndUsage({
+    TimePeriod: { Start: start, End: end },
+    Granularity: "DAILY",
+    Metrics: ["UnblendedCost"],
+    GroupBy: [{ Type: "DIMENSION", Key: "SERVICE" }],
+  }).promise();
+
+  const byTag = await ce.getCostAndUsage({
+    TimePeriod: { Start: start, End: end },
+    Granularity: "DAILY",
+    Metrics: ["UnblendedCost"],
+    GroupBy: [{ Type: "TAG", Key: "env" }],
+  }).promise();
+
+  return {
+    daily_by_service: parseCostResponse(daily),
+    daily_by_tag: parseCostResponse(byTag),
+    period: { start, end },
+  };
+}
+
+function detectCostAnomalies(dailySpend: CostEntry[], rules: CostRule[]): CostAnomaly[] {
+  const anomalies: CostAnomaly[] = [];
+  const byService: Record<string, CostEntry[]> = {};
+  const byDate: Record<string, number> = {};
+
+  for (const entry of dailySpend) {
+    byService[entry.label] ||= [];
+    byService[entry.label].push(entry);
+    byDate[entry.date] = (byDate[entry.date] || 0) + entry.amount;
+  }
+
+  for (const entries of Object.values(byService)) {
+    entries.sort((a, b) => a.date.localeCompare(b.date));
+  }
+
+  const totalDates = Object.keys(byDate).sort();
+  const latestDate = totalDates[totalDates.length - 1];
+  const totalToday = latestDate ? byDate[latestDate] : 0;
+
+  for (const [service, entries] of Object.entries(byService)) {
+    const amounts = entries.map((entry) => entry.amount);
+    if (amounts.length < 7) continue;
+
+    const baseline = amounts.slice(0, -1);
+    const today = amounts[amounts.length - 1];
+    const mean = average(baseline);
+    const deviation = stdev(baseline);
+
+    if (deviation > 0) {
+      const zScore = (today - mean) / deviation;
+      if (zScore > 2.5) {
+        anomalies.push({
+          type: "statistical_spike",
+          service,
+          today,
+          mean: Number(mean.toFixed(2)),
+          z_score: Number(zScore.toFixed(2)),
+          severity: zScore > 4 ? "CRITICAL" : "HIGH",
+        });
+      }
+    }
+
+    if (amounts.length >= 3) {
+      const last3 = amounts.slice(-3);
+      if (last3[0] < last3[1] && last3[1] < last3[2] && last3[0] > 0) {
+        const growth = ((last3[2] - last3[0]) / last3[0]) * 100;
+        if (growth > 50) {
+          anomalies.push({
+            type: "accelerating_trend",
+            service,
+            growth_pct: Number(growth.toFixed(1)),
+            severity: "MEDIUM",
+          });
+        }
+      }
+    }
+  }
+
+  for (const rule of rules) {
+    if (rule.type === "daily_threshold" && typeof rule.threshold === "number") {
+      if (rule.scope === "total" && totalToday > rule.threshold) {
+        anomalies.push({
+          type: "threshold_breach",
+          service: "Total Spend",
+          threshold: rule.threshold,
+          actual: Number(totalToday.toFixed(2)),
+          severity: "HIGH",
+        });
+      }
+
+      if (rule.scope === "service:EC2") {
+        const ec2Entries = Object.entries(byService).find(([service]) => service.toLowerCase().includes("elastic compute"));
+        const ec2Today = ec2Entries?.[1]?.slice(-1)[0]?.amount || 0;
+        if (ec2Today > rule.threshold) {
+          anomalies.push({
+            type: "threshold_breach",
+            service: "Amazon EC2",
+            threshold: rule.threshold,
+            actual: Number(ec2Today.toFixed(2)),
+            severity: "HIGH",
+          });
+        }
+      }
+    }
+
+    if (rule.type === "multiplier_spike" && typeof rule.multiplier === "number") {
+      for (const [service, entries] of Object.entries(byService)) {
+        if (entries.length < 7) continue;
+        const amounts = entries.map((entry) => entry.amount);
+        const baseline = amounts.slice(0, -1);
+        const today = amounts[amounts.length - 1];
+        const mean = average(baseline);
+        if (mean > 0 && today / mean >= rule.multiplier) {
+          anomalies.push({
+            type: "multiplier_spike",
+            service,
+            today: Number(today.toFixed(2)),
+            mean: Number(mean.toFixed(2)),
+            severity: today / mean >= rule.multiplier * 1.5 ? "CRITICAL" : "HIGH",
+          });
+        }
+      }
+    }
+  }
+
+  const deduped = new Map<string, CostAnomaly>();
+  for (const anomaly of anomalies) {
+    const key = `${anomaly.type}|${anomaly.service}|${anomaly.severity}|${anomaly.threshold ?? ""}|${anomaly.actual ?? ""}|${anomaly.z_score ?? ""}|${anomaly.growth_pct ?? ""}`;
+    if (!deduped.has(key)) deduped.set(key, anomaly);
+  }
+  return [...deduped.values()];
+}
+
+const INSTANCE_HOURLY_COST_HINTS: Record<string, number> = {
+  "t3.micro": 0.0104,
+  "t3.small": 0.0208,
+  "t3.medium": 0.0416,
+  "t3.large": 0.0832,
+  "t3.xlarge": 0.1664,
+  "m5.large": 0.096,
+  "m5.xlarge": 0.192,
+};
+
+function getEc2HourlyCost(instanceType: string | undefined): number {
+  if (!instanceType) return 0;
+  return INSTANCE_HOURLY_COST_HINTS[instanceType] || 0;
+}
+
+async function findIdleEc2Instances(awsConfig: any, thresholdCpu = 2.0, lookbackHours = 24) {
+  const ec2 = v2Client("EC2", awsConfig);
+  const cloudWatch = v2Client("CloudWatch", awsConfig);
+  const idle: Array<{ id: string; type: string; avg_cpu: number; tags: Record<string, string>; hourly_cost: number }> = [];
+
+  const response = await ec2.describeInstances({
+    Filters: [{ Name: "instance-state-name", Values: ["running"] }],
+    MaxResults: 1000,
+  }).promise();
+
+  for (const reservation of response.Reservations || []) {
+    for (const instance of reservation.Instances || []) {
+      if (!instance.InstanceId) continue;
+      const tags = summarizeTags(instance.Tags);
+      if ((tags.env || tags.environment) === "prod") continue;
+
+      const metrics = await cloudWatch.getMetricStatistics({
+        Namespace: "AWS/EC2",
+        MetricName: "CPUUtilization",
+        Dimensions: [{ Name: "InstanceId", Value: instance.InstanceId }],
+        StartTime: new Date(Date.now() - lookbackHours * 60 * 60 * 1000),
+        EndTime: new Date(),
+        Period: 3600,
+        Statistics: ["Average"],
+      }).promise();
+
+      const datapoints = metrics.Datapoints || [];
+      if (datapoints.length === 0) continue;
+      const avgCpu = average(datapoints.map((point) => point.Average || 0));
+
+      if (avgCpu < thresholdCpu) {
+        idle.push({
+          id: instance.InstanceId,
+          type: instance.InstanceType || "unknown",
+          avg_cpu: Number(avgCpu.toFixed(2)),
+          tags,
+          hourly_cost: getEc2HourlyCost(instance.InstanceType),
+        });
+      }
+    }
+  }
+
+  return idle;
+}
+
+function classifyCostRemediations(anomalies: CostAnomaly[], idleInstances: Awaited<ReturnType<typeof findIdleEc2Instances>>): CostRemediation[] {
+  const remediations: CostRemediation[] = [];
+
+  if (anomalies.some((anomaly) => anomaly.service === "Amazon EC2" || anomaly.service === "Amazon Elastic Compute Cloud - Compute")) {
+    for (const instance of idleInstances) {
+      const dailySaving = Number((instance.hourly_cost * 24).toFixed(2));
+      remediations.push({
+        action: "stop_idle_ec2",
+        resource: instance.id,
+        saving: dailySaving,
+        auto: (instance.tags.env || instance.tags.environment) !== "prod",
+        prompt: `Stop idle instance ${instance.id}? Saves approximately $${dailySaving.toFixed(2)}/day`,
+      });
+    }
+  }
+
+  return remediations;
+}
+
+function normalizeSeverityForUi(severity: UnifiedAuditSeverity): "critical" | "high" | "medium" | "low" {
+  switch (severity) {
+    case "CRITICAL":
+      return "critical";
+    case "HIGH":
+      return "high";
+    case "MEDIUM":
+      return "medium";
+    default:
+      return "low";
+  }
+}
+
+function makeFinding(input: Omit<UnifiedFinding, "id" | "timestamp">): UnifiedFinding {
+  return {
+    id: crypto.randomUUID(),
+    timestamp: new Date().toISOString(),
+    ...input,
+  };
+}
+
+function planUnifiedAudit(rawQuery: string): UnifiedAuditPlan {
+  const query = rawQuery.toLowerCase();
+  const filters: Record<string, string> = {};
+
+  if (/\bprod|production\b/.test(query)) filters.env = "prod";
+  if (/\bdev|development\b/.test(query)) filters.env = "dev";
+  if (/\bstage|staging\b/.test(query)) filters.env = "staging";
+
+  const format: UnifiedAuditPlan["format"] =
+    /\bexport|csv|pdf\b/.test(query) ? "exportable" :
+    /\bdetailed|detail|deep\b/.test(query) ? "detailed" :
+    "summary";
+
+  const byService: Array<{ pattern: RegExp; scanner: UnifiedAuditScanner }> = [
+    { pattern: /\biam\b|access key|mfa|administratoraccess/, scanner: "iam" },
+    { pattern: /\bs3\b|bucket|lifecycle|public access block/, scanner: "s3" },
+    { pattern: /\bsecurity group\b|\bsg\b|ingress|egress|port 22|port 443/, scanner: "sg" },
+    { pattern: /\bec2\b|\bvpc\b|instance|ebs|imdsv2/, scanner: "ec2" },
+    { pattern: /\bcost\b|spend|waste|wasting|idle/, scanner: "cost" },
+  ];
+
+  const matchedScanners = [...new Set(
+    byService.filter((entry) => entry.pattern.test(query)).map((entry) => entry.scanner),
+  )];
+
+  let intent: UnifiedAuditIntent = "security_audit";
+  let scanners: UnifiedAuditScanner[] = ["iam", "s3", "sg"];
+
+  if (/\beverything wrong\b|\bshow me everything\b|\bfull audit\b|\bfull scan\b/.test(query)) {
+    intent = "full_audit";
+    scanners = ["iam", "s3", "sg", "ec2", "cost"];
+  } else if (/\bcost\b|spend|wasting|waste/.test(query)) {
+    intent = "cost_audit";
+    scanners = matchedScanners.length > 0 ? matchedScanners : ["cost", "ec2"];
+  } else if (/\bcompliance\b|\bsoc ?2\b|\bcis\b|\bnist\b|\bpci\b|\bhipaa\b|\biso\b/.test(query)) {
+    intent = "compliance";
+    scanners = matchedScanners.length > 0 ? matchedScanners : ["iam", "s3", "sg", "ec2"];
+  } else if (matchedScanners.length === 1) {
+    intent = "single_service";
+    scanners = matchedScanners;
+  } else if (matchedScanners.length > 1) {
+    intent = "security_audit";
+    scanners = matchedScanners;
+  }
+
+  return {
+    intent,
+    scanners,
+    scope: "all",
+    filters,
+    format,
+    rawQuery,
+  };
+}
+
+function tagMatchesFilters(tags: Record<string, string>, filters: Record<string, string>): boolean {
+  if (!filters.env) return true;
+  const env = (tags.env || tags.environment || tags.stage || "").toLowerCase();
+  return env === filters.env;
+}
+
+function filterFindings(findings: UnifiedFinding[], filters: Record<string, string>): UnifiedFinding[] {
+  return findings.filter((finding) => tagMatchesFilters(finding.tags, filters));
+}
+
+function dedupeFindings(findings: UnifiedFinding[]): UnifiedFinding[] {
+  const seen = new Set<string>();
+  return findings.filter((finding) => {
+    const key = [finding.service, finding.severity, finding.title, finding.resource, finding.remediation].join("|");
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+async function scanIam(awsConfig: any): Promise<UnifiedScannerResult> {
+  const iam = v2Client("IAM", awsConfig);
+  const findings: UnifiedFinding[] = [];
+  const limitations: string[] = [];
+  let resourcesEvaluated = 0;
+
+  try {
+    const users = await iam.listUsers({ MaxItems: 1000 }).promise();
+    for (const user of users.Users || []) {
+      if (!user.UserName) continue;
+      resourcesEvaluated += 1;
+      const resourceLabel = `${user.UserName}${user.Arn ? ` (${user.Arn})` : ""}`;
+
+      try {
+        const attached = await iam.listAttachedUserPolicies({ UserName: user.UserName, MaxItems: 1000 }).promise();
+        for (const policy of attached.AttachedPolicies || []) {
+          if (policy.PolicyName === "AdministratorAccess") {
+            findings.push(makeFinding({
+              service: "iam",
+              severity: "HIGH",
+              title: `User ${user.UserName} has full AdministratorAccess`,
+              resource: resourceLabel,
+              detail: `IAM user ${user.UserName} has the AWS managed AdministratorAccess policy attached.`,
+              fix_prompt: `remove AdministratorAccess from ${user.UserName}`,
+              remediation: "detach_user_policy",
+              tags: {},
+            }));
+          }
+        }
+      } catch (err: any) {
+        limitations.push(`IAM attached policy enumeration failed for ${user.UserName}: ${err.message}`);
+      }
+
+      try {
+        const mfa = await iam.listMFADevices({ UserName: user.UserName }).promise();
+        if ((mfa.MFADevices || []).length === 0) {
+          findings.push(makeFinding({
+            service: "iam",
+            severity: "MEDIUM",
+            title: `User ${user.UserName} has no MFA enabled`,
+            resource: resourceLabel,
+            detail: `IAM user ${user.UserName} has no MFA devices registered.`,
+            fix_prompt: `enforce MFA for ${user.UserName}`,
+            remediation: "enforce_mfa",
+            tags: {},
+          }));
+        }
+      } catch (err: any) {
+        limitations.push(`IAM MFA enumeration failed for ${user.UserName}: ${err.message}`);
+      }
+
+      try {
+        const keys = await iam.listAccessKeys({ UserName: user.UserName }).promise();
+        for (const key of keys.AccessKeyMetadata || []) {
+          if (!key.CreateDate) continue;
+          const ageDays = Math.floor((Date.now() - key.CreateDate.getTime()) / (1000 * 60 * 60 * 24));
+          if (ageDays > 90) {
+            findings.push(makeFinding({
+              service: "iam",
+              severity: "MEDIUM",
+              title: `Access key for ${user.UserName} is ${ageDays} days old`,
+              resource: resourceLabel,
+              detail: `Access key ${key.AccessKeyId || "(unknown)"} for IAM user ${user.UserName} is older than 90 days.`,
+              fix_prompt: `rotate access keys for ${user.UserName}`,
+              remediation: "rotate_access_keys",
+              tags: {},
+            }));
+          }
+        }
+      } catch (err: any) {
+        limitations.push(`IAM access key enumeration failed for ${user.UserName}: ${err.message}`);
+      }
+    }
+  } catch (err: any) {
+    limitations.push(`IAM scan failed: ${err.message}`);
+  }
+
+  return { findings, limitations, resourcesEvaluated, servicesAssessed: ["IAM"] };
+}
+
+async function getBucketTags(s3: any, bucketName: string): Promise<Record<string, string>> {
+  try {
+    const tagging = await s3.getBucketTagging({ Bucket: bucketName }).promise();
+    const tags: Record<string, string> = {};
+    for (const tag of tagging.TagSet || []) {
+      if (tag.Key && tag.Value) tags[tag.Key.toLowerCase()] = tag.Value.toLowerCase();
+    }
+    return tags;
+  } catch {
+    return {};
+  }
+}
+
+async function scanS3(awsConfig: any): Promise<UnifiedScannerResult> {
+  const s3 = v2Client("S3", awsConfig);
+  const findings: UnifiedFinding[] = [];
+  const limitations: string[] = [];
+  let resourcesEvaluated = 0;
+
+  try {
+    const buckets = await s3.listBuckets().promise();
+    for (const bucket of buckets.Buckets || []) {
+      const bucketName = bucket.Name;
+      if (!bucketName) continue;
+      resourcesEvaluated += 1;
+      const tags = await getBucketTags(s3, bucketName);
+
+      try {
+        const pub = await s3.getPublicAccessBlock({ Bucket: bucketName }).promise();
+        const cfg = pub.PublicAccessBlockConfiguration || {};
+        if (![cfg.BlockPublicAcls, cfg.IgnorePublicAcls, cfg.BlockPublicPolicy, cfg.RestrictPublicBuckets].every(Boolean)) {
+          findings.push(makeFinding({
+            service: "s3",
+            severity: "CRITICAL",
+            title: `Bucket ${bucketName} has public access exposure`,
+            resource: bucketName,
+            detail: `Public access block settings for bucket ${bucketName} are not fully enabled.`,
+            fix_prompt: `block all public access on ${bucketName}`,
+            remediation: "put_public_access_block",
+            tags,
+          }));
+        }
+      } catch (err: any) {
+        findings.push(makeFinding({
+          service: "s3",
+          severity: "HIGH",
+          title: `Bucket ${bucketName} has no public access block configured`,
+          resource: bucketName,
+          detail: `Bucket ${bucketName} does not have a retrievable Public Access Block configuration.`,
+          fix_prompt: `block all public access on ${bucketName}`,
+          remediation: "put_public_access_block",
+          tags,
+        }));
+        if (err?.code && err.code !== "NoSuchPublicAccessBlockConfiguration") {
+          limitations.push(`S3 public access check returned ${err.message} for ${bucketName}`);
+        }
+      }
+
+      try {
+        await s3.getBucketEncryption({ Bucket: bucketName }).promise();
+      } catch {
+        findings.push(makeFinding({
+          service: "s3",
+          severity: "MEDIUM",
+          title: `Bucket ${bucketName} has no default encryption`,
+          resource: bucketName,
+          detail: `Bucket ${bucketName} does not have default server-side encryption configured.`,
+          fix_prompt: `enable AES-256 encryption on ${bucketName}`,
+          remediation: "put_bucket_encryption",
+          tags,
+        }));
+      }
+
+      try {
+        await s3.getBucketLifecycleConfiguration({ Bucket: bucketName }).promise();
+      } catch {
+        findings.push(makeFinding({
+          service: "s3",
+          severity: "LOW",
+          title: `Bucket ${bucketName} has no lifecycle policy`,
+          resource: bucketName,
+          detail: `Bucket ${bucketName} does not have a lifecycle configuration.`,
+          fix_prompt: `add a lifecycle policy to ${bucketName}`,
+          remediation: "put_bucket_lifecycle_configuration",
+          tags,
+        }));
+      }
+    }
+  } catch (err: any) {
+    limitations.push(`S3 scan failed: ${err.message}`);
+  }
+
+  return { findings, limitations, resourcesEvaluated, servicesAssessed: ["S3"] };
+}
+
+async function scanSecurityGroups(awsConfig: any): Promise<UnifiedScannerResult> {
+  const ec2 = v2Client("EC2", awsConfig);
+  const findings: UnifiedFinding[] = [];
+  const limitations: string[] = [];
+  let resourcesEvaluated = 0;
+
+  try {
+    const response = await ec2.describeSecurityGroups({ MaxResults: 1000 }).promise();
+    for (const sg of response.SecurityGroups || []) {
+      if (!sg.GroupId || !sg.GroupName) continue;
+      resourcesEvaluated += 1;
+      const tags = summarizeTags(sg.Tags);
+
+      for (const rule of sg.IpPermissions || []) {
+        const port = rule.FromPort ?? 0;
+        for (const ipRange of rule.IpRanges || []) {
+          if (ipRange.CidrIp === IPV4_ANYWHERE) {
+            findings.push(makeFinding({
+              service: "security_groups",
+              severity: SENSITIVE_PORTS.has(port) ? "CRITICAL" : "HIGH",
+              title: `Port ${port} open to the internet on ${sg.GroupName}`,
+              resource: `${sg.GroupId} (${sg.GroupName})`,
+              detail: `Inbound ${rule.IpProtocol || "tcp"} ${port}${rule.ToPort && rule.ToPort !== port ? `-${rule.ToPort}` : ""} from 0.0.0.0/0.`,
+              fix_prompt: `close port ${port} on ${sg.GroupName}`,
+              remediation: "revoke_ingress",
+              tags,
+            }));
+          }
+        }
+        for (const ipRange of rule.Ipv6Ranges || []) {
+          if (ipRange.CidrIpv6 === IPV6_ANYWHERE) {
+            findings.push(makeFinding({
+              service: "security_groups",
+              severity: SENSITIVE_PORTS.has(port) ? "CRITICAL" : "HIGH",
+              title: `Port ${port} open to the internet on ${sg.GroupName} via IPv6`,
+              resource: `${sg.GroupId} (${sg.GroupName})`,
+              detail: `Inbound ${rule.IpProtocol || "tcp"} ${port}${rule.ToPort && rule.ToPort !== port ? `-${rule.ToPort}` : ""} from ::/0.`,
+              fix_prompt: `close port ${port} on ${sg.GroupName}`,
+              remediation: "revoke_ingress",
+              tags,
+            }));
+          }
+        }
+      }
+    }
+  } catch (err: any) {
+    limitations.push(`Security group scan failed: ${err.message}`);
+  }
+
+  return { findings, limitations, resourcesEvaluated, servicesAssessed: ["EC2.SecurityGroups"] };
+}
+
+async function scanEc2(awsConfig: any): Promise<UnifiedScannerResult> {
+  const ec2 = v2Client("EC2", awsConfig);
+  const findings: UnifiedFinding[] = [];
+  const limitations: string[] = [];
+  let resourcesEvaluated = 0;
+
+  try {
+    const instances = await ec2.describeInstances({ MaxResults: 1000 }).promise();
+    for (const reservation of instances.Reservations || []) {
+      for (const instance of reservation.Instances || []) {
+        if (!instance.InstanceId) continue;
+        resourcesEvaluated += 1;
+        const tags = summarizeTags(instance.Tags);
+
+        if (instance.PublicIpAddress && instance.MetadataOptions?.HttpTokens !== "required") {
+          findings.push(makeFinding({
+            service: "ec2",
+            severity: "HIGH",
+            title: `Instance ${instance.InstanceId} has a public IP and IMDSv2 is not enforced`,
+            resource: instance.InstanceId,
+            detail: `Instance ${instance.InstanceId} is publicly reachable and has HttpTokens=${instance.MetadataOptions?.HttpTokens || "unknown"}.`,
+            fix_prompt: `enforce IMDSv2 on ${instance.InstanceId}`,
+            remediation: "modify_instance_metadata_options",
+            tags,
+          }));
+        }
+      }
+    }
+
+    const volumes = await ec2.describeVolumes({ MaxResults: 1000 }).promise();
+    for (const volume of volumes.Volumes || []) {
+      if (!volume.VolumeId) continue;
+      resourcesEvaluated += 1;
+      const tags = summarizeTags(volume.Tags);
+      if ((volume.Attachments || []).length === 0 && volume.State === "available") {
+        findings.push(makeFinding({
+          service: "ec2",
+          severity: "LOW",
+          title: `Unattached EBS volume ${volume.VolumeId} may represent avoidable cost`,
+          resource: volume.VolumeId,
+          detail: `EBS volume ${volume.VolumeId} is available but not attached to an instance.`,
+          fix_prompt: `review unattached EBS volume ${volume.VolumeId}`,
+          remediation: "review_cost_waste",
+          tags,
+        }));
+      }
+    }
+  } catch (err: any) {
+    limitations.push(`EC2 scan failed: ${err.message}`);
+  }
+
+  return { findings, limitations, resourcesEvaluated, servicesAssessed: ["EC2", "EBS"] };
+}
+
+async function scanCost(awsConfig: any): Promise<UnifiedScannerResult> {
+  const findings: UnifiedFinding[] = [];
+  const limitations: string[] = [];
+  let resourcesEvaluated = 0;
+
+  try {
+    const ce = new (AWS as any).CostExplorer(awsConfig);
+    const end = new Date();
+    const start = new Date();
+    start.setDate(end.getDate() - 30);
+
+    const cost = await ce.getCostAndUsage({
+      TimePeriod: {
+        Start: start.toISOString().slice(0, 10),
+        End: end.toISOString().slice(0, 10),
+      },
+      Granularity: "MONTHLY",
+      Metrics: ["UnblendedCost"],
+      GroupBy: [{ Type: "DIMENSION", Key: "SERVICE" }],
+    }).promise();
+
+    for (const period of cost.ResultsByTime || []) {
+      for (const group of period.Groups || []) {
+        const serviceName = group.Keys?.[0] || "Unknown Service";
+        const amount = Number(group.Metrics?.UnblendedCost?.Amount || 0);
+        resourcesEvaluated += 1;
+        if (amount >= 100) {
+          findings.push(makeFinding({
+            service: "cost",
+            severity: amount >= 1000 ? "HIGH" : "MEDIUM",
+            title: `${serviceName} incurred elevated spend over the last 30 days`,
+            resource: serviceName,
+            detail: `Estimated unblended cost for ${serviceName} over the last 30 days is $${amount.toFixed(2)}.`,
+            fix_prompt: `review ${serviceName} cost drivers`,
+            remediation: "analyze_cost",
+            tags: {},
+          }));
+        }
+      }
+    }
+  } catch (err: any) {
+    limitations.push(`Cost scan failed: ${err.message}`);
+  }
+
+  return { findings, limitations, resourcesEvaluated, servicesAssessed: ["CostExplorer"] };
+}
+
+async function runUnifiedAuditFresh(rawQuery: string, awsConfig: any) {
+  const plan = planUnifiedAudit(rawQuery);
+  const scannerRuns: Array<Promise<UnifiedScannerResult>> = [];
+
+  if (plan.scanners.includes("iam")) scannerRuns.push(scanIam(awsConfig));
+  if (plan.scanners.includes("s3")) scannerRuns.push(scanS3(awsConfig));
+  if (plan.scanners.includes("sg")) scannerRuns.push(scanSecurityGroups(awsConfig));
+  if (plan.scanners.includes("ec2")) scannerRuns.push(scanEc2(awsConfig));
+  if (plan.scanners.includes("cost")) scannerRuns.push(scanCost(awsConfig));
+
+  const results = await Promise.all(scannerRuns);
+  let findings = dedupeFindings(results.flatMap((result) => result.findings));
+  findings = filterFindings(findings, plan.filters);
+  findings.sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
+
+  const limitations = [...new Set(results.flatMap((result) => result.limitations))];
+  const servicesAssessed = [...new Set(results.flatMap((result) => result.servicesAssessed))];
+  const resourcesEvaluated = results.reduce((sum, result) => sum + result.resourcesEvaluated, 0);
+  const severityCounts = findings.reduce<Record<UnifiedAuditSeverity, number>>((acc, finding) => {
+    acc[finding.severity] += 1;
+    return acc;
+  }, { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, INFO: 0 });
+
+  const overallRisk: UnifiedAuditSeverity =
+    severityCounts.CRITICAL > 0 ? "CRITICAL" :
+    severityCounts.HIGH > 0 ? "HIGH" :
+    severityCounts.MEDIUM > 0 ? "MEDIUM" :
+    severityCounts.LOW > 0 ? "LOW" :
+    "INFO";
+
+  return {
+    planner: plan,
+    totals: {
+      findings: findings.length,
+      resourcesEvaluated,
+      servicesAssessed: servicesAssessed.length,
+      severityCounts,
+      overallRisk,
+    },
+    servicesAssessed,
+    limitations,
+    findings,
+    findingsForPanel: findings.slice(0, 25).map((finding) => ({
+      id: finding.id,
+      severity: normalizeSeverityForUi(finding.severity),
+      title: finding.title,
+      resource: finding.resource,
+      timestamp: finding.timestamp,
+      fixPrompt: finding.fix_prompt,
+    })),
+    synthesisInstructions: {
+      style: "formal",
+      useEmojis: false,
+      sections: [
+        "Executive Summary",
+        "Top Three Issues",
+        "Recommended Fix Order",
+        "Patterns and Observations",
+      ],
+    },
+  };
+}
+
+const UNIFIED_AUDIT_CACHE_TTL_MS = 5 * 60 * 1000;
+type UnifiedAuditResult = Awaited<ReturnType<typeof runUnifiedAuditFresh>>;
+
+function buildUnifiedAuditCacheKey(accountId: string, plan: UnifiedAuditPlan): string {
+  const scanners = [...plan.scanners].sort().join(",");
+  const filters = Object.entries(plan.filters).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${k}=${v}`).join(",");
+  return `scan:${accountId}:${plan.intent}:${scanners}:${filters}:${plan.scope}`;
+}
+
+async function runUnifiedAudit(rawQuery: string, awsConfig: any, supabaseAdmin: any, userId: string | null) {
+  const plan = planUnifiedAudit(rawQuery);
+  const sts = v2Client("STS", awsConfig);
+  const identity = await withAwsRetry("STS.getCallerIdentity", () => sts.getCallerIdentity().promise());
+  const accountId = identity.Account || "unknown-account";
+  const cacheKey = buildUnifiedAuditCacheKey(accountId, plan);
+  const nowIso = new Date().toISOString();
+
+  const { data: cached, error: cacheReadError } = await supabaseAdmin
+    .from("unified_audit_cache")
+    .select("*")
+    .eq("cache_key", cacheKey)
+    .gt("expires_at", nowIso)
+    .maybeSingle();
+
+  if (cacheReadError) {
+    throw new CloudPilotError(`Failed to read unified audit cache: ${cacheReadError.message}`, {
+      code: "UNIFIED_AUDIT_CACHE_READ_FAILED",
+      category: "internal",
+    });
+  }
+
+  if (cached?.response) {
+    const cachedData = cached.response as UnifiedAuditResult;
+    return {
+      ...cachedData,
+      cache: {
+        status: "cached",
+        lastRefreshedAt: cached.last_refreshed_at,
+        ttlSeconds: Math.max(0, Math.floor((new Date(cached.expires_at).getTime() - Date.now()) / 1000)),
+      },
+      accountHealthScore: calculateAccountHealthScore(cachedData.totals.severityCounts),
+    };
+  }
+
+  const freshData = await runUnifiedAuditFresh(rawQuery, awsConfig);
+  const lastRefreshedAt = new Date().toISOString();
+  const expiresAt = new Date(Date.now() + UNIFIED_AUDIT_CACHE_TTL_MS).toISOString();
+
+  const { error: cacheWriteError } = await supabaseAdmin.from("unified_audit_cache").upsert({
+    user_id: userId,
+    account_id: accountId,
+    cache_key: cacheKey,
+    planner: plan,
+    response: freshData,
+    last_refreshed_at: lastRefreshedAt,
+    expires_at: expiresAt,
+    updated_at: lastRefreshedAt,
+  }, {
+    onConflict: "cache_key",
+  });
+
+  if (cacheWriteError) {
+    throw new CloudPilotError(`Failed to persist unified audit cache: ${cacheWriteError.message}`, {
+      code: "UNIFIED_AUDIT_CACHE_WRITE_FAILED",
+      category: "internal",
+    });
+  }
+
+  return {
+    ...freshData,
+    cache: {
+      status: "fresh",
+      lastRefreshedAt,
+      ttlSeconds: Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000),
+    },
+    accountHealthScore: calculateAccountHealthScore(freshData.totals.severityCounts),
+  };
+}
+
+function buildSecurityGroupPermission(args: SecurityGroupRuleArgs, sourceGroupId?: string) {
+  const permission: any = {
+    IpProtocol: args.protocol,
+    FromPort: args.fromPort,
+    ToPort: args.toPort,
+  };
+
+  if (sourceGroupId) {
+    permission.UserIdGroupPairs = [{ GroupId: sourceGroupId, Description: args.description || undefined }];
+  } else if (args.cidr) {
+    if (args.cidr.includes(":")) {
+      permission.Ipv6Ranges = [{ CidrIpv6: args.cidr, Description: args.description || undefined }];
+    } else {
+      permission.IpRanges = [{ CidrIp: args.cidr, Description: args.description || undefined }];
+    }
+  } else {
+    throw new Error("A CIDR or source security group is required.");
+  }
+
+  return permission;
+}
+
+
+// ── CloudWatch Logs + WORM S3 Object Lock Audit Trail ───────────────────────
+const CW_LOG_GROUP = "/cloudpilot/agent-audit";
+const WORM_BUCKET_PREFIX = "cloudpilot-audit-worm-";
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function pushAuditToAws(awsConfig: any, payload: Record<string, any>) {
+  try {
+    // ── 1. CloudWatch Logs ──────────────────────────────────────────────────
+    const groupName = CW_LOG_GROUP;
+    const streamName = `agent-${new Date().toISOString().slice(0, 10)}`;
+
+    // Ensure log group exists (idempotent)
+    try {
+      await v3Send("CloudWatchLogs", "CreateLogGroupCommand", awsConfig, { logGroupName: groupName });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } catch (e: any) {
+      if (e.name !== "ResourceAlreadyExistsException" && e.code !== "ResourceAlreadyExistsException") throw e;
+    }
+
+    // Ensure log stream exists (idempotent)
+    try {
+      await v3Send("CloudWatchLogs", "CreateLogStreamCommand", awsConfig, { logGroupName: groupName, logStreamName: streamName });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } catch (e: any) {
+      if (e.name !== "ResourceAlreadyExistsException" && e.code !== "ResourceAlreadyExistsException") throw e;
+    }
+
+    // Get the upload sequence token
+    const desc = await v3Send("CloudWatchLogs", "DescribeLogStreamsCommand", awsConfig, {
+      logGroupName: groupName,
+      logStreamNamePrefix: streamName,
+      limit: 1,
+    });
+    const seqToken = desc.logStreams?.[0]?.uploadSequenceToken;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const cwParams: any = {
+      logGroupName: groupName,
+      logStreamName: streamName,
+      logEvents: [{
+        timestamp: Date.now(),
+        message: JSON.stringify(payload),
+      }],
+    };
+    if (seqToken) cwParams.sequenceToken = seqToken;
+
+    await v3Send("CloudWatchLogs", "PutLogEventsCommand", awsConfig, cwParams);
+
+    // ── 2. WORM S3 (Object Lock — Compliance Mode) ──────────────────────────
+    const identity = await v3Send("STS", "GetCallerIdentityCommand", awsConfig, {});
+    const accountId = identity.Account;
+    const wormBucket = `${WORM_BUCKET_PREFIX}${accountId}`;
+
+    // Ensure bucket exists with Object Lock enabled (must be set at creation)
+    try {
+      await v3Send("S3", "CreateBucketCommand", awsConfig, {
+        Bucket: wormBucket,
+        ObjectLockEnabledForBucket: true,
+      });
+
+      // Set default retention — 1 year Compliance mode (immutable)
+      await v3Send("S3", "PutObjectLockConfigurationCommand", awsConfig, {
+        Bucket: wormBucket,
+        ObjectLockConfiguration: {
+          ObjectLockEnabled: "Enabled",
+          Rule: {
+            DefaultRetention: {
+              Mode: "COMPLIANCE",
+              Days: 365,
+            },
+          },
+        },
+      });
+
+      // Block all public access
+      await v3Send("S3", "PutPublicAccessBlockCommand", awsConfig, {
+        Bucket: wormBucket,
+        PublicAccessBlockConfiguration: {
+          BlockPublicAcls: true,
+          IgnorePublicAcls: true,
+          BlockPublicPolicy: true,
+          RestrictPublicBuckets: true,
+        },
+      });
+
+      // Enable AES-256 encryption
+      await v3Send("S3", "PutBucketEncryptionCommand", awsConfig, {
+        Bucket: wormBucket,
+        ServerSideEncryptionConfiguration: {
+          Rules: [{ ApplyServerSideEncryptionByDefault: { SSEAlgorithm: "AES256" } }],
+        },
+      });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } catch (e: any) {
+      // BucketAlreadyOwnedByYou or BucketAlreadyExists means it's already set up
+      if (e.name !== "BucketAlreadyOwnedByYou" && e.name !== "BucketAlreadyExists" && e.code !== "BucketAlreadyOwnedByYou" && e.code !== "BucketAlreadyExists") {
+        console.error("[CloudPilot] WORM bucket setup error (non-fatal):", e.name || e.code);
+      }
+    }
+
+    // Write the audit entry — Object Lock retention applies automatically
+    const ts = payload.timestamp || new Date().toISOString();
+    const logKey = `audit/${ts.slice(0, 10)}/${ts.replace(/:/g, "-")}-${crypto.randomUUID()}.json`;
+
+    await v3Send("S3", "PutObjectCommand", awsConfig, {
+      Bucket: wormBucket,
+      Key: logKey,
+      Body: JSON.stringify(payload, null, 2),
+      ContentType: "application/json",
+      ServerSideEncryption: "AES256",
+    });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  } catch (e: any) {
+    // Audit failures are non-fatal — log but don't break the agent flow
+    console.error("[CloudPilot] Audit push failed (CW/WORM):", e.name || e.code || e.message);
+  }
+
+}
+
+// ── Security: Input validation ──────────────────────────────────────────────
+const AWS_V3_SERVICE_MAP: Record<string, string> = {
+  "S3": "s3",
+  "EC2": "ec2",
+  "IAM": "iam",
+  "STS": "sts",
+  "GuardDuty": "guardduty",
+  "SecurityHub": "securityhub",
+  "CloudTrail": "cloudtrail",
+  "Config": "config-service",
+  "RDS": "rds",
+  "Lambda": "lambda",
+  "EKS": "eks",
+  "ECS": "ecs",
+  "KMS": "kms",
+  "SecretsManager": "secrets-manager",
+  "SSM": "ssm",
+  "Organizations": "organizations",
+  "WAFv2": "wafv2",
+  "CloudFront": "cloudfront",
+  "SNS": "sns",
+  "SQS": "sqs",
+  "ECR": "ecr",
+  "Athena": "athena",
+  "CloudWatch": "cloudwatch",
+  "CloudWatchLogs": "cloudwatch-logs",
+  "Inspector2": "inspector2",
+  "AccessAnalyzer": "accessanalyzer",
+  "Macie2": "macie2",
+  "NetworkFirewall": "network-firewall",
+  "Shield": "shield",
+  "ACM": "acm",
+  "APIGateway": "api-gateway",
+  "CognitoIdentityServiceProvider": "cognito-identity-provider",
+  "EventBridge": "eventbridge",
+  "StepFunctions": "sfn",
+  "ElastiCache": "elasticache",
+  "Redshift": "redshift",
+  "DynamoDB": "dynamodb",
+  "Route53": "route53",
+  "ELBv2": "elastic-load-balancing-v2",
+  "AutoScaling": "auto-scaling",
+};
+
+const ALLOWED_AWS_SERVICES = new Set(Object.keys(AWS_V3_SERVICE_MAP));
+
+const BLOCKED_OPERATIONS = new Set([
+  // Prevent destructive billing/account-level operations
+  "closeAccount", "leaveOrganization", "deleteOrganization",
+  "createAccount", "inviteAccountToOrganization",
+
+  // Prevent AI from accidentally executing destructive resource deletions
+  "terminateInstances", "deleteBucket", "deleteDbInstance",
+  "deleteTable", "deleteCluster", "deleteFunction",
+  "deleteVpc", "deleteSubnet", "deleteNatGateway",
+  "deleteInternetGateway", "deleteRouteTable", "deleteSecurityGroup",
+  "deleteKey", "scheduleKeyDeletion", "deleteSecret"
+]);
+
+// ── Privilege Escalation Validator ──────────────────────────────────────────
+// Blocks operations that could escalate IAM privileges or compromise account security
+const PRIVILEGE_ESCALATION_PATTERNS: Array<{ service: string; operations: Set<string>; reason: string }> = [
+  {
+    service: "IAM",
+    operations: new Set([
+      "createUser", "createLoginProfile", "updateLoginProfile",
+      "createAccessKey", "putUserPolicy", "attachUserPolicy",
+      "putGroupPolicy", "attachGroupPolicy",
+      "putRolePolicy", "attachRolePolicy",
+      "createPolicyVersion", "setDefaultPolicyVersion",
+      "addUserToGroup", "updateAssumeRolePolicy",
+      "createServiceLinkedRole",
+    ]),
+    reason: "This operation can escalate IAM privileges. It could grant broader access than the original credentials possess.",
+  },
+  {
+    service: "STS",
+    operations: new Set([
+      "assumeRole",
+    ]),
+    reason: "Assuming a different role could escalate privileges beyond the current session scope.",
+  },
+  {
+    service: "Organizations",
+    operations: new Set([
+      "createPolicy", "attachPolicy", "updatePolicy",
+    ]),
+    reason: "Organization-level policy changes can affect all accounts in the organization.",
+  },
+  {
+    service: "Lambda",
+    operations: new Set([
+      "createFunction", "updateFunctionCode", "addPermission",
+    ]),
+    reason: "Lambda function creation/modification with an execution role could be used for privilege escalation.",
+  },
+];
+
+interface ValidatorResult {
+  allowed: boolean;
+  reason?: string;
+  riskLevel?: "BLOCKED" | "HIGH_RISK" | "ALLOWED";
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function validatePrivilegeEscalation(service: string, operation: string, params: any): ValidatorResult {
+  // Check blocked operations first
+  if (BLOCKED_OPERATIONS.has(operation)) {
+    return {
+      allowed: false,
+      reason: `Operation '${operation}' is permanently blocked. This operation could cause irreversible account-level damage.`,
+      riskLevel: "BLOCKED",
+    };
+  }
+
+  // Check privilege escalation patterns
+  for (const pattern of PRIVILEGE_ESCALATION_PATTERNS) {
+    if (pattern.service === service && pattern.operations.has(operation)) {
+      // Allow read-like operations that contain these words but are actually safe
+      // e.g., "getPolicy" vs "putPolicy"
+      const isReadOnly = /^(get|list|describe|head)/.test(operation);
+      if (isReadOnly) {
+        return { allowed: true, riskLevel: "ALLOWED" };
+      }
+
+      // For attack simulations, we allow but flag as HIGH_RISK and log extensively
+      // The agent's system prompt mandates cleanup of simulation resources
+      return {
+        allowed: true,
+        reason: `HIGH-RISK OPERATION: ${service}.${operation} — ${pattern.reason} This call is permitted for authorized security assessments but will be logged to the audit trail.`,
+        riskLevel: "HIGH_RISK",
+      };
+    }
+  }
+
+  return { allowed: true, riskLevel: "ALLOWED" };
+}
+
+const MAX_MESSAGE_LENGTH = 50000;
+const MAX_MESSAGES = 100;
+
+const AWS_REGION_REGEX = /^[a-z]{2}(-[a-z]+-\d+)?$/;
+
+const ACCESS_KEY_REGEX = /^[A-Z0-9]{16,128}$/;
+
+const ROLE_ARN_REGEX = /^arn:aws:iam::\d{12}:role\/[\w+=,.@/-]+$/;
+
+function sanitizeString(val: unknown, maxLen: number): string {
+  if (typeof val !== "string") return "";
+  // eslint-disable-next-line no-control-regex
+  return val.slice(0, maxLen).replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "");
+}
+
+
+
+
+serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { headers: corsHeaders });
+  }
+
+  try {
+    const body = await req.json();
+    const { toolCalls, awsConfig, userId, conversationId, notificationEmail, userHasConfirmedMutation, latestUserMessage } = body;
+
+    const supabaseAdmin = createClient(ENV.supabaseUrl, ENV.supabaseServiceRoleKey);
+    const results: Array<{ toolCallId: string; content: string; auditSummary?: any }> = [];
+
+    for (const toolCall of toolCalls) {
+      const startTime = Date.now();
+      try {
+        const toolName = toolCall.function.name;
+        const rawArgs = JSON.parse(toolCall.function.arguments || "{}");
+        let result: any = null;
+        let auditSummary: any = undefined;
+
+        if (toolName === "execute_aws_api") {
+          const service = sanitizeString(rawArgs.service, 64);
+          const operation = sanitizeString(rawArgs.operation, 128);
+
+          if (!ALLOWED_AWS_SERVICES.has(service)) {
+            throw new Error(`AWS service '${service}' is not allowed. Permitted: ${[...ALLOWED_AWS_SERVICES].join(", ")}`);
+          }
+
+          const validatorResult = validatePrivilegeEscalation(service, operation, rawArgs.params);
+          if (!validatorResult.allowed) {
+            if (userId) {
+              supabaseAdmin.from("agent_audit_log").insert({
+                user_id: userId, aws_service: service, aws_operation: operation,
+                aws_region: awsConfig.region, status: "blocked",
+                error_message: validatorResult.reason, validator_result: validatorResult.riskLevel,
+                execution_time_ms: Date.now() - startTime,
+              }).then();
+            }
+            throw new Error(validatorResult.reason);
+          }
+
+          console.log(`[CloudPilot] AWS API: ${service}.${operation} [${validatorResult.riskLevel}]`);
+
+          let module: any;
+          try {
+            module = await loadAwsModule(service);
+          } catch {
+            throw new Error(`AWS service '${service}' could not be imported.`);
+          }
+
+          const clientName = V3_CLIENT_NAMES[service] || `${service}Client`;
+          const ClientClass = module[clientName];
+          if (!ClientClass) throw new Error(`Client '${clientName}' not found for '${service}'.`);
+
+          const commandName = `${operation.charAt(0).toUpperCase() + operation.slice(1)}Command`;
+          const CommandClass = module[commandName];
+          if (!CommandClass) throw new Error(`Command '${commandName}' not found for '${service}'.`);
+
+          const client = new ClientClass(awsConfig);
+          const apiResult = await withAwsRetry(`${service}.${operation}`, () => client.send(new CommandClass(rawArgs.params || {})));
+          const execTime = Date.now() - startTime;
+          const { $metadata, ...resultData } = apiResult as any;
+
+          let resultStr = JSON.stringify(resultData);
+          if (resultStr.length > 100000) {
+            resultStr = resultStr.slice(0, 100000) + "... [TRUNCATED]";
+          }
+
+          if (userId) {
+            supabaseAdmin.from("agent_audit_log").insert({
+              user_id: userId, aws_service: service, aws_operation: operation,
+              aws_region: awsConfig.region,
+              params_hash: rawArgs.params ? btoa(JSON.stringify(rawArgs.params).slice(0, 200)) : null,
+              status: "success", validator_result: validatorResult.riskLevel,
+              execution_time_ms: execTime,
+            }).then();
+          }
+
+          pushAuditToAws(awsConfig, {
+            timestamp: new Date().toISOString(), userId, service, operation,
+            region: awsConfig.region, params: rawArgs.params, status: "success",
+            validatorResult: validatorResult.riskLevel, executionTimeMs: execTime,
+          });
+
+          const prefix = validatorResult.riskLevel === "HIGH_RISK" ? `[VALIDATOR WARNING: ${validatorResult.reason}]\n\n` : "";
+          results.push({ toolCallId: toolCall.id, content: prefix + resultStr });
+          continue;
+
+        } else if (toolName === "run_unified_audit") {
+          const rawQuery = sanitizeString(rawArgs.rawQuery, 2000);
+          if (!rawQuery) throw new Error("A raw audit query is required.");
+
+          const auditResult = await runUnifiedAudit(rawQuery, awsConfig, supabaseAdmin, userId);
+          const execTime = Date.now() - startTime;
+
+          if (userId) {
+            supabaseAdmin.from("agent_audit_log").insert({
+              user_id: userId, aws_service: "MULTI", aws_operation: "runUnifiedAudit",
+              aws_region: awsConfig.region, status: "success", validator_result: "ALLOWED",
+              execution_time_ms: execTime,
+            }).then();
+          }
+
+          pushAuditToAws(awsConfig, {
+            timestamp: new Date().toISOString(), userId, service: "MULTI",
+            operation: "runUnifiedAudit", region: awsConfig.region, status: "success",
+            executionTimeMs: execTime,
+          });
+
+          auditSummary = auditResult;
+          result = auditResult;
+
+        } else if (toolName === "manage_cost_rule") {
+          if (!userId) throw new Error("Authentication required.");
+          const rawQuery = sanitizeString(rawArgs.rawQuery, 2000);
+          if (!rawQuery) throw new Error("A cost rule query is required.");
+          const rule = parseCostRuleFromQuery(rawQuery, notificationEmail || null);
+          await saveCostRule(supabaseAdmin, userId, rule);
+          result = { status: "stored", rule };
+
+        } else if (toolName === "run_cost_anomaly_scan") {
+          const daysBack = Number(rawArgs.daysBack || 14);
+          const rules = userId ? await fetchCostRules(supabaseAdmin, userId) : [];
+          const costData = await fetchCostData(awsConfig, daysBack);
+          const anomalies = detectCostAnomalies(costData.daily_by_service, rules);
+          const idleInstances = await findIdleEc2Instances(awsConfig);
+          const remediations = classifyCostRemediations(anomalies, idleInstances);
+          result = { period: costData.period, ruleCount: rules.length, rules, anomalies, idleInstances, remediations, freshness: { status: "fresh", generatedAt: new Date().toISOString() } };
+
+        } else if (toolName === "manage_drift_baseline") {
+          if (!userId) throw new Error("Authentication required for drift baseline.");
+          const action = sanitizeString(rawArgs.action, 64);
+          if (action === "capture_baseline") {
+            const scope = (sanitizeString(rawArgs.scope || "full", 64) || "full") as DriftScope;
+            const accountId = await getAwsAccountId(awsConfig);
+            const snapshots = await captureSnapshotsForScope(scope, awsConfig, accountId);
+            await upsertBaselineSnapshots(supabaseAdmin, userId, snapshots);
+            result = { status: "baseline_captured", scope, accountId, snapshotCount: snapshots.length, capturedAt: new Date().toISOString() };
+          } else if (action === "acknowledge_drift") {
+            const driftEventId = sanitizeString(rawArgs.driftEventId, 128);
+            if (!driftEventId) throw new Error("A drift event ID is required.");
+            const ack = await acknowledgeDriftEvent(supabaseAdmin, userId, driftEventId);
+            result = { status: "acknowledged", ...ack, message: "Drift resolved and baseline updated." };
+          } else {
+            throw new Error(`Unsupported drift action '${action}'.`);
+          }
+
+        } else if (toolName === "run_drift_detection") {
+          if (!userId) throw new Error("Authentication required for drift detection.");
+          const rawQuery = sanitizeString(rawArgs.rawQuery, 2000);
+          if (!rawQuery) throw new Error("A drift query is required.");
+          result = await runDriftDetection(supabaseAdmin, userId, rawQuery, awsConfig);
+
+        } else if (toolName === "manage_runbook_execution") {
+          if (!userId) throw new Error("Authentication required for runbook execution.");
+          const rawQuery = sanitizeString(rawArgs.rawQuery, 2000);
+          const explicitDryRun = typeof rawArgs.dryRun === "boolean" ? Boolean(rawArgs.dryRun) : undefined;
+          const normalizedQuery = rawQuery.toLowerCase().trim();
+          if (!rawQuery) throw new Error("A runbook request is required.");
+
+          const latestExecution = await getLatestRunbookExecution(supabaseAdmin, userId, conversationId || null);
+
+          if (normalizedQuery === "abort") {
+            if (!latestExecution) throw new Error("No active runbook to abort.");
+            await updateRunbookExecution(supabaseAdmin, latestExecution.id, { status: "ABORTED" });
+            result = { status: "ABORTED", executionId: latestExecution.id, message: "Runbook aborted." };
+          } else if (normalizedQuery === "run playbook") {
+            if (!latestExecution) throw new Error("No planned runbook to start.");
+            result = await continueRunbookExecution(supabaseAdmin, latestExecution, awsConfig, notificationEmail || null, userId, latestUserMessage);
+          } else if (normalizedQuery === "confirm" && latestExecution?.status === "WAITING_CONFIRMATION") {
+            result = await continueRunbookExecution(supabaseAdmin, latestExecution, awsConfig, notificationEmail || null, userId, latestUserMessage);
+          } else {
+            const runbookId = inferRunbookId(rawQuery);
+            const runbook = RUNBOOK_LIBRARY[runbookId];
+            const dryRun = isRunbookDryRun(rawQuery, explicitDryRun);
+            const steps = await planRunbookSteps(runbook, rawQuery, awsConfig);
+            const executionId = crypto.randomUUID();
+            await createRunbookExecution(supabaseAdmin, {
+              id: executionId, user_id: userId, conversation_id: conversationId || null,
+              runbook_id: runbook.id, runbook_name: runbook.name, trigger_query: rawQuery,
+              dry_run: dryRun, status: "PLANNED", current_step_index: 0,
+              steps, results: [], approved_by: null, last_error: null,
+            });
+            result = { status: "PLANNED", executionId, runbookId: runbook.id, runbookName: runbook.name, dryRun, steps, formalReport: buildRunbookPreview(runbook, steps, executionId, dryRun) };
+          }
+
+        } else if (toolName === "manage_event_response_policy") {
+          if (!userId) throw new Error("Authentication required.");
+          const rawQuery = sanitizeString(rawArgs.rawQuery, 2000);
+          if (!rawQuery) throw new Error("An event response policy request is required.");
+          const normalizedQuery = rawQuery.toLowerCase();
+          const isListRequest = /\b(list|show|what|my event rules|response policies)\b/.test(normalizedQuery);
+
+          if (isListRequest) {
+            const policies = await fetchUserEventResponsePolicies(supabaseAdmin, userId);
+            result = { status: "list", policies };
+          } else {
+            const policy = parseEventResponsePolicyFromQuery(rawQuery, userId);
+            const savedPolicy = await upsertEventResponsePolicy(supabaseAdmin, policy);
+            result = { status: "saved", policy: savedPolicy };
+          }
+
+        } else if (toolName === "run_cloudtrail_replay") {
+          if (!userId) throw new Error("Authentication required for CloudTrail replay.");
+          const rawQuery = sanitizeString(rawArgs.rawQuery, 2000);
+          const hoursBack = Number(rawArgs.hoursBack || 24);
+          const policies = await fetchUserEventResponsePolicies(supabaseAdmin, userId);
+          const replayResult = await replayCloudTrailEvents(supabaseAdmin, userId, awsConfig, hoursBack, policies);
+          result = replayResult;
+
+        } else if (toolName === "manage_org_operation") {
+          if (!userId) throw new Error("Authentication required.");
+          const rawQuery = sanitizeString(rawArgs.rawQuery, 2000);
+          if (!rawQuery) throw new Error("An org operation request is required.");
+          result = await handleOrgOperation(rawQuery, awsConfig, supabaseAdmin, userId, notificationEmail || null, userHasConfirmedMutation);
+
+        } else if (toolName === "run_org_query") {
+          const rawQuery = sanitizeString(rawArgs.rawQuery, 2000);
+          if (!rawQuery) throw new Error("An org query is required.");
+          result = await handleOrgQuery(rawQuery, awsConfig, supabaseAdmin, userId);
+
+        } else if (toolName === "manage_security_group_rule") {
+          result = await handleSecurityGroupRule(toolCall, rawArgs, awsConfig, supabaseAdmin, userId, userHasConfirmedMutation);
+
+        } else if (toolName === "manage_iam_access") {
+          result = await handleIamAccess(toolCall, rawArgs, awsConfig, supabaseAdmin, userId, userHasConfirmedMutation);
+
+        } else if (toolName === "run_attack_simulation" || toolName === "run_evasion_test") {
+          const simResult = {
+            id: `${toolName}_${Date.now()}`,
+            target: rawArgs.target || rawArgs.detectionRule,
+            status: "orchestrating",
+            instructions: `Use execute_aws_api to perform real discovery for this ${toolName === "run_attack_simulation" ? "attack simulation" : "evasion test"}.`,
+          };
+          if (userId) {
+            supabaseAdmin.from("agent_audit_log").insert({
+              user_id: userId, aws_service: "SIMULATION", aws_operation: toolName,
+              aws_region: awsConfig.region, status: "success", validator_result: "ALLOWED",
+              execution_time_ms: Date.now() - startTime,
+            }).then();
+          }
+          result = simResult;
+
+        } else {
+          result = { error: `Unknown tool: ${toolName}` };
+        }
+
+        // For tools that set result (not execute_aws_api which uses continue)
+        const execTime = Date.now() - startTime;
+        if (userId && toolName !== "execute_aws_api") {
+          supabaseAdmin.from("agent_audit_log").insert({
+            user_id: userId, aws_service: "MULTI", aws_operation: toolName,
+            aws_region: awsConfig.region, status: "success", validator_result: "ALLOWED",
+            execution_time_ms: execTime,
+          }).then();
+
+          pushAuditToAws(awsConfig, {
+            timestamp: new Date().toISOString(), userId, service: "MULTI",
+            operation: toolName, region: awsConfig.region, status: "success",
+            executionTimeMs: execTime,
+          });
+        }
+
+        results.push({
+          toolCallId: toolCall.id,
+          content: JSON.stringify(result),
+          auditSummary: auditSummary || undefined,
+        });
+
+      } catch (err: any) {
+        const execTime = Date.now() - startTime;
+        const errorMessage = err?.message || "Tool execution failed.";
+
+        if (userId) {
+          supabaseAdmin.from("agent_audit_log").insert({
+            user_id: userId, aws_service: "MULTI",
+            aws_operation: toolCall.function?.name || "unknown",
+            aws_region: awsConfig?.region || "unknown", status: "error",
+            error_code: err?.code || null, error_message: errorMessage.slice(0, 2000),
+            validator_result: "ALLOWED", execution_time_ms: execTime,
+          }).then();
+        }
+
+        results.push({
+          toolCallId: toolCall.id,
+          content: JSON.stringify({ error: errorMessage, code: err?.code, retryable: err?.retryable || false }),
+        });
+      }
+    }
+
+    return new Response(JSON.stringify({ results }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  } catch (e: any) {
+    console.error("[CloudPilot Tools] Fatal error:", e);
+    return new Response(
+      JSON.stringify({ error: e.message || "Internal error" }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+});
