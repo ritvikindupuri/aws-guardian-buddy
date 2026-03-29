@@ -1779,11 +1779,47 @@ The event processor implements a complete reactive security pipeline:
 
 5. **Drift Recording:** Every processed event is recorded as a drift event for tracking.
 
+### Scheduling via pg_cron
+
+The guardian-scheduler is invoked automatically via PostgreSQL's `pg_cron` extension, which runs inside the database itself. This eliminates the need for external schedulers like AWS EventBridge or Lambda.
+
+```mermaid
+flowchart TD
+    A[pg_cron Extension<br/>Hourly: 0 * * * *] --> B[pg_net HTTP POST]
+    B --> C[guardian-scheduler<br/>Edge Function]
+    C --> D{x-guardian-secret<br/>validation}
+    D -- Valid --> E[Cost Anomaly Scan]
+    D -- Valid --> F[Drift Detection]
+    D -- Invalid --> G[400 Unauthorized]
+    E --> H[SNS Alert if anomaly]
+    F --> H
+```
+
+<div align="center">
+  <em>Figure 28.2: Guardian Scheduler — pg_cron Scheduling Architecture</em>
+</div>
+
+**Figure 28.2 Explanation:**
+
+The scheduling is implemented entirely within PostgreSQL using two extensions:
+
+1. **`pg_cron`** — A PostgreSQL extension that provides cron-style job scheduling. The job `guardian-scheduler-hourly` runs at the top of every hour (`0 * * * *`).
+
+2. **`pg_net`** — A PostgreSQL extension that enables HTTP requests from within the database. The cron job uses `net.http_post()` to invoke the guardian-scheduler edge function endpoint with the appropriate authentication header.
+
+3. **Authentication:** The `x-guardian-secret` header carries the `GUARDIAN_AUTOMATION_WEBHOOK_SECRET` value, which the edge function validates before processing.
+
+This approach is simpler and more reliable than external scheduling because:
+- No AWS EventBridge rules or Lambda functions needed
+- The scheduler runs as close to the data as possible
+- No external service dependencies for scheduling
+- The cron job persists across deployments
+
 ### Authentication
 
 Both Guardian functions use dual authentication:
 - **Bearer token:** Standard Supabase auth for manual/UI invocation
-- **Webhook secret:** `GUARDIAN_AUTOMATION_WEBHOOK_SECRET` via `x-guardian-secret` header for automated EventBridge/Lambda invocation
+- **Webhook secret:** `GUARDIAN_AUTOMATION_WEBHOOK_SECRET` via `x-guardian-secret` header for automated pg_cron invocation
 
 ---
 
