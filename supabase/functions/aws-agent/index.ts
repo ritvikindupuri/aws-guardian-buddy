@@ -7824,14 +7824,8 @@ serve(async (req) => {
                 throw new Error(`AWS service package for '${service}' could not be imported. Ensure the service is supported in SDK v3.`);
               }
 
-              // Map legacy v2 class names to v3 client names if they differ
-              let clientName = `${service}Client`;
-              if (service === "Config") clientName = "ConfigServiceClient";
-              if (service === "CognitoIdentityServiceProvider") clientName = "CognitoIdentityProviderClient";
-              if (service === "StepFunctions") clientName = "SFNClient";
-              if (service === "ELBv2") clientName = "ElasticLoadBalancingV2Client";
-              if (service === "AutoScaling") clientName = "AutoScalingClient";
-              if (service === "APIGateway") clientName = "APIGatewayClient";
+              // Use shared client name map
+              const clientName = V3_CLIENT_NAMES[service] || `${service}Client`;
 
               const ClientClass = module[clientName];
               if (!ClientClass) {
