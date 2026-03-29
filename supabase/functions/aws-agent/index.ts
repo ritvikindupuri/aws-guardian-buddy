@@ -1394,7 +1394,7 @@ function buildIamAccessPlan(rawArgs: Record<string, any>) {
   };
 }
 
-async function ensureIamPrincipalExists(iam: AWS.IAM, principalType: IamPrincipalType, identifier: string) {
+async function ensureIamPrincipalExists(iam: any, principalType: IamPrincipalType, identifier: string) {
   if (principalType === "group") {
     await iam.getGroup({ GroupName: identifier }).promise();
     return;
@@ -1424,8 +1424,8 @@ interface SecurityGroupSummary {
   groupName: string;
   vpcId?: string;
   tags: Record<string, string>;
-  ingressPermissions: AWS.EC2.IpPermissionList;
-  egressPermissions: AWS.EC2.IpPermissionList;
+  ingressPermissions: any[];
+  egressPermissions: any[];
 }
 
 interface SecurityGroupRiskResult {
@@ -1475,7 +1475,7 @@ function normalizePort(value: unknown): number {
   return port;
 }
 
-function summarizeTags(tags: AWS.EC2.TagList | undefined): Record<string, string> {
+function summarizeTags(tags: any[] | undefined): Record<string, string> {
   const out: Record<string, string> = {};
   for (const tag of tags || []) {
     if (tag.Key && tag.Value) out[tag.Key.toLowerCase()] = tag.Value.toLowerCase();
@@ -1566,7 +1566,7 @@ function classifySecurityGroupRisk(
   return { allowed: true, riskLevel: "LOW", reasons: reasons.length > 0 ? reasons : ["Scoped security group rule."] };
 }
 
-async function resolveSecurityGroup(ec2: AWS.EC2, identifier: string): Promise<SecurityGroupSummary> {
+async function resolveSecurityGroup(ec2: any, identifier: string): Promise<SecurityGroupSummary> {
   const params = isSecurityGroupId(identifier)
     ? { GroupIds: [identifier] }
     : { Filters: [{ Name: "group-name", Values: [identifier] }] };
@@ -1595,7 +1595,7 @@ async function resolveSecurityGroup(ec2: AWS.EC2, identifier: string): Promise<S
   };
 }
 
-function ipPermissionTargets(permission: AWS.EC2.IpPermission): string[] {
+function ipPermissionTargets(permission: any): string[] {
   const cidrs = (permission.IpRanges || []).map((range) => range.CidrIp).filter(Boolean) as string[];
   const ipv6Cidrs = (permission.Ipv6Ranges || []).map((range) => range.CidrIpv6).filter(Boolean) as string[];
   const groups = (permission.UserIdGroupPairs || []).map((pair) => pair.GroupId).filter(Boolean) as string[];
@@ -1603,7 +1603,7 @@ function ipPermissionTargets(permission: AWS.EC2.IpPermission): string[] {
 }
 
 function permissionMatchesRequested(
-  existing: AWS.EC2.IpPermission,
+  existing: any,
   requested: any,
   args: SecurityGroupRuleArgs,
   sourceGroupId?: string,
@@ -1627,7 +1627,7 @@ function findExistingMatchingPermission(
   args: SecurityGroupRuleArgs,
   requestedPermission: any,
   sourceGroupId?: string,
-): AWS.EC2.IpPermission | null {
+): any | null {
   const permissions = getSecurityGroupDirection(args.action) === "egress"
     ? targetGroup.egressPermissions
     : targetGroup.ingressPermissions;
@@ -1994,7 +1994,7 @@ const ORG_CONFIRM_PATTERNS = [
 
 const ORG_EXTERNAL_ID = Deno.env.get("GUARDIAN_ORG_EXTERNAL_ID") || "";
 const ORG_ROLE_NAME = Deno.env.get("GUARDIAN_EXECUTION_ROLE_NAME") || "GuardianExecutionRole";
-const orgClientCache = new Map<string, { expiresAt: number; config: AWS.ConfigurationOptions }>();
+const orgClientCache = new Map<string, { expiresAt: number; config: Record<string, any> }>();
 
 const ENV_TIERS: Record<string, { confirmation: "single" | "double"; auto_execute: boolean; max_accounts: number; require_mfa: boolean; rollback_plan: "auto" | "manual" | "required" }> = {
   dev: {
@@ -2232,7 +2232,7 @@ function parseOrgConfirmationCount(input: string): number | null {
   return null;
 }
 
-async function getAssumedAwsConfig(accountId: string, region: string, externalId?: string): Promise<AWS.ConfigurationOptions> {
+async function getAssumedAwsConfig(accountId: string, region: string, externalId?: string): Promise<Record<string, any>> {
   const cacheKey = `${accountId}:${region}`;
   const cached = orgClientCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now() + 60_000) {
@@ -2258,7 +2258,7 @@ async function getAssumedAwsConfig(accountId: string, region: string, externalId
     throw new Error(`AssumeRole returned incomplete credentials for account ${accountId}.`);
   }
 
-  const config: AWS.ConfigurationOptions = {
+  const config: Record<string, any> = {
     region,
     accessKeyId: credentials.AccessKeyId,
     secretAccessKey: credentials.SecretAccessKey,
@@ -2271,7 +2271,7 @@ async function getAssumedAwsConfig(accountId: string, region: string, externalId
   return config;
 }
 
-async function getAccountTags(org: AWS.Organizations, accountId: string): Promise<Record<string, string>> {
+async function getAccountTags(org: any, accountId: string): Promise<Record<string, string>> {
   const response = await org.listTagsForResource({ ResourceId: accountId }).promise();
   const tags: Record<string, string> = {};
   for (const tag of response.Tags || []) {
@@ -2282,7 +2282,7 @@ async function getAccountTags(org: AWS.Organizations, accountId: string): Promis
   return tags;
 }
 
-async function resolveParentPath(org: AWS.Organizations, parentId: string): Promise<string> {
+async function resolveParentPath(org: any, parentId: string): Promise<string> {
   if (parentId.startsWith("r-")) {
     return "/root";
   }
@@ -2295,7 +2295,7 @@ async function resolveParentPath(org: AWS.Organizations, parentId: string): Prom
   return `${prefix}/${name}`;
 }
 
-async function getAccountOuPath(org: AWS.Organizations, accountId: string): Promise<string> {
+async function getAccountOuPath(org: any, accountId: string): Promise<string> {
   const parents = await org.listParents({ ChildId: accountId }).promise();
   const parentId = parents.Parents?.[0]?.Id;
   if (!parentId) return "/root";
@@ -5138,7 +5138,7 @@ async function scanIam(awsConfig: any): Promise<UnifiedScannerResult> {
   return { findings, limitations, resourcesEvaluated, servicesAssessed: ["IAM"] };
 }
 
-async function getBucketTags(s3: AWS.S3, bucketName: string): Promise<Record<string, string>> {
+async function getBucketTags(s3: any, bucketName: string): Promise<Record<string, string>> {
   try {
     const tagging = await s3.getBucketTagging({ Bucket: bucketName }).promise();
     const tags: Record<string, string> = {};
