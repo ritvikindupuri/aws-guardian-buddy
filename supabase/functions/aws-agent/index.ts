@@ -2244,7 +2244,7 @@ async function getAssumedAwsConfig(accountId: string, region: string, externalId
     throw new Error("GUARDIAN_ORG_EXTERNAL_ID is not configured for cross-account role assumption.");
   }
 
-  const sts = new AWS.STS({ region });
+  const sts = v2Client("STS", { region });
   const roleArn = `arn:aws:iam::${accountId}:role/${ORG_ROLE_NAME}`;
   const assumed = await sts.assumeRole({
     RoleArn: roleArn,
@@ -2303,7 +2303,7 @@ async function getAccountOuPath(org: AWS.Organizations, accountId: string): Prom
 }
 
 async function listOrgAccounts(awsConfig: any): Promise<OrgAccountSummary[]> {
-  const org = new AWS.Organizations(awsConfig);
+  const org = v2Client("Organizations", awsConfig);
   const accounts: OrgAccountSummary[] = [];
   let nextToken: string | undefined;
 
@@ -2455,7 +2455,7 @@ async function executeOrgSCPRollout(
   template: OrgScpTemplate,
   policyDocument: Record<string, any>,
 ): Promise<{ policyId: string; policyName: string; results: OrgAccountResult[] }> {
-  const org = new AWS.Organizations(awsConfig);
+  const org = v2Client("Organizations", awsConfig);
   const policyName = `guardian-${template}-${Date.now()}`;
   const created = await withAwsRetry("Organizations.createPolicy", () => org.createPolicy({
     Content: JSON.stringify(policyDocument),
@@ -2584,7 +2584,7 @@ async function runAccountsWithoutMfaQuery(scope: string, awsConfig: any): Promis
   for (const account of resolution.accounts) {
     try {
       const assumedConfig = await getAssumedAwsConfig(account.id, awsConfig.region);
-      const iam = new AWS.IAM(assumedConfig);
+      const iam = v2Client("IAM", assumedConfig);
       const users = await iam.listUsers({ MaxItems: 1000 }).promise();
       const nonCompliantUsers: string[] = [];
       for (const user of users.Users || []) {
@@ -2630,7 +2630,7 @@ async function runAccountsWithPublicS3Query(scope: string, awsConfig: any): Prom
   for (const account of resolution.accounts) {
     try {
       const assumedConfig = await getAssumedAwsConfig(account.id, awsConfig.region);
-      const s3 = new AWS.S3(assumedConfig);
+      const s3 = v2Client("S3", assumedConfig);
       const buckets = await s3.listBuckets().promise();
       for (const bucket of buckets.Buckets || []) {
         if (!bucket.Name) continue;
@@ -2679,7 +2679,7 @@ async function runAccountsWithPublicS3Query(scope: string, awsConfig: any): Prom
 }
 
 async function runListOrgScpsQuery(scope: string, awsConfig: any): Promise<OrgQueryResult> {
-  const org = new AWS.Organizations(awsConfig);
+  const org = v2Client("Organizations", awsConfig);
   const policies = await org.listPolicies({ Filter: "SERVICE_CONTROL_POLICY" }).promise();
   const summaries: Array<{ policyId: string; name: string; attachments: string[] }> = [];
   for (const policy of policies.Policies || []) {
@@ -2849,7 +2849,7 @@ function extractBucketName(rawQuery: string): string | null {
 }
 
 async function findPublicBuckets(awsConfig: any): Promise<string[]> {
-  const s3 = new AWS.S3(awsConfig);
+  const s3 = v2Client("S3", awsConfig);
   const buckets = await s3.listBuckets().promise();
   const publicBuckets: string[] = [];
   for (const bucket of buckets.Buckets || []) {
@@ -2868,13 +2868,13 @@ async function findPublicBuckets(awsConfig: any): Promise<string[]> {
 }
 
 async function listActiveIamUsers(awsConfig: any): Promise<string[]> {
-  const iam = new AWS.IAM(awsConfig);
+  const iam = v2Client("IAM", awsConfig);
   const users = await iam.listUsers({ MaxItems: 1000 }).promise();
   return (users.Users || []).map((user) => user.UserName).filter(Boolean) as string[];
 }
 
 async function captureIamSnapshotSummary(awsConfig: any): Promise<Record<string, any>> {
-  const iam = new AWS.IAM(awsConfig);
+  const iam = v2Client("IAM", awsConfig);
   const users = await iam.listUsers({ MaxItems: 1000 }).promise();
   const summary = [];
   for (const user of users.Users || []) {
@@ -2902,7 +2902,7 @@ async function scanPublicResourcesSummary(awsConfig: any): Promise<Record<string
 }
 
 async function getBucketFullConfig(awsConfig: any, bucket: string): Promise<Record<string, any>> {
-  const s3 = new AWS.S3(awsConfig);
+  const s3 = v2Client("S3", awsConfig);
   let publicAccessBlock = null;
   let versioning = null;
   let encryption = null;
@@ -2919,7 +2919,7 @@ async function getBucketFullConfig(awsConfig: any, bucket: string): Promise<Reco
 }
 
 async function listPublicObjectsSummary(awsConfig: any, bucket: string): Promise<Record<string, any>> {
-  const s3 = new AWS.S3(awsConfig);
+  const s3 = v2Client("S3", awsConfig);
   const listed = await s3.listObjectsV2({ Bucket: bucket, MaxKeys: 25 }).promise();
   return {
     bucket,
@@ -2929,7 +2929,7 @@ async function listPublicObjectsSummary(awsConfig: any, bucket: string): Promise
 }
 
 async function queryCloudTrailSummary(awsConfig: any, eventName: string, resourceName: string, hoursBack: number): Promise<Record<string, any>> {
-  const cloudTrail = new AWS.CloudTrail(awsConfig);
+  const cloudTrail = v2Client("CloudTrail", awsConfig);
   const endTime = new Date();
   const startTime = new Date(Date.now() - hoursBack * 60 * 60 * 1000);
   const response = await cloudTrail.lookupEvents({
@@ -2954,7 +2954,7 @@ async function queryCloudTrailSummary(awsConfig: any, eventName: string, resourc
 }
 
 async function verifyCloudTrailEnabledSummary(awsConfig: any): Promise<Record<string, any>> {
-  const cloudTrail = new AWS.CloudTrail(awsConfig);
+  const cloudTrail = v2Client("CloudTrail", awsConfig);
   const trails = await cloudTrail.describeTrails({ includeShadowTrails: true }).promise();
   return {
     trailCount: (trails.trailList || []).length,
@@ -2967,7 +2967,7 @@ async function verifyCloudTrailEnabledSummary(awsConfig: any): Promise<Record<st
 }
 
 async function stopEc2InstancesAction(awsConfig: any, instanceIds: string[]): Promise<Record<string, any>> {
-  const ec2 = new AWS.EC2(awsConfig);
+  const ec2 = v2Client("EC2", awsConfig);
   if (instanceIds.length === 0) {
     return { stoppedInstances: [], note: "No non-production idle instances were identified." };
   }
@@ -2978,7 +2978,7 @@ async function stopEc2InstancesAction(awsConfig: any, instanceIds: string[]): Pr
 }
 
 async function startEc2InstancesAction(awsConfig: any, instanceIds: string[]): Promise<Record<string, any>> {
-  const ec2 = new AWS.EC2(awsConfig);
+  const ec2 = v2Client("EC2", awsConfig);
   if (instanceIds.length === 0) return { startedInstances: [] };
   const result = await ec2.startInstances({ InstanceIds: instanceIds }).promise();
   return {
@@ -3022,7 +3022,7 @@ async function ensureAlertTopicAndSubscription(
   awsConfig: any,
   notificationEmail: string,
 ): Promise<{ topicArn: string; subscriptionStatus: "existing" | "pending_confirmation" }> {
-  const sns = new AWS.SNS(awsConfig);
+  const sns = v2Client("SNS", awsConfig);
   const accountId = await getAwsAccountId(awsConfig);
   const topicName = `cloudpilot-alerts-${accountId}`;
   const topic = await sns.createTopic({ Name: topicName }).promise();
@@ -3062,7 +3062,7 @@ async function sendIncidentNotification(
     return { sent: false, target: "No notification email configured", note: "Notification was skipped because no email is configured." };
   }
 
-  const sns = new AWS.SNS(awsConfig);
+  const sns = v2Client("SNS", awsConfig);
   const { topicArn, subscriptionStatus } = await ensureAlertTopicAndSubscription(awsConfig, notificationEmail);
 
   const publishResult = await sns.publish({
@@ -3081,7 +3081,7 @@ async function sendIncidentNotification(
 }
 
 async function rotateAccessKeysAction(awsConfig: any, users: string[]): Promise<Record<string, any>> {
-  const iam = new AWS.IAM(awsConfig);
+  const iam = v2Client("IAM", awsConfig);
   const rotated: Array<{ user: string; oldKeyIds: string[]; newKeyId?: string }> = [];
   for (const user of users) {
     const keys = await iam.listAccessKeys({ UserName: user }).promise();
@@ -3310,7 +3310,7 @@ async function executeRunbookStep(
     case "get_bucket_full_config":
       return getBucketFullConfig(awsConfig, String(step.params.bucket));
     case "put_public_access_block": {
-      const s3 = new AWS.S3(awsConfig);
+      const s3 = v2Client("S3", awsConfig);
       await s3.putPublicAccessBlock({
         Bucket: String(step.params.bucket),
         PublicAccessBlockConfiguration: {
@@ -3916,7 +3916,7 @@ function eventMatchesPolicy(event: EnrichedEvent, policy: EventResponsePolicyRec
 }
 
 async function fetchCloudTrailEventsForReplay(awsConfig: any, hoursBack: number): Promise<EnrichedEvent[]> {
-  const cloudTrail = new AWS.CloudTrail(awsConfig);
+  const cloudTrail = v2Client("CloudTrail", awsConfig);
   const endTime = new Date();
   const startTime = new Date(endTime.getTime() - hoursBack * 60 * 60 * 1000);
   const events: EnrichedEvent[] = [];
@@ -4075,7 +4075,7 @@ async function computeStateFingerprint(state: Record<string, any>): Promise<stri
 }
 
 async function getAwsAccountId(awsConfig: any): Promise<string> {
-  const sts = new AWS.STS(awsConfig);
+  const sts = v2Client("STS", awsConfig);
   const identity = await sts.getCallerIdentity({}).promise();
   if (!identity.Account) {
     throw new Error("Unable to resolve the AWS account ID for drift detection.");
@@ -4113,7 +4113,7 @@ function toIsoString(value: any): string | null {
 }
 
 async function captureSecurityGroupSnapshots(awsConfig: any, accountId: string): Promise<ResourceSnapshot[]> {
-  const ec2 = new AWS.EC2(awsConfig);
+  const ec2 = v2Client("EC2", awsConfig);
   const snapshots: ResourceSnapshot[] = [];
   const response = await ec2.describeSecurityGroups({ MaxResults: 1000 }).promise();
 
@@ -4138,7 +4138,7 @@ async function captureSecurityGroupSnapshots(awsConfig: any, accountId: string):
 }
 
 async function captureIamUserSnapshots(awsConfig: any, accountId: string): Promise<ResourceSnapshot[]> {
-  const iam = new AWS.IAM(awsConfig);
+  const iam = v2Client("IAM", awsConfig);
   const snapshots: ResourceSnapshot[] = [];
   const response = await iam.listUsers({ MaxItems: 1000 }).promise();
 
@@ -4172,7 +4172,7 @@ async function captureIamUserSnapshots(awsConfig: any, accountId: string): Promi
 }
 
 async function captureS3BucketSnapshots(awsConfig: any, accountId: string): Promise<ResourceSnapshot[]> {
-  const s3 = new AWS.S3(awsConfig);
+  const s3 = v2Client("S3", awsConfig);
   const snapshots: ResourceSnapshot[] = [];
   const response = await s3.listBuckets().promise();
 
@@ -4899,8 +4899,8 @@ function getEc2HourlyCost(instanceType: string | undefined): number {
 }
 
 async function findIdleEc2Instances(awsConfig: any, thresholdCpu = 2.0, lookbackHours = 24) {
-  const ec2 = new AWS.EC2(awsConfig);
-  const cloudWatch = new AWS.CloudWatch(awsConfig);
+  const ec2 = v2Client("EC2", awsConfig);
+  const cloudWatch = v2Client("CloudWatch", awsConfig);
   const idle: Array<{ id: string; type: string; avg_cpu: number; tags: Record<string, string>; hourly_cost: number }> = [];
 
   const response = await ec2.describeInstances({
@@ -5059,7 +5059,7 @@ function dedupeFindings(findings: UnifiedFinding[]): UnifiedFinding[] {
 }
 
 async function scanIam(awsConfig: any): Promise<UnifiedScannerResult> {
-  const iam = new AWS.IAM(awsConfig);
+  const iam = v2Client("IAM", awsConfig);
   const findings: UnifiedFinding[] = [];
   const limitations: string[] = [];
   let resourcesEvaluated = 0;
@@ -5152,7 +5152,7 @@ async function getBucketTags(s3: AWS.S3, bucketName: string): Promise<Record<str
 }
 
 async function scanS3(awsConfig: any): Promise<UnifiedScannerResult> {
-  const s3 = new AWS.S3(awsConfig);
+  const s3 = v2Client("S3", awsConfig);
   const findings: UnifiedFinding[] = [];
   const limitations: string[] = [];
   let resourcesEvaluated = 0;
@@ -5234,7 +5234,7 @@ async function scanS3(awsConfig: any): Promise<UnifiedScannerResult> {
 }
 
 async function scanSecurityGroups(awsConfig: any): Promise<UnifiedScannerResult> {
-  const ec2 = new AWS.EC2(awsConfig);
+  const ec2 = v2Client("EC2", awsConfig);
   const findings: UnifiedFinding[] = [];
   const limitations: string[] = [];
   let resourcesEvaluated = 0;
@@ -5286,7 +5286,7 @@ async function scanSecurityGroups(awsConfig: any): Promise<UnifiedScannerResult>
 }
 
 async function scanEc2(awsConfig: any): Promise<UnifiedScannerResult> {
-  const ec2 = new AWS.EC2(awsConfig);
+  const ec2 = v2Client("EC2", awsConfig);
   const findings: UnifiedFinding[] = [];
   const limitations: string[] = [];
   let resourcesEvaluated = 0;
@@ -5460,7 +5460,7 @@ function buildUnifiedAuditCacheKey(accountId: string, plan: UnifiedAuditPlan): s
 
 async function runUnifiedAudit(rawQuery: string, awsConfig: any, supabaseAdmin: any, userId: string | null) {
   const plan = planUnifiedAudit(rawQuery);
-  const sts = new AWS.STS(awsConfig);
+  const sts = v2Client("STS", awsConfig);
   const identity = await withAwsRetry("STS.getCallerIdentity", () => sts.getCallerIdentity().promise());
   const accountId = identity.Account || "unknown-account";
   const cacheKey = buildUnifiedAuditCacheKey(accountId, plan);
@@ -7097,7 +7097,7 @@ serve(async (req) => {
                 throw new Error("A CIDR or source security group is required.");
               }
 
-              const ec2 = new AWS.EC2(awsConfig);
+              const ec2 = v2Client("EC2", awsConfig);
               const targetGroup = await resolveSecurityGroup(ec2, args.targetGroupIdentifier);
               const sourceGroup = args.sourceGroupIdentifier
                 ? await resolveSecurityGroup(ec2, args.sourceGroupIdentifier)
@@ -7372,7 +7372,7 @@ serve(async (req) => {
                       : undefined,
                     description: rawArgs.description ? sanitizeString(rawArgs.description, 255) : undefined,
                   };
-                  const ec2 = new AWS.EC2(awsConfig);
+                  const ec2 = v2Client("EC2", awsConfig);
                   const targetGroup = await resolveSecurityGroup(ec2, args.targetGroupIdentifier);
                   const sourceGroup = args.sourceGroupIdentifier
                     ? await resolveSecurityGroup(ec2, args.sourceGroupIdentifier)
@@ -7539,7 +7539,7 @@ serve(async (req) => {
                 });
               }
 
-              const iam = new AWS.IAM(awsConfig);
+              const iam = v2Client("IAM", awsConfig);
               await ensureIamPrincipalExists(iam, plan.args.principalType, plan.args.principalIdentifier);
 
               const createPolicyResult = await withAwsRetry("IAM.createPolicy", () => iam.createPolicy({
