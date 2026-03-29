@@ -996,6 +996,104 @@ const tools = [
   },
 ];
 
+// ── Intent Router ────────────────────────────────────────────────────────────
+// Uses Gemini 2.5 Flash Lite (fastest/cheapest) to classify user intent,
+// then selects only the relevant tool subset for the main agentic loop.
+
+type AgentIntent =
+  | "security_audit"
+  | "cost_analysis"
+  | "drift_detection"
+  | "org_management"
+  | "ops_automation"
+  | "attack_simulation"
+  | "event_automation"
+  | "direct_query"
+  | "general";
+
+const INTENT_TOOL_MAP: Record<AgentIntent, Set<string>> = {
+  security_audit: new Set([
+    "execute_aws_api", "run_unified_audit", "manage_security_group_rule", "manage_iam_access",
+  ]),
+  cost_analysis: new Set([
+    "execute_aws_api", "run_cost_anomaly_scan", "manage_cost_rule",
+  ]),
+  drift_detection: new Set([
+    "execute_aws_api", "manage_drift_baseline", "run_drift_detection",
+  ]),
+  org_management: new Set([
+    "execute_aws_api", "run_org_query", "manage_org_operation",
+  ]),
+  ops_automation: new Set([
+    "execute_aws_api", "manage_runbook_execution", "manage_security_group_rule",
+    "manage_iam_access",
+  ]),
+  attack_simulation: new Set([
+    "execute_aws_api", "run_attack_simulation", "run_evasion_test",
+  ]),
+  event_automation: new Set([
+    "execute_aws_api", "manage_event_response_policy", "replay_cloudtrail_events",
+  ]),
+  direct_query: new Set([
+    "execute_aws_api",
+  ]),
+  general: new Set(tools.map((t: any) => t.function.name)),
+};
+
+const INTENT_CLASSIFIER_PROMPT = `You are an intent classifier for an AWS cloud security agent. Given the user's latest message and conversation context, classify the intent into EXACTLY ONE of these categories. Return ONLY the category name, nothing else.
+
+Categories:
+- security_audit: Security posture checks, compliance audits, vulnerability assessments, CIS benchmarks, SOC2 readiness, "show me security issues", "audit my account"
+- cost_analysis: Cost breakdown, spending anomalies, budget alerts, idle resources, cost rules, "where am I wasting money", "alert if spend exceeds $X"
+- drift_detection: Configuration drift, baseline capture, overnight changes, "what changed since last night", "capture baseline"
+- org_management: AWS Organizations queries, SCPs, multi-account operations, org structure, "which accounts have no MFA"
+- ops_automation: Runbooks, incident response, playbook execution, "run incident response", "run playbook", "confirm"
+- attack_simulation: Pen testing, privilege escalation simulation, AI-vs-AI testing, evasion testing
+- event_automation: CloudTrail event policies, event response rules, event replay, "if anyone opens port 22, close it"
+- direct_query: Specific AWS API queries about individual resources, "list my S3 buckets", "show my EC2 instances", "describe security group sg-xxx"
+- general: Unclear, multi-domain, or greeting/conversational messages`;
+
+async function classifyIntent(
+  messages: Array<{ role: string; content: string }>,
+  lovableApiKey: string,
+): Promise<AgentIntent> {
+  try {
+    const latestUserMsg = [...messages].reverse().find((m) => m.role === "user")?.content || "";
+    // Include last 3 messages for context
+    const contextMessages = messages.slice(-3).map((m) => `${m.role}: ${m.content}`).join("\n");
+
+    const resp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${lovableApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "google/gemini-2.5-flash-lite",
+        messages: [
+          { role: "system", content: INTENT_CLASSIFIER_PROMPT },
+          { role: "user", content: `Conversation context:\n${contextMessages}\n\nLatest user message: ${latestUserMsg}` },
+        ],
+        stream: false,
+      }),
+    });
+
+    if (!resp.ok) {
+      console.warn("[CloudPilot Router] Intent classification failed, falling back to general:", resp.status);
+      return "general";
+    }
+
+    const data = await resp.json();
+    const raw = (data.choices?.[0]?.message?.content || "").trim().toLowerCase().replace(/[^a-z_]/g, "");
+    if (raw in INTENT_TOOL_MAP) return raw as AgentIntent;
+    console.warn("[CloudPilot Router] Unknown intent classification:", raw, "— falling back to general");
+    return "general";
+  } catch (err) {
+    console.warn("[CloudPilot Router] Intent classification error:", err);
+    return "general";
+  }
+}
+
 const IAM_BLOCKED_ACTIONS = new Set([
   "*",
   "iam:*",
@@ -1119,6 +1217,17 @@ serve(async (req) => {
     let isStreamable = false;
     let latestUnifiedAuditSummary: Record<string, any> | null = null;
 
+    // ── Intent-based routing ─────────────────────────────────────────────────
+    const classifiedIntent = await classifyIntent(sanitizedMessages, ENV.lovableApiKey);
+    console.log(`[CloudPilot Router] Classified intent: ${classifiedIntent}`);
+
+    const allowedToolNames = INTENT_TOOL_MAP[classifiedIntent];
+    const filteredTools = allowedToolNames.size === tools.length
+      ? tools
+      : tools.filter((t: any) => allowedToolNames.has(t.function.name));
+
+    console.log(`[CloudPilot Router] Using ${filteredTools.length}/${tools.length} tools for intent: ${classifiedIntent}`);
+
     const MAX_ITERATIONS = 15;
     const TOOLS_URL = `${ENV.supabaseUrl}/functions/v1/aws-agent-tools`;
 
@@ -1132,9 +1241,9 @@ serve(async (req) => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: "google/gemini-3-flash-preview",
+          model: "google/gemini-2.5-flash",
           messages: apiMessages,
-          tools: tools,
+          tools: filteredTools,
           tool_choice: toolChoice,
           stream: false,
         }),
