@@ -229,7 +229,8 @@ const Operations = () => {
   };
 
   const handleTogglePolicy = async (policy: EventPolicyRow, nextValue: boolean) => {
-    await supabase.from("event_response_policies").update({ is_active: nextValue }).eq("id", policy.id);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (supabase.from("event_response_policies" as any).update({ is_active: nextValue } as any).eq("id", policy.id) as any);
     setEventPolicies((prev) => prev.map((item) => item.id === policy.id ? { ...item, is_active: nextValue } : item));
   };
 
