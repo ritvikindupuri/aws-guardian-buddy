@@ -7816,54 +7816,10 @@ serve(async (req) => {
 
               console.log(`[CloudPilot] AWS API: ${service}.${operation} [${validatorResult.riskLevel}]`, JSON.stringify(args.params ?? {}));
 
-              // Dynamically import AWS SDK v3 client and command using literal strings
-              // required by Supabase Edge Functions / Deno Deploy bundler for static analysis
+              // Use the shared dynamic module loader (eliminates duplicate switch statement)
               let module: any;
               try {
-                switch (service) {
-                  case "S3": module = await import("npm:@aws-sdk/client-s3@3.744.0"); break;
-                  case "EC2": module = await import("npm:@aws-sdk/client-ec2@3.744.0"); break;
-                  case "IAM": module = await import("npm:@aws-sdk/client-iam@3.744.0"); break;
-                  case "STS": module = await import("npm:@aws-sdk/client-sts@3.744.0"); break;
-                  case "GuardDuty": module = await import("npm:@aws-sdk/client-guardduty@3.744.0"); break;
-                  case "SecurityHub": module = await import("npm:@aws-sdk/client-securityhub@3.744.0"); break;
-                  case "CloudTrail": module = await import("npm:@aws-sdk/client-cloudtrail@3.744.0"); break;
-                  case "Config": module = await import("npm:@aws-sdk/client-config-service@3.744.0"); break;
-                  case "RDS": module = await import("npm:@aws-sdk/client-rds@3.744.0"); break;
-                  case "Lambda": module = await import("npm:@aws-sdk/client-lambda@3.744.0"); break;
-                  case "EKS": module = await import("npm:@aws-sdk/client-eks@3.744.0"); break;
-                  case "ECS": module = await import("npm:@aws-sdk/client-ecs@3.744.0"); break;
-                  case "KMS": module = await import("npm:@aws-sdk/client-kms@3.744.0"); break;
-                  case "SecretsManager": module = await import("npm:@aws-sdk/client-secrets-manager@3.744.0"); break;
-                  case "SSM": module = await import("npm:@aws-sdk/client-ssm@3.744.0"); break;
-                  case "Organizations": module = await import("npm:@aws-sdk/client-organizations@3.744.0"); break;
-                  case "WAFv2": module = await import("npm:@aws-sdk/client-wafv2@3.744.0"); break;
-                  case "CloudFront": module = await import("npm:@aws-sdk/client-cloudfront@3.744.0"); break;
-                  case "SNS": module = await import("npm:@aws-sdk/client-sns@3.744.0"); break;
-                  case "SQS": module = await import("npm:@aws-sdk/client-sqs@3.744.0"); break;
-                  case "ECR": module = await import("npm:@aws-sdk/client-ecr@3.744.0"); break;
-                  case "Athena": module = await import("npm:@aws-sdk/client-athena@3.744.0"); break;
-                  case "CloudWatch": module = await import("npm:@aws-sdk/client-cloudwatch@3.744.0"); break;
-                  case "CloudWatchLogs": module = await import("npm:@aws-sdk/client-cloudwatch-logs@3.744.0"); break;
-                  case "Inspector2": module = await import("npm:@aws-sdk/client-inspector2@3.744.0"); break;
-                  case "AccessAnalyzer": module = await import("npm:@aws-sdk/client-accessanalyzer@3.744.0"); break;
-                  case "Macie2": module = await import("npm:@aws-sdk/client-macie2@3.744.0"); break;
-                  case "NetworkFirewall": module = await import("npm:@aws-sdk/client-network-firewall@3.744.0"); break;
-                  case "Shield": module = await import("npm:@aws-sdk/client-shield@3.744.0"); break;
-                  case "ACM": module = await import("npm:@aws-sdk/client-acm@3.744.0"); break;
-                  case "APIGateway": module = await import("npm:@aws-sdk/client-api-gateway@3.744.0"); break;
-                  case "CognitoIdentityServiceProvider": module = await import("npm:@aws-sdk/client-cognito-identity-provider@3.744.0"); break;
-                  case "EventBridge": module = await import("npm:@aws-sdk/client-eventbridge@3.744.0"); break;
-                  case "StepFunctions": module = await import("npm:@aws-sdk/client-sfn@3.744.0"); break;
-                  case "ElastiCache": module = await import("npm:@aws-sdk/client-elasticache@3.744.0"); break;
-                  case "Redshift": module = await import("npm:@aws-sdk/client-redshift@3.744.0"); break;
-                  case "DynamoDB": module = await import("npm:@aws-sdk/client-dynamodb@3.744.0"); break;
-                  case "Route53": module = await import("npm:@aws-sdk/client-route53@3.744.0"); break;
-                  case "ELBv2": module = await import("npm:@aws-sdk/client-elastic-load-balancing-v2@3.744.0"); break;
-                  case "AutoScaling": module = await import("npm:@aws-sdk/client-auto-scaling@3.744.0"); break;
-                  default:
-                    throw new Error(`AWS service '${service}' is not mapped to an SDK v3 package.`);
-                }
+                module = await loadAwsModule(service);
               } catch (e) {
                 throw new Error(`AWS service package for '${service}' could not be imported. Ensure the service is supported in SDK v3.`);
               }
