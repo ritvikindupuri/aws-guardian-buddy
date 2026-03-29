@@ -618,11 +618,13 @@ The edge function exposes **15 tools** to the LLM:
 ```mermaid
 flowchart TD
     A[Receive user query + session credentials] --> B[Validate inputs: messages, content length, sessionToken]
-    B --> C[Construct system prompt + 15 tools + credential context]
+    B --> B2[Intent Classification via Gemini 2.5 Flash Lite]
+    B2 --> B3[Select filtered tool subset based on intent]
+    B3 --> C[Construct system prompt + filtered tools + credential context]
     C --> D[Iteration i = 0]
     D --> E{i == 0?}
-    E -- Yes --> F[Call AI with tool_choice: required]
-    E -- No --> G[Call AI with tool_choice: auto]
+    E -- Yes --> F[Call Gemini 2.5 Flash with tool_choice: required]
+    E -- No --> G[Call Gemini 2.5 Flash with tool_choice: auto]
     F --> H{Response has tool_calls?}
     G --> H
     H -- Yes --> I[Batch ALL tool calls to aws-agent-tools]
@@ -643,24 +645,28 @@ flowchart TD
 ```
 
 <div align="center">
-  <em>Figure 6.1: Agentic Tool-Call Loop — Complete Decision Flow with Batched Tool Dispatch</em>
+  <em>Figure 6.2: Agentic Tool-Call Loop — Complete Decision Flow with Intent-Based Tool Filtering</em>
 </div>
 
-**Figure 6.1 Explanation:**
+**Figure 6.2 Explanation:**
 
-This flowchart details the exact decision logic inside the agentic loop:
+This flowchart details the exact decision logic inside the agentic loop, including the new intent-based routing:
 
 1. **Entry:** The edge function receives validated session credentials (must include `sessionToken`).
 
-2. **Context Construction:** The 575-line system prompt is combined with sanitized conversation history and a credential context string showing the masked key and active region.
+2. **Intent Classification:** Before entering the agentic loop, the user's query (with last 3 messages for context) is sent to Gemini 2.5 Flash Lite for intent classification. This takes ~100-200ms and returns one of 9 categories. On failure, falls back to `general` (all tools).
 
-3. **Iteration Control:** The loop runs up to 15 iterations (`MAX_ITERATIONS = 15`). On iteration 0, `tool_choice` is `"required"`. On all subsequent iterations, `tool_choice` is `"auto"`.
+3. **Tool Filtering:** The classified intent maps to a filtered tool subset. For example, `cost_analysis` includes only 3 tools instead of 15, reducing prompt tokens significantly.
 
-4. **Batched Tool Dispatch:** When the AI returns tool calls, ALL calls in the response are sent in a single POST to `aws-agent-tools`. This is a key architectural decision — it avoids multiple round trips and enables the router to parallelize scanner and ops calls.
+4. **Context Construction:** The 575-line system prompt is combined with sanitized conversation history, a credential context string showing the masked key and active region, and the **filtered** tool definitions.
 
-5. **Audit Metadata:** If any tool result contains a `auditSummary` field (from `run_unified_audit`), it is captured and prepended as a metadata SSE event before the main content stream. The frontend uses this to populate the findings panel.
+5. **Iteration Control:** The loop runs up to 15 iterations (`MAX_ITERATIONS = 15`). On iteration 0, `tool_choice` is `"required"`. On all subsequent iterations, `tool_choice` is `"auto"`. The main model is Gemini 2.5 Flash.
 
-6. **Loop Termination:** Normal exit when AI returns content without tool calls. Max iterations returns: "Agent reached the maximum number of API iterations. Try narrowing your request." AI gateway errors (429, 402, 500) are returned immediately.
+6. **Batched Tool Dispatch:** When the AI returns tool calls, ALL calls in the response are sent in a single POST to `aws-agent-tools`. This is a key architectural decision — it avoids multiple round trips and enables the router to parallelize scanner and ops calls.
+
+7. **Audit Metadata:** If any tool result contains a `auditSummary` field (from `run_unified_audit`), it is captured and prepended as a metadata SSE event before the main content stream. The frontend uses this to populate the findings panel.
+
+8. **Loop Termination:** Normal exit when AI returns content without tool calls. Max iterations returns: "Agent reached the maximum number of API iterations. Try narrowing your request." AI gateway errors (429, 402, 500) are returned immediately.
 
 ---
 
