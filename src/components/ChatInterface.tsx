@@ -6,6 +6,7 @@ import ChatMessage from "@/components/ChatMessage";
 import ThinkingIndicator from "@/components/ThinkingIndicator";
 import QuickActions from "@/components/QuickActions";
 import AwsCredentialsPanel, { type AwsCredentials } from "@/components/AwsCredentialsPanel";
+import VpcRoutingDialog from "@/components/VpcRoutingDialog";
 import FindingsPanel, { type Finding } from "@/components/FindingsPanel";
 import StatusBar from "@/components/StatusBar";
 import ChatHistoryPanel from "@/components/ChatHistoryPanel";
@@ -24,6 +25,10 @@ const ChatInterface = () => {
   const [currentConvId, setCurrentConvId] = useState<string | null>(null);
   const [notificationEmail, setNotificationEmail] = useState<string>(() => {
     return localStorage.getItem("cloudpilot-notification-email") || "";
+  });
+  const [showVpcDialog, setShowVpcDialog] = useState(false);
+  const [vpcSetupActive, setVpcSetupActive] = useState<boolean>(() => {
+    return localStorage.getItem("cloudpilot-vpc-active") === "true";
   });
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -50,6 +55,46 @@ const ChatInterface = () => {
 
   const handleSelectConversation = (id: string) => {
     setCurrentConvId(id);
+  };
+
+  const handleCredentialsSave = (creds: AwsCredentials) => {
+    setCredentials(creds);
+    if (!vpcSetupActive) {
+      setShowVpcDialog(true);
+    }
+  };
+
+  const handleVpcAccept = async () => {
+    setShowVpcDialog(false);
+    setVpcSetupActive(true);
+    localStorage.setItem("cloudpilot-vpc-active", "true");
+
+    // Auto-trigger VPC setup message
+    const prompt = "Please route the AI agent through my AWS VPC by automatically setting up a VPC, subnets, and security groups in my environment. Explain what you are setting up and then confirm when the setup is active.";
+    let convId = currentConvId;
+    if (!convId && user) {
+      try {
+        const conv = await createConversation("Route AI Agent through VPC");
+        convId = conv?.id ?? null;
+        setCurrentConvId(convId);
+      } catch {}
+    }
+    await sendMessage(prompt, credentials, convId);
+  };
+
+  const handleVpcRemove = async () => {
+    const prompt = "Please remove the AWS VPC setup that was created to route the agent. Take down the VPC, subnets, and security groups to avoid any charges.";
+    let convId = currentConvId;
+    if (!convId && user) {
+      try {
+        const conv = await createConversation("Remove AWS VPC Setup");
+        convId = conv?.id ?? null;
+        setCurrentConvId(convId);
+      } catch {}
+    }
+    await sendMessage(prompt, credentials, convId);
+    setVpcSetupActive(false);
+    localStorage.removeItem("cloudpilot-vpc-active");
   };
 
   const handleDeleteConversation = async (id: string) => {
@@ -264,7 +309,7 @@ const ChatInterface = () => {
 
                 {!credentials && (
                   <div className="w-full max-w-sm mb-8">
-                    <AwsCredentialsPanel credentials={credentials} onSave={setCredentials} />
+                    <AwsCredentialsPanel credentials={credentials} onSave={handleCredentialsSave} />
                   </div>
                 )}
 
@@ -407,7 +452,38 @@ const ChatInterface = () => {
             </div>
 
             {/* AWS Credentials */}
-            <AwsCredentialsPanel credentials={credentials} onSave={setCredentials} compact />
+            <AwsCredentialsPanel credentials={credentials} onSave={handleCredentialsSave} compact />
+
+            {/* VPC Routing Management */}
+            {credentials && (
+              <div className="border border-border rounded-lg bg-card p-3 space-y-2">
+                <p className="text-[10px] font-mono text-muted-foreground tracking-widest uppercase">VPC ROUTING</p>
+                {vpcSetupActive ? (
+                  <div className="space-y-2">
+                    <p className="text-[10px] text-green-500 font-mono">Status: Active</p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleVpcRemove}
+                      disabled={isLoading}
+                      className="w-full text-xs text-destructive hover:bg-destructive/10 hover:text-destructive border-destructive/20"
+                    >
+                      Remove AWS VPC Setup
+                    </Button>
+                  </div>
+                ) : (
+                  <Button
+                    variant="action"
+                    size="sm"
+                    onClick={() => setShowVpcDialog(true)}
+                    disabled={isLoading}
+                    className="w-full text-xs"
+                  >
+                    Route Agent through VPC
+                  </Button>
+                )}
+              </div>
+            )}
 
             {/* Notification Email Settings */}
             <NotificationSettings email={notificationEmail} onSave={handleSaveNotificationEmail} />
@@ -486,6 +562,15 @@ const ChatInterface = () => {
           </aside>
         )}
       </div>
+
+      <VpcRoutingDialog
+        open={showVpcDialog}
+        onOpenChange={setShowVpcDialog}
+        credentials={credentials}
+        onAccept={handleVpcAccept}
+        onDecline={() => setShowVpcDialog(false)}
+        onReAuthenticate={handleCredentialsSave}
+      />
     </div>
   );
 };

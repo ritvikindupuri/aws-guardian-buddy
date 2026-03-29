@@ -181,7 +181,21 @@ serve(async (req) => {
       "ec2:DescribeInstances",
       "iam:ListUsers",
       "cloudtrail:DescribeTrails",
-      "guardduty:ListDetectors"
+      "guardduty:ListDetectors",
+      "ec2:CreateVpc",
+      "ec2:CreateSubnet",
+      "ec2:CreateSecurityGroup",
+      "ec2:CreateRouteTable",
+      "ec2:CreateInternetGateway",
+      "ec2:AttachInternetGateway",
+      "ec2:CreateRoute",
+      "ec2:DeleteVpc",
+      "ec2:DeleteSubnet",
+      "ec2:DeleteSecurityGroup",
+      "ec2:DeleteRouteTable",
+      "ec2:DeleteInternetGateway",
+      "ec2:DetachInternetGateway",
+      "ec2:DeleteRoute"
     ];
 
     const permissions: Record<string, boolean> = {};
