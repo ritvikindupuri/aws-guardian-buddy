@@ -160,6 +160,66 @@ export type Database = {
           },
         ]
       }
+      stored_aws_credentials: {
+        Row: {
+          account_id: string | null
+          created_at: string
+          credential_method: string
+          encrypted_access_key_id: string
+          encrypted_secret_access_key: string
+          encrypted_session_token: string | null
+          guardian_enabled: boolean
+          id: string
+          label: string
+          last_scan_at: string | null
+          last_scan_status: string | null
+          notification_email: string | null
+          region: string
+          role_arn: string | null
+          scan_mode: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          account_id?: string | null
+          created_at?: string
+          credential_method?: string
+          encrypted_access_key_id: string
+          encrypted_secret_access_key: string
+          encrypted_session_token?: string | null
+          guardian_enabled?: boolean
+          id?: string
+          label?: string
+          last_scan_at?: string | null
+          last_scan_status?: string | null
+          notification_email?: string | null
+          region?: string
+          role_arn?: string | null
+          scan_mode?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          account_id?: string | null
+          created_at?: string
+          credential_method?: string
+          encrypted_access_key_id?: string
+          encrypted_secret_access_key?: string
+          encrypted_session_token?: string | null
+          guardian_enabled?: boolean
+          id?: string
+          label?: string
+          last_scan_at?: string | null
+          last_scan_status?: string | null
+          notification_email?: string | null
+          region?: string
+          role_arn?: string | null
+          scan_mode?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       unified_audit_cache: {
         Row: {
           account_id: string
