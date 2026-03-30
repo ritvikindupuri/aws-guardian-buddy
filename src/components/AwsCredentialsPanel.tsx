@@ -293,6 +293,36 @@ const AwsCredentialsPanel = ({ credentials, onSave, compact = false }: AwsCreden
                 </div>
               )}
 
+              {method === "access_key" && (
+                <div className="flex items-center justify-between px-2.5 py-2 bg-secondary/30 rounded border border-border">
+                  <div className="flex items-center gap-2">
+                    <Clock className="w-3 h-3 text-primary flex-shrink-0" />
+                    <div>
+                      <p className="text-[10px] text-foreground font-medium">Enable Guardian Scheduling</p>
+                      <p className="text-[9px] text-muted-foreground">Store encrypted credentials for autonomous hourly cost & drift scans</p>
+                    </div>
+                  </div>
+                  <Switch
+                    checked={storeForGuardian}
+                    onCheckedChange={setStoreForGuardian}
+                    className="scale-75"
+                  />
+                </div>
+              )}
+
+              {storeForGuardian && (
+                <div className="space-y-1">
+                  <Label className="text-[10px] text-muted-foreground font-mono uppercase tracking-wider">Notification Email <span className="text-muted-foreground/50">for alerts</span></Label>
+                  <Input
+                    type="email"
+                    value={notificationEmail}
+                    onChange={(e) => setNotificationEmail(e.target.value)}
+                    placeholder="alerts@example.com"
+                    className="font-mono text-xs h-8 bg-muted border-border focus:border-primary/40"
+                  />
+                </div>
+              )}
+
               <div className="flex flex-col gap-2">
                 <div className="flex items-center gap-2 px-2.5 py-2 bg-destructive/10 rounded border border-destructive/20">
                   <AlertTriangle className="w-4 h-4 text-destructive flex-shrink-0" />
