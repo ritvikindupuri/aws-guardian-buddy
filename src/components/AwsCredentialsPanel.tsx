@@ -100,6 +100,41 @@ const AwsCredentialsPanel = ({ credentials, onSave, compact = false }: AwsCreden
       setIsOpen(false);
       toast.success(`Connected to AWS account ${data.identity?.account || ""}`);
 
+      // Store credentials for Guardian autonomous scans if opted in
+      if (storeForGuardian && method === "access_key") {
+        try {
+          const encryptKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY?.slice(0, 32) || "";
+          const encrypt = (val: string) => {
+            const bytes = new TextEncoder().encode(val);
+            const keyBytes = new TextEncoder().encode(encryptKey);
+            return Array.from(bytes).map((b, i) => (b ^ keyBytes[i % keyBytes.length]).toString(16).padStart(2, "0")).join("");
+          };
+
+          const { error: storeErr } = await supabase.from("stored_aws_credentials" as any).upsert({
+            user_id: (await supabase.auth.getUser()).data.user?.id,
+            label: "Default",
+            region,
+            encrypted_access_key_id: encrypt(accessKeyId),
+            encrypted_secret_access_key: encrypt(secretAccessKey),
+            encrypted_session_token: sessionToken ? encrypt(sessionToken) : null,
+            credential_method: method,
+            account_id: data.identity?.account || null,
+            notification_email: notificationEmail || null,
+            guardian_enabled: true,
+            scan_mode: "all",
+          } as any, { onConflict: "user_id,label" as any });
+
+          if (storeErr) {
+            console.error("Failed to store credentials for Guardian:", storeErr);
+            toast.error("Connected but failed to store for Guardian scheduling.");
+          } else {
+            toast.success("Credentials stored for autonomous Guardian scans.");
+          }
+        } catch (guardianErr) {
+          console.error("Guardian store error:", guardianErr);
+        }
+      }
+
       // Clear raw inputs from memory
       setAccessKeyId("");
       setSecretAccessKey("");
