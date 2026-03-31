@@ -143,7 +143,7 @@ This diagram illustrates the complete four-layer architecture of CloudPilot AI a
   - **`aws-exchange-credentials`** (255 lines) — Handles the STS credential exchange protocol. Validates raw user credentials, calls `STS:GetCallerIdentity` and `STS:GetSessionToken` (or `STS:AssumeRole`), performs pre-flight IAM boundary checks via `SimulatePrincipalPolicy`, and returns only temporary session credentials.
   - **`guardian-scheduler`** (850+ lines) — The scheduled automation engine with AES-256-GCM credential decryption and token-bucket rate limiting. Authenticated via `GUARDIAN_AUTOMATION_WEBHOOK_SECRET`, it runs cost anomaly scans, drift detection, and alert dispatch on a schedule triggered by `pg_cron` (PostgreSQL-native cron). Contains full cost data fetching, anomaly detection, idle EC2 analysis, and drift scanning logic. The `pg_cron` job executes hourly using `pg_net` to POST to the function endpoint.
   - **`guardian-event-processor`** (499 lines) — The real-time CloudTrail event reactor. Enriches incoming CloudTrail events, scores risk, matches against built-in and user-defined policies, and executes auto-fix actions (e.g., restoring S3 public access blocks, restarting CloudTrail logging, revoking world-open security group rules). Also triggers runbook executions and records drift events.
-  - **`aws-credential-vault`** (170 lines) — The AES-256-GCM credential encryption/decryption service. Uses PBKDF2 with 100,000 iterations to derive per-user encryption keys from the service role key. Handles `encrypt_and_store` (for client credential submission) and `decrypt` (for guardian-scheduler autonomous scans). See Section 32 for full details.
+  - **`aws-credential-vault`** (170 lines) — The AES-256-GCM credential encryption/decryption service. Uses PBKDF2 with 100,000 iterations to derive per-user encryption keys from the service role key. Handles `encrypt_and_store` (for client credential submission) and `decrypt` (for guardian-scheduler autonomous scans). See Section 34 for full details.
   - **`webhook-notify`** (250 lines) — The external notification dispatcher. Sends Guardian alerts, auto-fix notifications, drift events, and cost anomalies to Slack (Block Kit), PagerDuty (Events API v2), or generic webhook endpoints. Manages webhook registration, listing, and deletion. See Section 36 for full details.
 
 - **AI Layer:** The Lovable AI Gateway proxies requests to two Google Gemini models. The **Intent Classifier** uses Gemini 2.5 Flash Lite (fastest, cheapest) for a single classification call that determines which tool subset to activate. The **Main Agent** uses Gemini 2.5 Flash (balanced speed and capability) for the multi-iteration agentic loop with tool calling. This two-model architecture reduces token usage by 40-70% on focused queries by excluding irrelevant tools from the context.
@@ -1777,7 +1777,7 @@ To enable fully autonomous scanning without manual credential injection, CloudPi
 
 #### Credential Encryption
 
-Credentials are encrypted server-side using **AES-256-GCM** via the `aws-credential-vault` edge function (see Section 32 for full details):
+Credentials are encrypted server-side using **AES-256-GCM** via the `aws-credential-vault` edge function (see Section 34 for full details):
 
 1. **Server-side encryption** (`aws-credential-vault`): The `AwsCredentialsPanel` sends raw credentials over TLS to the vault edge function, which derives a per-user AES-256 key using PBKDF2 (100,000 iterations) from the `SERVICE_ROLE_KEY` and a user-specific salt (`cloudpilot-vault-{user_id}`). Each credential field is encrypted with a random 12-byte IV and stored as `base64(IV || ciphertext)`.
 
@@ -2882,7 +2882,7 @@ Role changes are performed through an inline dialog that:
 1. Shows the current member's truncated user ID for confirmation.
 2. Provides a role selector limited to admin, member, and viewer (owner role cannot be assigned through the UI to prevent privilege escalation).
 3. Displays the selected role's permission description for clarity.
-4. Executes an `UPDATE` on `org_members` via Supabase, protected by RLS policies that ensure only owners and admins can modify roles (see Section 33).
+4. Executes an `UPDATE` on `org_members` via Supabase, protected by RLS policies that ensure only owners and admins can modify roles (see Section 35).
 
 ### Access Control Matrix
 
@@ -2989,11 +2989,11 @@ The following infrastructure is already in place to support SSO:
 
 | Requirement | Status | Implementation |
 |-------------|--------|----------------|
-| Organization model | Ready | `organizations` table with auto-provisioning (Section 33) |
-| Role-based access control | Ready | Four-tier hierarchy with RLS enforcement (Section 33) |
-| Multi-tenant data isolation | Ready | `org_id` on credentials, RLS policies (Section 33) |
-| MFA as fallback | Ready | TOTP enrollment for non-SSO users (Section 34) |
-| Team management UI | Ready | Invite, role assignment, member removal (Section 39) |
+| Organization model | Ready | `organizations` table with auto-provisioning (Section 35) |
+| Role-based access control | Ready | Four-tier hierarchy with RLS enforcement (Section 35) |
+| Multi-tenant data isolation | Ready | `org_id` on credentials, RLS policies (Section 35) |
+| MFA as fallback | Ready | TOTP enrollment for non-SSO users (Section 36) |
+| Team management UI | Ready | Invite, role assignment, member removal (Section 41) |
 | JWT-based session management | Ready | All routes use `useAuth` hook with Supabase JWT |
 
 ### Remaining SSO Implementation Steps
@@ -3063,19 +3063,19 @@ This section tracks the enterprise readiness status of each major capability are
 
 CloudPilot AI represents a significant advancement in applied generative AI for cloud security operations. By bridging the reasoning capabilities of Google's Gemini 2.5 Flash with the strict, deterministic execution of real AWS APIs across 35+ services, it eliminates the "hallucination" problem common in standard chat assistants through its uncompromising Zero Simulation Tolerance policy. The two-model architecture — Gemini 2.5 Flash Lite for intent classification and Gemini 2.5 Flash for the main agent — optimizes for both speed and accuracy, reducing token usage by 40-70% on focused queries.
 
-The architecture is meticulously designed for security at every layer: STS credential exchange ensures raw keys never reach the agent (Section 4); AES-256-GCM encryption with PBKDF2-derived per-user keys protects stored credentials at rest (Section 34); six defense-in-depth gates validate every tool call (Section 10); IAM blocked actions prevent privilege escalation through automation (Section 11); triple-sink audit logging provides forensic-grade accountability (Section 12); and TOTP-based MFA enrollment adds a second authentication factor (Section 36).
+The architecture is meticulously designed for security at every layer: STS credential exchange ensures raw keys never reach the agent (Section 4); AES-256-GCM encryption with PBKDF2-derived per-user keys protects stored credentials at rest (Section 36); six defense-in-depth gates validate every tool call (Section 10); IAM blocked actions prevent privilege escalation through automation (Section 11); triple-sink audit logging provides forensic-grade accountability (Section 12); and TOTP-based MFA enrollment adds a second authentication factor (Section 36).
 
 The backend's decomposed architecture — nine specialized edge functions including the credential vault and webhook dispatcher — ensures reliable deployment and clean separation of concerns. Token-bucket rate limiting (Section 37) protects all endpoints from abuse, while the `aws-executor` dynamic loader pattern solves the bundle timeout problem while supporting all 35 AWS service clients.
 
 The enterprise foundation includes a full RBAC system with four-level role hierarchy (owner/admin/member/viewer), multi-tenant organization isolation, and auto-provisioning triggers (Section 35). The Team Management UI (Section 41) exposes this system through a dedicated page where owners can invite members, assign roles, and manage org-level credential access. External notification integrations via Slack, PagerDuty, and generic webhooks (Section 38) ensure security alerts reach ops teams through their existing toolchains.
 
-The governed automation layer elevates Guardian from safe automation into enterprise-grade governed automation. The dual approval workflow (Section 32) ensures that high-risk operations targeting production IAM, security groups, or organization-wide SCPs require multiple independent approvals before execution, with every decision recorded in `approval_requests` and `approval_actions` for full accountability. Compliance evidence exports (Section 33) bundle all operational data — approvals, audit logs, drift events, runbook executions, and event activity — into SHA-256 hashed JSON artifacts stored in `compliance_evidence_exports`, providing tamper-evident proof of control effectiveness for SOC 2 Type II and similar audits. The immutable audit timeline merges these three data sources into a unified chronological feed, giving auditors a clear narrative from initial request through approval gates to final execution.
+The governed automation layer elevates Guardian from safe automation into enterprise-grade governed automation. The dual approval workflow (Section 32) ensures that high-risk operations targeting production IAM, security groups, or organization-wide SCPs require multiple independent approvals before execution, with every decision recorded in `approval_requests` and `approval_actions` for full accountability. Compliance evidence exports (Section 35) bundle all operational data — approvals, audit logs, drift events, runbook executions, and event activity — into SHA-256 hashed JSON artifacts stored in `compliance_evidence_exports`, providing tamper-evident proof of control effectiveness for SOC 2 Type II and similar audits. The immutable audit timeline merges these three data sources into a unified chronological feed, giving auditors a clear narrative from initial request through approval gates to final execution.
 
-The comprehensive React frontend provides a professional interface with 55+ pre-built security workflows across 8 categories (Section 9), real-time SSE streaming, animated panels, date-grouped chat history, color-coded severity tracking, a guided onboarding wizard for new users (Section 39), and inline MFA/webhook management. The mandatory industry-grade report format (Section 15) ensures every response meets enterprise audit standards with compliance mapping across 17+ frameworks (Section 20).
+The comprehensive React frontend provides a professional interface with 55+ pre-built security workflows across 8 categories (Section 9), real-time SSE streaming, animated panels, date-grouped chat history, color-coded severity tracking, a guided onboarding wizard for new users (Section 41), and inline MFA/webhook management. The mandatory industry-grade report format (Section 15) ensures every response meets enterprise audit standards with compliance mapping across 17+ frameworks (Section 20).
 
 The Guardian automation layer (Section 28) transforms CloudPilot AI from a reactive chat tool into a proactive security operations platform: the scheduler enables continuous posture monitoring via AES-256-GCM encrypted stored credentials and autonomous multi-user scanning, while the event processor provides real-time threat response with auto-fix capabilities restricted to reversible critical events by a strict guardrail. The Operations Control Plane (Section 31) makes every Guardian decision transparent through explicit AUTO-FIX APPLIED / AUTO-FIX SUPPRESSED status badges on each processed event.
 
-Combined with the unified audit engine (Section 23), guarded IAM and security group automation (Sections 24-25), cost anomaly detection (Section 26), baseline-driven drift detection (Section 27), AWS Organizations controls (Section 29), the runbook execution engine (Section 30), the unified Operations Control Plane (Section 31), dual approval workflows (Section 32), compliance evidence exports (Section 33), and Playwright-based E2E testing (Section 40), CloudPilot AI delivers an enterprise-grade security operations platform suitable for regulated industries including financial services, healthcare, and government.
+Combined with the unified audit engine (Section 23), guarded IAM and security group automation (Sections 24-25), cost anomaly detection (Section 26), baseline-driven drift detection (Section 27), AWS Organizations controls (Section 29), the runbook execution engine (Section 30), the unified Operations Control Plane (Section 31), dual approval workflows (Section 32), compliance evidence exports (Section 35), and Playwright-based E2E testing (Section 40), CloudPilot AI delivers an enterprise-grade security operations platform suitable for regulated industries including financial services, healthcare, and government.
 
 For environments requiring the highest level of network isolation, the VPC Endpoint configuration guide (Section 21) enables fully private AWS API routing with zero code changes. The WORM S3 audit archive meets SEC Rule 17a-4, FINRA, CFTC, SOC 2 Type II, and FedRAMP evidence requirements.
 
