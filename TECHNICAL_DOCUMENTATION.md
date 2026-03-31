@@ -2757,7 +2757,7 @@ The wizard renders as a full-screen overlay (`fixed inset-0 z-50`) with a center
 
 ---
 
-## 38. End-to-End Test Suite
+## 40. End-to-End Test Suite
 
 CloudPilot includes a Playwright-based E2E test suite covering authentication, routing, and UI interaction flows.
 
