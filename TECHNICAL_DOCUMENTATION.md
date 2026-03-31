@@ -557,15 +557,15 @@ Before entering the agentic loop, `aws-agent` invokes Gemini 2.5 Flash Lite (the
 flowchart TD
     A[User Query + Conversation Context] --> B[Gemini 2.5 Flash Lite Intent Classifier]
     B --> C{Classified Intent}
-    C -- security_audit --> D[4 tools selected]
-    C -- cost_analysis --> E[3 tools selected]
-    C -- drift_detection --> F[3 tools selected]
-    C -- org_management --> G[3 tools selected]
-    C -- ops_automation --> H[4 tools selected]
-    C -- attack_simulation --> I[3 tools selected]
-    C -- event_automation --> J[3 tools selected]
-    C -- direct_query --> K[1 tool selected]
-    C -- general --> L[All 15 tools]
+    C -->|security_audit| D[4 tools selected]
+    C -->|cost_analysis| E[3 tools selected]
+    C -->|drift_detection| F[3 tools selected]
+    C -->|org_management| G[3 tools selected]
+    C -->|ops_automation| H[4 tools selected]
+    C -->|attack_simulation| I[3 tools selected]
+    C -->|event_automation| J[3 tools selected]
+    C -->|direct_query| K[1 tool selected]
+    C -->|general| L[All 15 tools]
     D --> M[Gemini 2.5 Flash Main Agentic Loop with filtered tools]
     E --> M
     F --> M
@@ -649,23 +649,23 @@ flowchart TD
     B3 --> C[Construct system prompt + filtered tools + credential context]
     C --> D[Iteration i = 0]
     D --> E{i == 0}
-    E -- Yes --> F[Call Gemini 2.5 Flash with tool_choice required]
-    E -- No --> G[Call Gemini 2.5 Flash with tool_choice auto]
+    E -->|Yes| F[Call Gemini 2.5 Flash with tool_choice required]
+    E -->|No| G[Call Gemini 2.5 Flash with tool_choice auto]
     F --> H{Response has tool_calls}
     G --> H
-    H -- Yes --> I[Batch ALL tool calls to aws-agent-tools]
+    H -->|Yes| I[Batch ALL tool calls to aws-agent-tools]
     I --> J[Router dispatches to scanner and ops in parallel]
     J --> K[Scanner and Ops call aws-executor for SDK operations]
     K --> L[Collect all tool results]
     L --> M2[Append tool responses to conversation context]
     M2 --> N[Increment i]
     N --> O{i >= 15}
-    O -- Yes --> P[Return max-iteration warning]
-    O -- No --> D
-    H -- No --> Q[Extract final markdown from AI response]
+    O -->|Yes| P[Return max-iteration warning]
+    O -->|No| D
+    H -->|No| Q[Extract final markdown from AI response]
     Q --> R{Unified audit summary present}
-    R -- Yes --> S[Prepend audit metadata SSE event]
-    R -- No --> T[Stream via SSE - 30 char chunks at 8ms]
+    R -->|Yes| S[Prepend audit metadata SSE event]
+    R -->|No| T[Stream via SSE - 30 char chunks at 8ms]
     S --> T
     T --> U[Terminate with data DONE]
 ```
@@ -715,14 +715,14 @@ The original `aws-agent-tools` function contained all tool logic plus all 35+ `@
 flowchart TD
     A[aws-agent] --> B[aws-agent-tools Router - 75 lines]
     B --> C{Classify tool name}
-    C -- Scanner tools --> D[aws-agent-scanner - 2987 lines]
-    C -- Ops tools --> E[aws-agent-ops - 4572 lines]
+    C -->|Scanner tools| D[aws-agent-scanner - 2987 lines]
+    C -->|Ops tools| E[aws-agent-ops - 4572 lines]
     D --> F[aws-executor - 104 lines]
     E --> F
     F --> G[Dynamic SDK v3 loader - 35+ clients]
     G --> H[AWS APIs]
 
-    subgraph Scanner Tools
+    subgraph "Scanner Tools"
         D1[execute_aws_api]
         D2[run_unified_audit]
         D3[run_cost_anomaly_scan]
@@ -731,7 +731,7 @@ flowchart TD
         D6[run_drift_detection]
     end
 
-    subgraph Ops Tools
+    subgraph "Ops Tools"
         E1[manage_runbook_execution]
         E2[manage_event_response_policy]
         E3[replay_cloudtrail_events]
@@ -902,12 +902,12 @@ flowchart TD
     C --> D[AI System Prompt Constraints]
     D --> E[Tool Call Interception]
     E --> F{Service Allowlist - 35 services}
-    F -- Blocked --> G[Error returned to AI]
-    F -- Allowed --> H{Operation Blocklist - 5 operations}
-    H -- Blocked --> G
-    H -- Allowed --> I{Privilege Escalation Validator}
-    I -- Blocked --> G
-    I -- Allowed --> J[Response Truncation - 100KB max]
+    F -->|Blocked| G[Error returned to AI]
+    F -->|Allowed| H{Operation Blocklist - 5 operations}
+    H -->|Blocked| G
+    H -->|Allowed| I{Privilege Escalation Validator}
+    I -->|Blocked| G
+    I -->|Allowed| J[Response Truncation - 100KB max]
     J --> K[Triple-Sink Audit Logging]
     K --> L[AWS API Execution]
 ```
@@ -1253,15 +1253,15 @@ CloudPilot AI includes an automatic email notification system using the user's o
 flowchart TD
     A[User sends query] --> B[Agent completes security analysis]
     B --> C{Notification email configured?}
-    C -- No --> D[Skip email notification]
-    C -- Yes --> E[Check for CloudPilot-SecurityAlerts topic]
+    C -->|No| D[Skip email notification]
+    C -->|Yes| E[Check for CloudPilot-SecurityAlerts topic]
     E --> F{Topic exists?}
-    F -- No --> G[Create SNS topic]
-    F -- Yes --> H[Check email subscription]
+    F -->|No| G[Create SNS topic]
+    F -->|Yes| H[Check email subscription]
     G --> H
     H --> I{Email subscribed?}
-    I -- No --> J[Subscribe email to topic]
-    I -- Yes --> K[Publish report summary]
+    I -->|No| J[Subscribe email to topic]
+    I -->|Yes| K[Publish report summary]
     J --> L[User receives confirmation email from AWS]
     L --> K
     K --> M[Report delivered to inbox]
@@ -1374,7 +1374,7 @@ The AWS SDK v3 used by `aws-executor` resolves service endpoints via DNS. When a
 
 ```mermaid
 graph LR
-    subgraph User VPC
+    subgraph "User VPC"
         A[CloudPilot Agent SDK Call] --> B[VPC DNS Resolver]
         B --> C[VPC Endpoint Private IP]
     end
@@ -1564,12 +1564,12 @@ flowchart TD
     A[User: Give dev-team read-only S3 access] --> B[manage_iam_access tool]
     B --> C[Generate least-privilege policy]
     C --> D{Safety validation}
-    D -- Contains blocked actions --> E[Reject with explanation]
-    D -- Contains wildcards --> E
-    D -- Safe --> F[Present preview to user]
+    D -->|Contains blocked actions| E[Reject with explanation]
+    D -->|Contains wildcards| E
+    D -->|Safe| F[Present preview to user]
     F --> G{User confirms?}
-    G -- No --> H[No action taken]
-    G -- Yes --> I[Create managed policy]
+    G -->|No| H[No action taken]
+    G -->|Yes| I[Create managed policy]
     I --> J[Attach to principal]
     J --> K[Report success]
 ```
@@ -1617,13 +1617,13 @@ flowchart TD
     B --> C[Resolve security group]
     C --> D[Risk classifier]
     D --> E{Risk level?}
-    E -- BLOCKED --> F[Reject: e.g. port 22 to 0.0.0.0/0]
-    E -- HIGH --> G[Preview with warnings]
-    E -- MEDIUM --> G
-    E -- LOW --> G
+    E -->|BLOCKED| F[Reject: e.g. port 22 to 0.0.0.0/0]
+    E -->|HIGH| G[Preview with warnings]
+    E -->|MEDIUM| G
+    E -->|LOW| G
     G --> H{User confirms?}
-    H -- No --> I[No action taken]
-    H -- Yes --> J[Execute via aws-executor]
+    H -->|No| I[No action taken]
+    H -->|Yes| J[Execute via aws-executor]
     J --> K[Report success with applied rule]
 ```
 
@@ -1667,11 +1667,11 @@ flowchart TD
     A[Fetch 14-day daily cost data via CostExplorer] --> B[Parse by service and date]
     B --> C[Calculate per-service baseline - mean and stdev]
     C --> D{Z-score greater than 2.5}
-    D -- Yes --> E[Statistical spike anomaly]
-    D -- No --> F[Check user-defined rules]
+    D -->|Yes| E[Statistical spike anomaly]
+    D -->|No| F[Check user-defined rules]
     F --> G{Threshold breached}
-    G -- Yes --> H[Threshold breach anomaly]
-    G -- No --> I[No anomaly]
+    G -->|Yes| H[Threshold breach anomaly]
+    G -->|No| I[No anomaly]
     E --> J[Find idle EC2 instances - CPU under 2 pct avg over 24h]
     H --> J
     J --> K[Generate remediation suggestions]
@@ -1715,13 +1715,13 @@ flowchart TD
     C --> D[Capture current snapshots]
     D --> E[Compare fingerprints]
     E --> F{Fingerprint changed}
-    F -- No --> G[No drift]
-    F -- Yes --> H[Compute structured diff]
+    F -->|No| G[No drift]
+    F -->|Yes| H[Compute structured diff]
     H --> I[Score severity]
     I --> J[Generate formal digest]
     J --> K{Intentional change}
-    K -- Yes --> L[Acknowledge and update baseline]
-    K -- No --> M2[Alert and recommend fix]
+    K -->|Yes| L[Acknowledge and update baseline]
+    K -->|No| M2[Alert and recommend fix]
 ```
 
 <div align="center">
@@ -1841,15 +1841,15 @@ Triggered by `pg_cron` with no credentials in the request body. The scheduler de
 flowchart TD
     A[pg_cron hourly trigger] --> B[pg_net HTTP POST to guardian-scheduler]
     B --> C{Credentials in body?}
-    C -- Yes --> D[Manual mode: single user scan]
-    C -- No --> E[Autonomous mode]
+    C -->|Yes| D[Manual mode: single user scan]
+    C -->|No| E[Autonomous mode]
     E --> F[Fetch all guardian_enabled credentials]
     F --> G[Decrypt each credential set]
     G --> H[For each user: run configured scans]
     H --> I{Scan mode}
-    I -- cost --> J[Cost anomaly detection]
-    I -- drift --> K[Drift baseline comparison]
-    I -- all --> L[Both cost and drift]
+    I -->|cost| J[Cost anomaly detection]
+    I -->|drift| K[Drift baseline comparison]
+    I -->|all| L[Both cost and drift]
     J --> M[Update last_scan_status]
     K --> M
     L --> M
@@ -1876,18 +1876,18 @@ flowchart TD
     D --> E[Enrich event]
     E --> F[Score risk]
     F --> G{Actor is Guardian}
-    G -- Yes --> H[Skip to prevent loops]
-    G -- No --> I[Match against policies]
+    G -->|Yes| H[Skip to prevent loops]
+    G -->|No| I[Match against policies]
     I --> J{Matching policies}
-    J -- No --> K[No action]
-    J -- Yes --> L{Response type}
-    L -- auto_fix --> M3[Check auto-fix guardrail]
-    L -- notify --> N[Publish SNS alert]
-    L -- runbook --> O[Create runbook execution]
-    L -- all --> P[All three actions]
+    J -->|No| K[No action]
+    J -->|Yes| L{Response type}
+    L -->|auto_fix| M3[Check auto-fix guardrail]
+    L -->|notify| N[Publish SNS alert]
+    L -->|runbook| O[Create runbook execution]
+    L -->|all| P[All three actions]
     M3 --> Q{Guardrail pass}
-    Q -- Yes --> R[Execute auto-fix]
-    Q -- No --> S[Suppress and log reason]
+    Q -->|Yes| R[Execute auto-fix]
+    Q -->|No| S[Suppress and log reason]
     R --> T[Record in guardian_event_activity]
     S --> T
     N --> T
@@ -1931,8 +1931,8 @@ flowchart TD
     A[pg_cron Extension - Hourly Schedule] --> B[pg_net HTTP POST]
     B --> C[guardian-scheduler Edge Function]
     C --> D{x-guardian-secret validation}
-    D -- Valid --> E[Autonomous mode: all stored credentials]
-    D -- Invalid --> F[400 Unauthorized]
+    D -->|Valid| E[Autonomous mode: all stored credentials]
+    D -->|Invalid| F[400 Unauthorized]
     E --> G[Cost and drift scans per user]
     G --> H[SNS alerts for anomalies]
     G --> I[Update scan status in DB]
@@ -2040,11 +2040,11 @@ flowchart TD
     E --> F{User: run playbook}
     F --> G[Execute automatic steps]
     G --> H{Confirmation step?}
-    H -- Yes --> I[Pause and prompt user]
+    H -->|Yes| I[Pause and prompt user]
     I --> J{User: confirm}
     J --> K[Execute confirmation step]
     K --> G
-    H -- No --> L[Continue to next step]
+    H -->|No| L[Continue to next step]
     L --> G
     G --> M[All steps complete]
     M --> N[Produce formal completion report]
@@ -2068,20 +2068,20 @@ All automation features from Sections 22–30 converge in the Operations Control
 
 ```mermaid
 graph TB
-    subgraph AWS Environment
+    subgraph "AWS Environment"
         A[CloudTrail Events] --> B[EventBridge Rule]
         B --> C[Lambda Forwarder]
         D[pg_cron Hourly] --> E[guardian-scheduler]
     end
 
-    subgraph CloudPilot Backend
+    subgraph "CloudPilot Backend"
         C --> F[guardian-event-processor]
         E --> G[Cost and Drift Evaluator]
         F --> H[(Supabase DB)]
         G --> H
     end
 
-    subgraph Operations Control Plane
+    subgraph "Operations Control Plane"
         H -.-> I[Live Dashboard Updates via Realtime]
         I --> J[Event Policies View]
         I --> K[Cost Rules View]
@@ -2130,12 +2130,12 @@ The auto-fix status system is a key trust mechanism for Guardian automation. Rat
 ```mermaid
 flowchart TD
     A[guardian_event_activity row] --> B{auto_fixes array present}
-    B -- Empty or null --> C[NO AUTO-FIX badge]
-    B -- Has items --> D[Inspect each item]
+    B -->|Empty or null| C[NO AUTO-FIX badge]
+    B -->|Has items| D[Inspect each item]
     D --> E{Any item with applied = true}
-    E -- Yes --> F[AUTO-FIX APPLIED badge]
-    E -- No --> G{Any item with skipped = true or applied = false}
-    G -- Yes --> H[AUTO-FIX SUPPRESSED badge]
+    E -->|Yes| F[AUTO-FIX APPLIED badge]
+    E -->|No| G{Any item with skipped = true or applied = false}
+    G -->|Yes| H[AUTO-FIX SUPPRESSED badge]
     F --> I[Show count of applied and suppressed actions]
     H --> J[Show count suppressed by policy guardrails]
     C --> K[Show No automatic remediation was attempted]
@@ -2376,10 +2376,10 @@ flowchart TD
     A[Incoming request to edge function] --> B[Compute rate limit key]
     B --> C[Query rate_limit_entries table for key within window]
     C --> D{Entry exists?}
-    D -- No --> E[Insert new entry with count = 1]
-    D -- Yes --> F{Count >= max?}
-    F -- Yes --> G[Return 429 Too Many Requests with Retry-After header]
-    F -- No --> H[Increment request_count]
+    D -->|No| E[Insert new entry with count = 1]
+    D -->|Yes| F{Count >= max?}
+    F -->|Yes| G[Return 429 Too Many Requests with Retry-After header]
+    F -->|No| H[Increment request_count]
     E --> I[Process request normally]
     H --> I
 ```
@@ -2424,9 +2424,9 @@ The `webhook-notify` edge function enables Guardian alerts, auto-fix notificatio
 flowchart LR
     A[Guardian Event / Scan Result] --> B[webhook-notify Edge Function]
     B --> C{Channel Type}
-    C -- Slack --> D[Rich Block Kit message with color-coded severity]
-    C -- PagerDuty --> E[Events API v2 trigger with routing key]
-    C -- Generic --> F[Standard JSON POST to any URL]
+    C -->|Slack| D[Rich Block Kit message with color-coded severity]
+    C -->|PagerDuty| E[Events API v2 trigger with routing key]
+    C -->|Generic| F[Standard JSON POST to any URL]
     D --> G[Slack Channel]
     E --> H[PagerDuty Service]
     F --> I[Custom Endpoint]
