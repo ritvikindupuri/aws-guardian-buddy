@@ -2954,7 +2954,7 @@ The `team-invite` edge function supports two actions: `invite` (add a user by em
 
 ---
 
-## 40. SSO/SAML Integration Preparation
+## 42. SSO/SAML Integration Preparation
 
 Enterprise procurement universally requires Single Sign-On (SSO) support, typically via SAML 2.0 or OpenID Connect (OIDC). While full SSO implementation requires identity provider (IdP) configuration that varies per customer, CloudPilot's architecture is designed to support SSO integration with minimal changes.
 
