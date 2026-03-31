@@ -2594,7 +2594,7 @@ The `MfaSetup` component in the sidebar provides:
 
 ---
 
-## 35. Edge Function Rate Limiting
+## 37. Edge Function Rate Limiting
 
 All edge functions are protected by a server-side token-bucket rate limiter using the `rate_limit_entries` table. This prevents abuse, DoS attacks, and runaway automation loops.
 
