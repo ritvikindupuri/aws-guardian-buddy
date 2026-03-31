@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Users, UserPlus, Shield, Crown, Eye, Trash2, ChevronDown } from "lucide-react";
+import { ArrowLeft, Users, UserPlus, Shield, Crown, Eye, Trash2, ChevronDown, Mail } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
@@ -74,20 +74,37 @@ const Team = () => {
 
     if (orgData) setOrg(orgData);
 
-    // Load all members of this org
-    const { data: membersData } = await supabase
-      .from("org_members")
-      .select("*")
-      .eq("org_id", membership.org_id)
-      .order("joined_at", { ascending: true });
+    // Load members with emails via edge function
+    try {
+      const { data, error } = await supabase.functions.invoke("team-invite", {
+        body: { action: "list_members_with_emails", org_id: membership.org_id },
+      });
 
-    if (membersData) {
-      setMembers(membersData.map((m) => ({
-        id: m.id,
-        user_id: m.user_id,
-        role: m.role as AppRole,
-        joined_at: m.joined_at,
-      })));
+      if (!error && data?.members) {
+        setMembers(data.members.map((m: any) => ({
+          id: m.id,
+          user_id: m.user_id,
+          role: m.role as AppRole,
+          joined_at: m.joined_at,
+          email: m.email || undefined,
+        })));
+      }
+    } catch {
+      // Fallback: load from org_members directly (no emails)
+      const { data: membersData } = await supabase
+        .from("org_members")
+        .select("*")
+        .eq("org_id", membership.org_id)
+        .order("joined_at", { ascending: true });
+
+      if (membersData) {
+        setMembers(membersData.map((m) => ({
+          id: m.id,
+          user_id: m.user_id,
+          role: m.role as AppRole,
+          joined_at: m.joined_at,
+        })));
+      }
     }
 
     setLoading(false);
@@ -102,18 +119,37 @@ const Team = () => {
     setInviting(true);
 
     try {
-      // Look up user by email — we need them to have signed up first
-      // Since we can't query auth.users, we check if a user with this email exists
-      // by attempting to find their org membership or using an edge function
-      // For now, we create a placeholder membership that gets resolved on login
-      
-      // Actually, we need the user_id. In a production app, you'd use an edge function
-      // to look up the user by email. For now, show a message.
-      toast.info(
-        "Invite sent! The user will be added to your organization when they sign up with this email.",
-        { duration: 5000 }
-      );
-      
+      const { data, error } = await supabase.functions.invoke("team-invite", {
+        body: {
+          action: "invite",
+          email: inviteEmail.trim(),
+          role: inviteRole,
+          org_id: org.id,
+        },
+      });
+
+      if (error) {
+        const errMsg = typeof data === "object" && data?.error ? data.error : "Failed to send invite";
+        toast.error(errMsg);
+        return;
+      }
+
+      if (data?.error) {
+        toast.error(data.error);
+        return;
+      }
+
+      if (data?.member) {
+        setMembers((prev) => [...prev, {
+          id: data.member.id,
+          user_id: data.member.user_id,
+          role: data.member.role as AppRole,
+          joined_at: data.member.joined_at,
+          email: data.member.email,
+        }]);
+        toast.success(`${data.member.email} added as ${inviteRole}`);
+      }
+
       setShowInvite(false);
       setInviteEmail("");
       setInviteRole("member");
@@ -265,7 +301,7 @@ const Team = () => {
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <p className="text-sm font-semibold text-foreground truncate">
-                          {isMe ? "You" : `User ${member.user_id.slice(0, 8)}...`}
+                          {isMe ? "You" : member.email || `User ${member.user_id.slice(0, 8)}...`}
                         </p>
                         {isMe && (
                           <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/30">

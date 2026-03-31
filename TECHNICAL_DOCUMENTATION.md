@@ -60,8 +60,9 @@ By tightly coupling LLM reasoning capabilities with strict, restricted, and audi
 37. [Guided Onboarding Wizard](#37-guided-onboarding-wizard)
 38. [End-to-End Test Suite](#38-end-to-end-test-suite)
 39. [Team Management UI](#39-team-management-ui)
-40. [Production Readiness Roadmap](#40-production-readiness-roadmap)
-41. [Conclusion](#41-conclusion)
+40. [SSO/SAML Integration Preparation](#40-ssosaml-integration-preparation)
+41. [Production Readiness Roadmap](#41-production-readiness-roadmap)
+42. [Conclusion](#42-conclusion)
 
 ---
 
@@ -2676,9 +2677,126 @@ The Team page is accessible from:
 
 This UI is the operational frontend for the RBAC infrastructure documented in Section 33. The database schema (`organizations`, `org_members`, `user_roles`), security definer functions (`is_org_member`, `get_org_role`, `has_role`), and RLS policies all power the Team page's data access and mutation controls. The auto-provisioning trigger ensures every new user has an organization ready for team management from their first login.
 
+### `team-invite` Edge Function
+
+The invite and member listing operations are handled by a dedicated `team-invite` edge function that uses the service role to access `auth.users` — something the client cannot do directly.
+
+```mermaid
+flowchart TD
+    A[Team Page] --> B{Action}
+    B -- invite --> C[team-invite Edge Function]
+    B -- list_members_with_emails --> D[team-invite Edge Function]
+    C --> E[Authenticate caller via JWT]
+    E --> F[Verify caller is owner/admin via org_members]
+    F --> G[Look up invitee by email via auth.admin.listUsers]
+    G --> H{User found?}
+    H -- Yes --> I[Check not already a member]
+    I --> J[Insert into org_members with role and invited_by]
+    J --> K[Return enriched member object with email]
+    H -- No --> L[Return 404 - user must sign up first]
+    D --> M[Authenticate caller via JWT]
+    M --> N[Verify caller is org member]
+    N --> O[Fetch all org_members for org_id]
+    O --> P[Resolve emails from auth.admin.listUsers]
+    P --> Q[Return enriched member list]
+```
+
+<div align="center">
+  <em>Figure 39.3: team-invite Edge Function — Invite and Member Listing Flow</em>
+</div>
+
+**Figure 39.3 Explanation:**
+
+The `team-invite` edge function supports two actions: `invite` (add a user by email) and `list_members_with_emails` (return all members with resolved email addresses). For invites, the function authenticates the caller, verifies they have owner or admin privileges, looks up the target user by email using the admin API, checks for duplicate membership, and inserts the new member with the specified role. For listing, it resolves all member user IDs to email addresses using the admin API, which is not accessible from the client. Both actions use the service role for privileged operations while enforcing authorization checks in code.
+
+| Action | Input | Authorization | Output |
+|--------|-------|---------------|--------|
+| `invite` | email, role, org_id | Caller must be owner/admin | New member with email |
+| `list_members_with_emails` | org_id | Caller must be org member | All members with emails |
+
+### Error Handling
+
+| Scenario | Status | Message |
+|----------|--------|---------|
+| User not found by email | 404 | "No user found with that email. They must create a CloudPilot account first." |
+| Already a member | 409 | "This user is already a member of your organization" |
+| Caller not authorized | 403 | "You must be an owner or admin to invite members" |
+| Invalid role | 400 | "Invalid role. Must be one of: admin, member, viewer" |
+
 ---
 
-## 40. Production Readiness Roadmap
+## 40. SSO/SAML Integration Preparation
+
+Enterprise procurement universally requires Single Sign-On (SSO) support, typically via SAML 2.0 or OpenID Connect (OIDC). While full SSO implementation requires identity provider (IdP) configuration that varies per customer, CloudPilot's architecture is designed to support SSO integration with minimal changes.
+
+### Current Authentication Architecture
+
+```mermaid
+flowchart TD
+    A[User] --> B{Auth Method}
+    B -- Email/Password --> C[Supabase Auth]
+    B -- TOTP MFA --> D[MFA Challenge]
+    B -- Future: SSO/SAML --> E[IdP Redirect]
+    C --> F[JWT Session]
+    D --> F
+    E --> G[SAML Assertion]
+    G --> H[Supabase Auth SSO Provider]
+    H --> F
+    F --> I[Protected Routes]
+    I --> J[RBAC via org_members]
+```
+
+<div align="center">
+  <em>Figure 40.1: Authentication Architecture — Current and Planned SSO Integration Path</em>
+</div>
+
+**Figure 40.1 Explanation:**
+
+The current authentication flow supports email/password with optional TOTP MFA. The SSO path shows the planned integration: users would be redirected to their organization's identity provider, which returns a SAML assertion. The authentication backend validates this assertion and issues a standard JWT session, which flows into the same RBAC system used by all other auth methods. This means no changes are needed to the authorization layer — SSO users get the same `org_members` roles and RLS-enforced data isolation as email/password users.
+
+### SSO Readiness Checklist
+
+The following infrastructure is already in place to support SSO:
+
+| Requirement | Status | Implementation |
+|-------------|--------|----------------|
+| Organization model | Ready | `organizations` table with auto-provisioning (Section 33) |
+| Role-based access control | Ready | Four-tier hierarchy with RLS enforcement (Section 33) |
+| Multi-tenant data isolation | Ready | `org_id` on credentials, RLS policies (Section 33) |
+| MFA as fallback | Ready | TOTP enrollment for non-SSO users (Section 34) |
+| Team management UI | Ready | Invite, role assignment, member removal (Section 39) |
+| JWT-based session management | Ready | All routes use `useAuth` hook with Supabase JWT |
+
+### Remaining SSO Implementation Steps
+
+| Step | Complexity | Description |
+|------|-----------|-------------|
+| 1. IdP configuration | Per-customer | Register CloudPilot as a Service Provider in Okta, Azure AD, or OneLogin |
+| 2. SAML metadata exchange | Low | Upload IdP metadata XML to authentication configuration |
+| 3. SSO login button | Low | Add "Sign in with SSO" to Auth page with org slug input |
+| 4. Domain-to-org mapping | Medium | Map email domains to organizations for automatic SSO routing |
+| 5. JIT provisioning | Medium | Auto-create org membership on first SSO login |
+| 6. Forced SSO policy | Low | Org-level setting to disable email/password for SSO-only orgs |
+
+### Enterprise IdP Compatibility
+
+| Identity Provider | Protocol | Status |
+|-------------------|----------|--------|
+| Okta | SAML 2.0 | Architecture ready, configuration pending |
+| Azure AD / Entra ID | SAML 2.0 / OIDC | Architecture ready, configuration pending |
+| OneLogin | SAML 2.0 | Architecture ready, configuration pending |
+| Google Workspace | OIDC | Architecture ready, configuration pending |
+| PingFederate | SAML 2.0 | Architecture ready, configuration pending |
+
+### Security Considerations
+
+- **SSO + MFA**: Organizations can enforce SSO for primary authentication while the IdP handles MFA, or use CloudPilot's built-in TOTP as a secondary factor.
+- **Session binding**: SSO sessions are bound to the same JWT infrastructure, ensuring RLS policies and audit logging work identically regardless of auth method.
+- **JIT provisioning guardrails**: When a user authenticates via SSO for the first time, they should be added to the correct organization as a `member` role by default. Elevated roles require explicit assignment by an owner or admin through the Team Management UI.
+
+---
+
+## 41. Production Readiness Roadmap
 
 This section tracks the enterprise readiness status of each major capability area.
 
@@ -2692,14 +2810,15 @@ This section tracks the enterprise readiness status of each major capability are
 | Edge function rate limiting | Token-bucket on guardian-scheduler | 35 |
 | Slack/PagerDuty webhooks | Edge function + UI component | 36 |
 | Onboarding wizard | 4-step guided flow | 37 |
-| Team management UI | Full page with invite, role assignment, and removal | 39 |
 | E2E test suite (Playwright) | Auth + routing coverage | 38 |
+| Team management UI + invite edge function | Full page with email-based invites | 39 |
+| SSO/SAML architecture preparation | Readiness checklist and integration plan | 40 |
 
 ### Remaining Enterprise Requirements
 
 | Feature | Priority | Status |
 |---------|----------|--------|
-| SSO/SAML integration | HIGH | Not started — requires identity provider configuration |
+| SSO/SAML IdP configuration | HIGH | Architecture ready, per-customer setup pending |
 | Billing/subscription layer | MEDIUM | Not started |
 | API key rotation UI | MEDIUM | Not started |
 | Exportable compliance reports (PDF/CSV) | MEDIUM | PDF export exists, CSV not implemented |
@@ -2709,7 +2828,7 @@ This section tracks the enterprise readiness status of each major capability are
 
 ---
 
-## 41. Conclusion
+## 42. Conclusion
 
 CloudPilot AI represents a significant advancement in applied generative AI for cloud security operations. By bridging the reasoning capabilities of Google's Gemini 2.5 Flash with the strict, deterministic execution of real AWS APIs across 35+ services, it eliminates the "hallucination" problem common in standard chat assistants through its uncompromising Zero Simulation Tolerance policy. The two-model architecture — Gemini 2.5 Flash Lite for intent classification and Gemini 2.5 Flash for the main agent — optimizes for both speed and accuracy, reducing token usage by 40-70% on focused queries.
 
