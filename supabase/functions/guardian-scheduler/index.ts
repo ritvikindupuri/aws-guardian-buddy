@@ -713,6 +713,41 @@ serve(async (req) => {
       REQUIRED_SCHEDULER_ENVS.supabaseServiceRoleKey,
     );
 
+    // ── Rate limiting via token bucket in rate_limit_entries table ──
+    const rateLimitKey = `guardian-scheduler:${body.userId || "autonomous"}`;
+    const windowMinutes = 5;
+    const maxRequests = 10;
+    const now = new Date();
+    const windowStart = new Date(now.getTime() - windowMinutes * 60 * 1000);
+
+    const { data: rlEntry } = await supabaseAdmin
+      .from("rate_limit_entries")
+      .select("*")
+      .eq("key", rateLimitKey)
+      .gte("window_start", windowStart.toISOString())
+      .maybeSingle();
+
+    if (rlEntry && rlEntry.request_count >= maxRequests) {
+      return new Response(JSON.stringify({
+        error: "Rate limit exceeded. Max 10 requests per 5 minutes.",
+        retryAfter: windowMinutes * 60,
+      }), {
+        status: 429,
+        headers: { ...corsHeaders, "Content-Type": "application/json", "Retry-After": String(windowMinutes * 60) },
+      });
+    }
+
+    if (rlEntry) {
+      await supabaseAdmin
+        .from("rate_limit_entries")
+        .update({ request_count: rlEntry.request_count + 1 })
+        .eq("id", rlEntry.id);
+    } else {
+      await supabaseAdmin
+        .from("rate_limit_entries")
+        .insert({ key: rateLimitKey, request_count: 1, window_start: now.toISOString() });
+    }
+
     // ── Autonomous mode: pg_cron invocation with no credentials in body ──
     const isAutonomous = !body.credentials && (
       req.headers.get("x-guardian-secret") === AUTOMATION_SECRET ||
