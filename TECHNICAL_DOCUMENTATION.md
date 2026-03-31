@@ -2645,7 +2645,7 @@ RLS: Service role only — the rate limit table is not accessible to authenticat
 
 ---
 
-## 36. Webhook Notification Integrations — Slack, PagerDuty & Generic
+## 38. Webhook Notification Integrations — Slack, PagerDuty & Generic
 
 The `webhook-notify` edge function enables Guardian alerts, auto-fix notifications, drift events, and cost anomalies to be delivered to external channels in real time.
 
