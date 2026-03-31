@@ -2407,10 +2407,10 @@ flowchart LR
 ```
 
 <div align="center">
-  <em>Figure 32.1: AES-256-GCM Credential Encryption Flow</em>
+  <em>Figure 34.1: AES-256-GCM Credential Encryption Flow</em>
 </div>
 
-**Figure 32.1 Explanation:**
+**Figure 34.1 Explanation:**
 
 Raw AWS credentials never persist on the client. When the user opts into Guardian scheduling, the `AwsCredentialsPanel` sends the raw keys to the `aws-credential-vault` edge function over TLS. The function authenticates the caller via their JWT, derives a user-specific AES-256 key using PBKDF2, encrypts each credential field (access key ID, secret access key, optional session token) with AES-256-GCM using a cryptographically random 12-byte IV, and stores the result as `base64(IV || ciphertext)` in the `stored_aws_credentials` table. The `guardian-scheduler` uses the identical PBKDF2 derivation to decrypt credentials during autonomous scans.
 
@@ -2481,10 +2481,10 @@ flowchart TD
 ```
 
 <div align="center">
-  <em>Figure 33.1: RBAC Role Hierarchy</em>
+  <em>Figure 35.1: RBAC Role Hierarchy</em>
 </div>
 
-**Figure 33.1 Explanation:**
+**Figure 35.1 Explanation:**
 
 The `app_role` enum defines four levels: `owner`, `admin`, `member`, and `viewer`. Each level inherits the permissions of levels below it. Owners have full control including billing and organization deletion. Admins can manage members and credentials. Members can use the agent and manage their own resources. Viewers have read-only access.
 
