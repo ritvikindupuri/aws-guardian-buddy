@@ -2155,7 +2155,234 @@ The `summarizeAutoFixState` function in Operations.tsx reads the `auto_fixes` JS
 
 ---
 
-## 32. AES-256-GCM Credential Vault
+## 32. Dual Approval Workflow — Governed High-Risk Execution
+
+Guardian's automation layer enforces a strict dual approval workflow for high-risk operations, moving beyond simple single-confirmation gates into a governed execution model with clear accountability chains. This applies to production IAM policy changes, security group mutations on production resources, and organization-wide SCP rollouts — any action where a mistake could have blast-radius consequences.
+
+### Approval Architecture
+
+The approval system is built around two database tables — `approval_requests` and `approval_actions` — and a set of server-side functions in `aws-agent-ops/index.ts` that manage the full lifecycle from request creation through approval collection to final execution or failure.
+
+```mermaid
+sequenceDiagram
+    participant User as Requesting User
+    participant Agent as aws-agent-ops
+    participant DB as approval_requests Table
+    participant Approver1 as Approver A
+    participant Approver2 as Approver B
+    participant AWS as AWS API
+
+    User->>Agent: Request high-risk operation
+    Agent->>Agent: Evaluate risk level and environment
+    Agent->>DB: upsertApprovalRequest (status: pending_approval)
+    Agent-->>User: Preview with approval status (0/2 approvals)
+    
+    Approver1->>Agent: Approve (decision: approve)
+    Agent->>DB: recordApprovalAction (Approver A)
+    Agent->>DB: refreshApprovalRequestState (1/2)
+    Agent-->>Approver1: Partial approval (1/2, still pending)
+    
+    Approver2->>Agent: Approve (decision: approve)
+    Agent->>DB: recordApprovalAction (Approver B)
+    Agent->>DB: refreshApprovalRequestState (2/2)
+    Note over DB: Status transitions to approved
+    Agent->>AWS: Execute operation
+    Agent->>DB: markApprovalRequestExecuted
+    Agent-->>User: Execution complete with evidence
+```
+
+<div align="center">
+  <em>Figure 32.1: Dual Approval Sequence — From Request Through Multi-Approver Gate to Execution</em>
+</div>
+
+**Figure 32.1 Explanation:**
+
+When a user requests a high-risk operation, the agent evaluates the risk level and target environment. If the operation targets production resources or has organization-wide scope, the `requiredApprovals` count is set to 2 (or more), triggering the dual approval path. The `upsertApprovalRequest` function creates or updates a row in `approval_requests` with `dual_approval_required: true` and `status: pending_approval`. Each subsequent approval is recorded as a separate row in `approval_actions` with a unique constraint on `(approval_request_id, approver_user_id)` to prevent duplicate approvals from the same user. The `refreshApprovalRequestState` function recalculates the approval count and transitions the status to `approved` only when the threshold is met.
+
+### Server-Side Approval Functions
+
+The approval workflow is implemented through five coordinated functions in the `aws-agent-ops` edge function:
+
+| Function | Purpose | Key Behavior |
+|----------|---------|--------------|
+| `upsertApprovalRequest` | Creates or updates an approval request | Sets `dual_approval_required` flag based on `requiredApprovals > 1`; idempotent on `request_key` |
+| `recordApprovalAction` | Records an individual approver's decision | Uses `onConflict: "approval_request_id,approver_user_id"` to enforce one vote per approver |
+| `refreshApprovalRequestState` | Recalculates approval count and status | Counts distinct approvers with `decision = "approve"`; transitions to `approved` when threshold met |
+| `markApprovalRequestExecuted` | Records successful execution | Sets `status: "executed"`, stores `execution_payload`, and timestamps `executed_at` |
+| `markApprovalRequestFailed` | Records execution failure | Sets `status: "failed"` with error payload for post-mortem analysis |
+
+### Risk Classification and Approval Thresholds
+
+```mermaid
+flowchart TD
+    A[Incoming Operation] --> B{Target Environment}
+    B -- Production --> C{Operation Type}
+    B -- Non-production --> D[Single Approval Flow]
+    C -- IAM Policy Change --> E[Dual Approval Required]
+    C -- Security Group Mutation --> E
+    C -- Org-wide SCP Rollout --> F[Dual Approval + Rollback Required]
+    C -- Other --> D
+    D --> G[requiredApprovals = 1]
+    E --> H[requiredApprovals = 2]
+    F --> I[requiredApprovals = 2 + rollback plan mandatory]
+    G --> J[Standard confirm flow]
+    H --> K[Approval workflow with tracking]
+    I --> K
+```
+
+<div align="center">
+  <em>Figure 32.2: Risk Classification — How Operations Are Routed to Single or Dual Approval</em>
+</div>
+
+**Figure 32.2 Explanation:**
+
+The risk classification logic evaluates two dimensions: target environment and operation type. Production-targeted IAM changes, security group mutations, and organization-wide SCP rollouts require dual approval (`requiredApprovals = 2`). SCP rollouts additionally mandate a rollback plan as part of the approval preview. Non-production operations and lower-risk changes follow the standard single-confirmation flow. This classification ensures that the approval overhead is proportional to the blast radius of the operation.
+
+### Operations UI Integration
+
+The Operations Control Plane (Section 31) renders the approval workflow through a dedicated "Approval Workflows" panel that displays all `approval_requests` rows with:
+
+- **Summary**: Human-readable description of the pending operation
+- **Risk level badge**: Color-coded severity indicator (CRITICAL, HIGH, MEDIUM)
+- **Status badge**: Current workflow state (`pending_approval`, `approved`, `executed`, `failed`)
+- **Approval progress**: Shows `current_approvals / required_approvals` with dual approval indicator
+- **Approver records**: Lists each approver's truncated user ID and their decision
+
+The approval data is fetched via Supabase Realtime subscriptions on both `approval_requests` and `approval_actions` tables, ensuring the UI updates immediately when any team member submits an approval.
+
+### Approval Request Schema
+
+| Column | Type | Purpose |
+|--------|------|---------|
+| `request_key` | text | Idempotent key for deduplication |
+| `request_hash` | text | Content hash for integrity verification |
+| `operation_name` | text | The specific operation being approved |
+| `requester_user_id` | uuid | User who initiated the request |
+| `summary` | text | Human-readable operation description |
+| `risk_level` | text | CRITICAL, HIGH, MEDIUM, or LOW |
+| `required_approvals` | integer | Number of distinct approvals needed |
+| `current_approvals` | integer | Count of approvals received so far |
+| `dual_approval_required` | boolean | True when `required_approvals > 1` |
+| `status` | text | `pending_approval`, `approved`, `executed`, or `failed` |
+| `preview_payload` | jsonb | Full preview of what the operation will do |
+| `request_payload` | jsonb | The actual parameters for execution |
+| `evidence_payload` | jsonb | Compliance evidence captured at request time |
+| `execution_payload` | jsonb | Result payload after execution completes |
+| `executed_at` | timestamptz | Timestamp of execution (null until executed) |
+| `last_approved_at` | timestamptz | Timestamp of most recent approval |
+
+---
+
+## 33. Compliance Evidence Exports & Immutable Audit Timeline
+
+Enterprise compliance audits require demonstrable proof that security automation operated within governed boundaries. The compliance evidence export system and immutable audit timeline address this by providing cryptographically hashed evidence bundles and a unified, chronological view of all Guardian decisions, approvals, and executions.
+
+### Evidence Export Architecture
+
+```mermaid
+flowchart TD
+    A[Generate Export Button] --> B[Collect Evidence Bundle]
+    B --> C[Approval Requests]
+    B --> D[Approval Actions]
+    B --> E[Agent Audit Logs]
+    B --> F[Drift Events]
+    B --> G[Runbook Executions]
+    B --> H[Org History]
+    B --> I[Automation Runs]
+    B --> J[Live Event Activity]
+    C & D & E & F & G & H & I & J --> K[JSON Bundle Assembly]
+    K --> L[SHA-256 Hash Computation]
+    L --> M[Store in compliance_evidence_exports]
+    L --> N[Download as JSON File]
+    M --> O[Immutable Record with Hash]
+```
+
+<div align="center">
+  <em>Figure 33.1: Compliance Evidence Export Pipeline — From Data Collection to Hashed Artifact</em>
+</div>
+
+**Figure 33.1 Explanation:**
+
+The `handleGenerateEvidenceExport` function in `Operations.tsx` assembles a comprehensive evidence bundle from all operational data sources currently loaded in the Operations Control Plane. This includes approval requests and their individual approval actions, agent audit log entries, drift detection events, runbook execution history with step-level detail, organization operation history, automation runtime records, and live Guardian event activity. The assembled JSON bundle is passed through the Web Crypto API's `SHA-256` digest function to produce a deterministic hash. Both the bundle and its hash are persisted to the `compliance_evidence_exports` table, and the bundle is simultaneously downloaded as a timestamped JSON file for offline archival.
+
+### Evidence Bundle Contents
+
+Each compliance evidence export captures a complete snapshot of the operational state at the moment of generation:
+
+| Data Source | Table | Records Included |
+|-------------|-------|-----------------|
+| Approval requests | `approval_requests` | All recorded approval workflows with status, approver counts, and execution timestamps |
+| Approval actions | `approval_actions` | Individual approver decisions with user IDs and timestamps |
+| Agent audit logs | `agent_audit_log` | AWS API call records with service, operation, status, and error details |
+| Drift events | `guardian_drift_events` | Baseline comparison results with severity and resource identifiers |
+| Runbook executions | `guardian_runbook_executions` | Playbook runs with step-level results and completion status |
+| Organization history | `guardian_org_history` | Cross-account operation records with blast radius details |
+| Automation runs | `automation_runs` | Scheduler and processor execution history with timing and summary data |
+| Event activity | `guardian_event_activity` | Processed CloudTrail events with auto-fix status and matched policies |
+
+### SHA-256 Integrity Verification
+
+The evidence hash serves as a tamper-detection mechanism. The hash is computed client-side using the Web Crypto API before the bundle is stored:
+
+```typescript
+const encoded = new TextEncoder().encode(JSON.stringify(evidenceBundle));
+const digest = await crypto.subtle.digest("SHA-256", encoded);
+const evidenceHash = Array.from(new Uint8Array(digest))
+  .map((byte) => byte.toString(16).padStart(2, "0"))
+  .join("");
+```
+
+This hash is stored alongside the bundle in `compliance_evidence_exports`. During an audit, the hash can be recomputed from the stored bundle to verify that the evidence has not been modified since generation. This provides a lightweight integrity guarantee suitable for SOC 2 Type II and similar compliance frameworks that require evidence of control effectiveness.
+
+### Compliance Evidence Export Schema
+
+| Column | Type | Purpose |
+|--------|------|---------|
+| `id` | uuid | Primary key |
+| `user_id` | uuid | User who generated the export |
+| `title` | text | Human-readable export label with generation timestamp |
+| `export_type` | text | Type of export (currently `audit_timeline`) |
+| `status` | text | Generation status (`generated`) |
+| `evidence_hash` | text | SHA-256 hash of the evidence bundle for integrity verification |
+| `evidence_bundle` | jsonb | Complete evidence payload |
+| `filters` | jsonb | Summary counts of included record types |
+| `generated_at` | timestamptz | Timestamp of export generation |
+
+### Immutable Audit Timeline
+
+The Operations Control Plane renders a unified "Immutable Audit Timeline" section that merges three data sources into a single chronological feed:
+
+```mermaid
+flowchart LR
+    A[approval_requests] --> D[Merge by Timestamp]
+    B[approval_actions] --> D
+    C[agent_audit_log] --> D
+    D --> E[Chronological Timeline]
+    E --> F[Approval Workflow Entry]
+    E --> G[Approver Decision Entry]
+    E --> H[AWS API Execution Entry]
+```
+
+<div align="center">
+  <em>Figure 33.2: Immutable Audit Timeline — Three-Source Merge into Unified Chronological View</em>
+</div>
+
+**Figure 33.2 Explanation:**
+
+The `immutableTimeline` computed value in `Operations.tsx` merges approval requests (with their approval progress and status), individual approval actions (showing who approved what and when), and agent audit log entries (recording every AWS API call with its outcome). All entries are sorted by timestamp in descending order, creating a single chronological feed that shows the complete chain of accountability: who requested an action, who approved it, and what AWS operations were executed as a result.
+
+Each timeline entry displays:
+
+- **Title**: The operation summary, approver decision description, or AWS API call identifier
+- **Detail**: Contextual information such as approval progress (`2/2 approval(s)`), decision type, or AWS service and operation name
+- **Status badge**: Color-coded indicator showing the current state (executed, pending, approved, failed, success, error)
+- **Timestamp**: Precise creation time for audit trail reconstruction
+
+This unified view transforms disparate operational data into a coherent narrative that auditors can follow from initial request through approval gates to final execution — the core requirement for demonstrating governed automation to compliance reviewers.
+
+---
+
+## 34. AES-256-GCM Credential Vault
 
 The `aws-credential-vault` edge function replaces the earlier client-side XOR cipher with a production-grade AES-256-GCM encryption scheme for stored AWS credentials. This is a critical security upgrade: XOR encryption is trivially reversible if the key is known, while AES-256-GCM provides authenticated encryption with integrity verification.
 
