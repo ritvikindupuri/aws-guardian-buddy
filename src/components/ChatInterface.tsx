@@ -504,6 +504,12 @@ const ChatInterface = () => {
             {/* Notification Email Settings */}
             <NotificationSettings email={notificationEmail} onSave={handleSaveNotificationEmail} />
 
+            {/* Webhook Settings (Slack/PagerDuty) */}
+            <WebhookSettings />
+
+            {/* MFA Setup */}
+            <MfaSetup />
+
             {auditSummary && (
               <div className="border border-border rounded-lg bg-card p-3 space-y-3">
                 <div className="flex items-center justify-between">
