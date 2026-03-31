@@ -1773,36 +1773,38 @@ To enable fully autonomous scanning without manual credential injection, CloudPi
 
 #### Credential Encryption
 
-Credentials are encrypted using a symmetric XOR cipher as a defense-in-depth layer on top of Supabase's at-rest encryption and RLS policies:
+Credentials are encrypted server-side using **AES-256-GCM** via the `aws-credential-vault` edge function (see Section 32 for full details):
 
-1. **Client-side encryption** (`AwsCredentialsPanel.tsx`): Uses the first 32 characters of `VITE_SUPABASE_PUBLISHABLE_KEY` as the XOR key. Each byte of the plaintext credential is XORed with the corresponding key byte (cycling), and the result is stored as a hex string.
+1. **Server-side encryption** (`aws-credential-vault`): The `AwsCredentialsPanel` sends raw credentials over TLS to the vault edge function, which derives a per-user AES-256 key using PBKDF2 (100,000 iterations) from the `SERVICE_ROLE_KEY` and a user-specific salt (`cloudpilot-vault-{user_id}`). Each credential field is encrypted with a random 12-byte IV and stored as `base64(IV || ciphertext)`.
 
-2. **Server-side decryption** (`guardian-scheduler/index.ts`): Uses the first 32 characters of `SUPABASE_SERVICE_ROLE_KEY` as the decryption key. The hex string is parsed back to bytes and XORed with the key to recover plaintext.
+2. **Server-side decryption** (`guardian-scheduler/index.ts`): Uses the identical PBKDF2 derivation to reconstruct the AES-256 key and decrypt each credential field during autonomous scans.
 
-3. **Key symmetry**: Both keys derive from the same Supabase project, ensuring that credentials encrypted client-side can be decrypted server-side. The publishable key and service role key share the same first 32 characters for this purpose.
+3. **Integrity verification**: AES-256-GCM provides authenticated encryption — any tampering with the ciphertext is detected via the 16-byte authentication tag.
 
 4. **RLS protection**: The `stored_aws_credentials` table enforces row-level security so users can only access their own credentials. The `service_role` has full access for the autonomous scanner.
 
 ```mermaid
 flowchart TD
-    A[User enters AWS credentials] --> B[Client-side XOR encryption]
-    B --> C[Store encrypted hex in stored_aws_credentials]
-    C --> D[RLS ensures user isolation]
-    D --> E[pg_cron triggers guardian-scheduler]
-    E --> F[Service role fetches all guardian_enabled rows]
-    F --> G[Server-side XOR decryption]
-    G --> H[Build AWS config]
-    H --> I[Execute cost and drift scans]
-    I --> J[Update last_scan_at and last_scan_status]
+    A[User enters AWS credentials] --> B[AwsCredentialsPanel sends to aws-credential-vault]
+    B --> C[PBKDF2 key derivation from SERVICE_ROLE_KEY + user salt]
+    C --> D[AES-256-GCM encryption with random IV]
+    D --> E[Store base64 IV+ciphertext in stored_aws_credentials]
+    E --> F[RLS ensures user isolation]
+    F --> G[pg_cron triggers guardian-scheduler]
+    G --> H[Service role fetches all guardian_enabled rows]
+    H --> I[PBKDF2 key derivation + AES-256-GCM decryption]
+    I --> J[Build AWS config]
+    J --> K[Execute cost and drift scans]
+    K --> L[Update last_scan_at and last_scan_status]
 ```
 
 <div align="center">
-  <em>Figure 28.1: Stored Credential Lifecycle — Encryption, Storage, and Autonomous Decryption</em>
+  <em>Figure 28.1: Stored Credential Lifecycle — AES-256-GCM Encryption, Storage, and Autonomous Decryption</em>
 </div>
 
 **Figure 28.1 Explanation:**
 
-The credential lifecycle spans two environments. On the client side, the `AwsCredentialsPanel` encrypts raw AWS keys using XOR with the publishable key prefix before inserting them into the database. On the server side, the `guardian-scheduler` edge function—running with `service_role` privileges—fetches all rows where `guardian_enabled = true`, decrypts each credential using the service role key prefix, builds valid AWS SDK configurations, and executes the configured scan mode (cost, drift, or both). After each scan, it updates `last_scan_at` and `last_scan_status` to reflect the outcome.
+The credential lifecycle spans two environments. On the client side, the `AwsCredentialsPanel` sends raw AWS keys over TLS to the `aws-credential-vault` edge function, which authenticates the caller via JWT, derives a per-user AES-256 key using PBKDF2, and encrypts each credential field with AES-256-GCM before storing them in the database. On the server side, the `guardian-scheduler` edge function—running with `service_role` privileges—fetches all rows where `guardian_enabled = true`, derives the same AES-256 key via PBKDF2, decrypts each credential, builds valid AWS SDK configurations, and executes the configured scan mode (cost, drift, or both). After each scan, it updates `last_scan_at` and `last_scan_status` to reflect the outcome.
 
 #### UI Integration
 
