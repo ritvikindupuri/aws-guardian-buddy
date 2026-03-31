@@ -631,6 +631,19 @@ const ChatInterface = () => {
         onDecline={() => setShowVpcDialog(false)}
         onReAuthenticate={handleCredentialsSave}
       />
+
+      {showOnboarding && (
+        <OnboardingWizard
+          onComplete={() => {
+            setShowOnboarding(false);
+            localStorage.setItem("cloudpilot-onboarding-complete", "true");
+          }}
+          onSkip={() => {
+            setShowOnboarding(false);
+            localStorage.setItem("cloudpilot-onboarding-complete", "true");
+          }}
+        />
+      )}
     </div>
   );
 };
