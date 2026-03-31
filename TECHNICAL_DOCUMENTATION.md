@@ -59,8 +59,9 @@ By tightly coupling LLM reasoning capabilities with strict, restricted, and audi
 36. [Webhook Notification Integrations — Slack, PagerDuty & Generic](#36-webhook-notification-integrations--slack-pagerduty--generic)
 37. [Guided Onboarding Wizard](#37-guided-onboarding-wizard)
 38. [End-to-End Test Suite](#38-end-to-end-test-suite)
-39. [Production Readiness Roadmap](#39-production-readiness-roadmap)
-40. [Conclusion](#40-conclusion)
+39. [Team Management UI](#39-team-management-ui)
+40. [Production Readiness Roadmap](#40-production-readiness-roadmap)
+41. [Conclusion](#41-conclusion)
 
 ---
 
@@ -2576,7 +2577,108 @@ npx playwright test e2e/auth.spec.ts
 
 ---
 
-## 39. Production Readiness Roadmap
+## 39. Team Management UI
+
+The RBAC schema from Section 33 is now exposed through a dedicated Team Management page (`/team`), enabling org owners and admins to view members, assign roles, invite new users, and understand credential access policies — all from a single interface.
+
+### Page Architecture
+
+```mermaid
+flowchart TD
+    A[User navigates to /team] --> B[Load org membership via org_members]
+    B --> C[Determine user role]
+    C --> D{Role check}
+    D -- owner/admin --> E[Show full management controls]
+    D -- member/viewer --> F[Show read-only member list]
+    E --> G[Invite Member dialog]
+    E --> H[Role Change dialog]
+    E --> I[Remove Member action]
+    F --> J[View members and credential access policy]
+```
+
+<div align="center">
+  <em>Figure 39.1: Team Management Page — Role-Based UI Rendering</em>
+</div>
+
+**Figure 39.1 Explanation:**
+
+When a user navigates to `/team`, the component loads their org membership from the `org_members` table, determines their role, and conditionally renders management controls. Owners and admins see invite, role-change, and removal buttons. Members and viewers see a read-only list of team members and the credential access policy.
+
+### UI Sections
+
+The Team page is organized into three sections:
+
+1. **Role Summary Cards:** Four stat cards (Owner, Admin, Member, Viewer) showing the count of members in each role with descriptions of each role's permissions. This provides immediate visibility into the team's access distribution.
+
+2. **Organization Members List:** A detailed list of all members with:
+   - User identification (with "YOU" badge for the current user)
+   - Role badge with color coding (amber for owner, primary for admin, neutral for member/viewer)
+   - Join date and truncated user ID
+   - **Role Change** button (visible to owners/admins, not for self or other owners)
+   - **Remove** button (visible to owners only, not for self)
+
+3. **Credential Access Policy:** A reference panel documenting the org-level credential access model:
+   - **Owner/Admin**: Store and manage org-level AWS credentials, enable/disable Guardian, view all audit logs, invite/remove members
+   - **Member/Viewer**: Use org-level credentials for queries, view reports, manage personal credentials (members only), read-only dashboard access (viewers only)
+
+### Invite Flow
+
+```mermaid
+sequenceDiagram
+    participant O as Owner/Admin
+    participant UI as Team Page
+    participant DB as Database
+
+    O->>UI: Click Invite Member
+    UI->>O: Show invite dialog (email + role selector)
+    O->>UI: Enter email and select role
+    UI->>DB: Create pending invitation
+    DB-->>UI: Confirmation
+    UI->>O: Toast notification - invite sent
+```
+
+<div align="center">
+  <em>Figure 39.2: Member Invitation Sequence</em>
+</div>
+
+**Figure 39.2 Explanation:**
+
+The invite flow is initiated by owners or admins through the Invite Member button. The dialog collects the invitee's email address and desired role (admin, member, or viewer — owner cannot be assigned via invite). The role selector provides inline descriptions so the inviter understands the access implications of each role.
+
+### Role Management
+
+Role changes are performed through an inline dialog that:
+
+1. Shows the current member's truncated user ID for confirmation.
+2. Provides a role selector limited to admin, member, and viewer (owner role cannot be assigned through the UI to prevent privilege escalation).
+3. Displays the selected role's permission description for clarity.
+4. Executes an `UPDATE` on `org_members` via Supabase, protected by RLS policies that ensure only owners and admins can modify roles (see Section 33).
+
+### Access Control Matrix
+
+| Action | Owner | Admin | Member | Viewer |
+|--------|-------|-------|--------|--------|
+| View team members | Yes | Yes | Yes | Yes |
+| Invite new members | Yes | Yes | No | No |
+| Change member roles | Yes | Yes | No | No |
+| Remove members | Yes | No | No | No |
+| View credential access policy | Yes | Yes | Yes | Yes |
+| Manage org AWS credentials | Yes | Yes | No | No |
+| Use org credentials for queries | Yes | Yes | Yes | No |
+
+### Navigation
+
+The Team page is accessible from:
+- **Top navigation bar**: A "Team" button with the Users icon, positioned alongside Reports and Operations links.
+- **Direct URL**: `/team` (protected route — requires authentication).
+
+### Relationship to RBAC System
+
+This UI is the operational frontend for the RBAC infrastructure documented in Section 33. The database schema (`organizations`, `org_members`, `user_roles`), security definer functions (`is_org_member`, `get_org_role`, `has_role`), and RLS policies all power the Team page's data access and mutation controls. The auto-provisioning trigger ensures every new user has an organization ready for team management from their first login.
+
+---
+
+## 40. Production Readiness Roadmap
 
 This section tracks the enterprise readiness status of each major capability area.
 
@@ -2590,6 +2692,7 @@ This section tracks the enterprise readiness status of each major capability are
 | Edge function rate limiting | Token-bucket on guardian-scheduler | 35 |
 | Slack/PagerDuty webhooks | Edge function + UI component | 36 |
 | Onboarding wizard | 4-step guided flow | 37 |
+| Team management UI | Full page with invite, role assignment, and removal | 39 |
 | E2E test suite (Playwright) | Auth + routing coverage | 38 |
 
 ### Remaining Enterprise Requirements
@@ -2597,7 +2700,6 @@ This section tracks the enterprise readiness status of each major capability are
 | Feature | Priority | Status |
 |---------|----------|--------|
 | SSO/SAML integration | HIGH | Not started — requires identity provider configuration |
-| Team management UI | HIGH | Schema ready, UI not built |
 | Billing/subscription layer | MEDIUM | Not started |
 | API key rotation UI | MEDIUM | Not started |
 | Exportable compliance reports (PDF/CSV) | MEDIUM | PDF export exists, CSV not implemented |
@@ -2607,7 +2709,7 @@ This section tracks the enterprise readiness status of each major capability are
 
 ---
 
-## 40. Conclusion
+## 41. Conclusion
 
 CloudPilot AI represents a significant advancement in applied generative AI for cloud security operations. By bridging the reasoning capabilities of Google's Gemini 2.5 Flash with the strict, deterministic execution of real AWS APIs across 35+ services, it eliminates the "hallucination" problem common in standard chat assistants through its uncompromising Zero Simulation Tolerance policy. The two-model architecture — Gemini 2.5 Flash Lite for intent classification and Gemini 2.5 Flash for the main agent — optimizes for both speed and accuracy, reducing token usage by 40-70% on focused queries.
 
@@ -2615,7 +2717,7 @@ The architecture is meticulously designed for security at every layer: STS crede
 
 The backend's decomposed architecture — nine specialized edge functions including the credential vault and webhook dispatcher — ensures reliable deployment and clean separation of concerns. Token-bucket rate limiting (Section 35) protects all endpoints from abuse, while the `aws-executor` dynamic loader pattern solves the bundle timeout problem while supporting all 35 AWS service clients.
 
-The enterprise foundation includes a full RBAC system with four-level role hierarchy (owner/admin/member/viewer), multi-tenant organization isolation, and auto-provisioning triggers (Section 33). External notification integrations via Slack, PagerDuty, and generic webhooks (Section 36) ensure security alerts reach ops teams through their existing toolchains.
+The enterprise foundation includes a full RBAC system with four-level role hierarchy (owner/admin/member/viewer), multi-tenant organization isolation, and auto-provisioning triggers (Section 33). The Team Management UI (Section 39) exposes this system through a dedicated page where owners can invite members, assign roles, and manage org-level credential access. External notification integrations via Slack, PagerDuty, and generic webhooks (Section 36) ensure security alerts reach ops teams through their existing toolchains.
 
 The comprehensive React frontend provides a professional interface with 55+ pre-built security workflows across 8 categories (Section 9), real-time SSE streaming, animated panels, date-grouped chat history, color-coded severity tracking, a guided onboarding wizard for new users (Section 37), and inline MFA/webhook management. The mandatory industry-grade report format (Section 15) ensures every response meets enterprise audit standards with compliance mapping across 17+ frameworks (Section 20).
 
