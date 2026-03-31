@@ -661,6 +661,25 @@ async function runAutonomousScans(supabaseAdmin: any): Promise<any[]> {
   return scanResults;
 }
 
+async function recordAutomationRun(
+  supabaseAdmin: any,
+  userId: string,
+  source: string,
+  mode: string,
+  status: string,
+  accountId: string | null,
+  summary: Record<string, any>,
+) {
+  await supabaseAdmin.from("automation_runs").insert({
+    user_id: userId,
+    source,
+    mode,
+    status,
+    account_id: accountId,
+    summary,
+  });
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
@@ -743,6 +762,37 @@ serve(async (req) => {
         notification,
       };
     }
+
+    const schedulerAccountId =
+      results.drift?.accountId ||
+      body.accountId ||
+      null;
+
+    await recordAutomationRun(
+      supabaseAdmin,
+      userId,
+      "guardian-scheduler",
+      mode,
+      "success",
+      schedulerAccountId,
+      {
+        generatedAt: results.generatedAt,
+        cost: results.cost
+          ? {
+              anomalyCount: results.cost.anomalyCount,
+              idleInstanceCount: Array.isArray(results.cost.idleInstances) ? results.cost.idleInstances.length : 0,
+              notificationSent: Boolean(results.cost.notification?.sent),
+            }
+          : null,
+        drift: results.drift
+          ? {
+              snapshotCount: results.drift.snapshotCount,
+              driftCount: results.drift.driftCount,
+              notificationSent: Boolean(results.drift.notification?.sent),
+            }
+          : null,
+      },
+    );
 
     await supabaseAdmin.from("agent_audit_log").insert({
       user_id: userId,

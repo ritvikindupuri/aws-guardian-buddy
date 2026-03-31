@@ -75,6 +75,14 @@ const SEVERITY_ORDER: Record<Severity, number> = {
   INFO: 4,
 };
 
+const AUTO_FIXABLE_CRITICAL_EVENTS = new Set([
+  "DeleteBucketPublicAccessBlock",
+  "DeleteBucketEncryption",
+  "DeleteTrail",
+  "StopLogging",
+  "AuthorizeSecurityGroupIngress",
+]);
+
 const BUILT_IN_POLICIES: PolicyRecord[] = [
   {
     id: "builtin-auto-block-public-s3",
@@ -318,6 +326,25 @@ function matchesPolicy(event: EnrichedEvent, policy: PolicyRecord) {
   return true;
 }
 
+function canAutoFixEvent(event: EnrichedEvent, policy: PolicyRecord) {
+  if (event.risk_level !== "CRITICAL") {
+    return {
+      allowed: false,
+      reason: `Auto-fix is restricted to CRITICAL events. This event is ${event.risk_level}.`,
+    };
+  }
+  if (!AUTO_FIXABLE_CRITICAL_EVENTS.has(event.event_name)) {
+    return {
+      allowed: false,
+      reason: `Auto-fix is not enabled for ${event.event_name} because the action is not in the reversible critical allowlist.`,
+    };
+  }
+  return {
+    allowed: true,
+    reason: null,
+  };
+}
+
 async function autoFixEvent(awsConfig: any, event: EnrichedEvent) {
   switch (event.event_name) {
     case "DeleteBucketPublicAccessBlock": {
@@ -415,6 +442,35 @@ async function recordDriftEvent(supabaseAdmin: any, userId: string, awsConfig: a
   });
 }
 
+async function recordEventActivity(
+  supabaseAdmin: any,
+  userId: string,
+  event: EnrichedEvent,
+  matchedPolicies: Array<{ id: string; name: string; responseType: string }>,
+  autoFixes: any[],
+  notifications: any[],
+  runbooks: any[],
+) {
+  await supabaseAdmin.from("guardian_event_activity").insert({
+    user_id: userId,
+    event_id: event.event_id,
+    event_name: event.event_name,
+    risk_level: event.risk_level,
+    actor_arn: event.actor_arn,
+    actor_type: event.actor_type,
+    actor_is_guardian: event.actor_is_guardian,
+    resource_id: event.resource_id,
+    resource_type: event.resource_type,
+    region: event.region,
+    source_ip: event.source_ip,
+    matched_policies: matchedPolicies,
+    auto_fixes: autoFixes,
+    notifications,
+    runbooks,
+    raw_event: event.raw_event,
+  });
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
@@ -448,8 +504,20 @@ serve(async (req) => {
     const runbooks: any[] = [];
 
     for (const policy of policies) {
+      const autoFixDecision = canAutoFixEvent(event, policy);
+
       if (policy.response_type === "auto_fix" || policy.response_type === "all") {
-        autoFixes.push(await autoFixEvent(awsConfig, event));
+        if (autoFixDecision.allowed) {
+          autoFixes.push(await autoFixEvent(awsConfig, event));
+        } else {
+          autoFixes.push({
+            applied: false,
+            action: policy.response_action,
+            resource: event.resource_id,
+            skipped: true,
+            reason: autoFixDecision.reason,
+          });
+        }
       }
       if (policy.response_type === "notify" || policy.response_type === "all") {
         notifications.push(await publishAlert(
@@ -465,6 +533,20 @@ serve(async (req) => {
     }
 
     await recordDriftEvent(supabaseAdmin, userId, awsConfig, event);
+    const matchedPolicySummaries = policies.map((policy) => ({
+      id: policy.policy_id,
+      name: policy.name,
+      responseType: policy.response_type,
+    }));
+    await recordEventActivity(
+      supabaseAdmin,
+      userId,
+      event,
+      matchedPolicySummaries,
+      autoFixes,
+      notifications,
+      runbooks,
+    );
     await supabaseAdmin.from("agent_audit_log").insert({
       user_id: userId,
       aws_service: "CLOUDTRAIL",
@@ -478,7 +560,7 @@ serve(async (req) => {
     return new Response(JSON.stringify({
       status: "processed",
       event,
-      matchedPolicies: policies.map((policy) => ({ id: policy.policy_id, name: policy.name, responseType: policy.response_type })),
+      matchedPolicies: matchedPolicySummaries,
       autoFixes,
       notifications,
       runbooks,

@@ -93,6 +93,31 @@ interface OrgHistoryRow {
   created_at: string;
 }
 
+interface AutomationRunRow {
+  id: string;
+  source: string;
+  mode: string;
+  status: string;
+  account_id: string | null;
+  summary: Record<string, unknown> | null;
+  created_at: string;
+}
+
+interface GuardianEventActivityRow {
+  id: string;
+  event_name: string;
+  risk_level: string;
+  actor_arn: string | null;
+  resource_id: string | null;
+  resource_type: string | null;
+  region: string | null;
+  created_at: string;
+  matched_policies: unknown;
+  auto_fixes: unknown;
+  notifications: unknown;
+  runbooks: unknown;
+}
+
 const badgeClass = (status: string) => {
   const normalized = status.toLowerCase();
   if (normalized.includes("critical") || normalized.includes("failed") || normalized.includes("blocked")) {
@@ -114,6 +139,45 @@ const toChannels = (value: unknown): string[] => {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 };
 
+const summarizeMatchedPolicies = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      if (typeof item === "string") return item;
+      if (item && typeof item === "object" && "name" in item && typeof item.name === "string") return item.name;
+      return null;
+    })
+    .filter((item): item is string => Boolean(item));
+};
+
+const summarizeAutoFixState = (value: unknown) => {
+  if (!Array.isArray(value) || value.length === 0) {
+    return {
+      label: "NO AUTO-FIX",
+      className: badgeClass("inactive"),
+      detail: "No automatic remediation was attempted.",
+    };
+  }
+
+  const items = value.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object");
+  const appliedCount = items.filter((item) => item.applied === true).length;
+  const suppressedCount = items.filter((item) => item.skipped === true || item.applied === false).length;
+
+  if (appliedCount > 0) {
+    return {
+      label: "AUTO-FIX APPLIED",
+      className: badgeClass("success"),
+      detail: `${appliedCount} automatic remediation action${appliedCount === 1 ? "" : "s"} applied${suppressedCount > 0 ? `, ${suppressedCount} suppressed` : ""}.`,
+    };
+  }
+
+  return {
+    label: "AUTO-FIX SUPPRESSED",
+    className: badgeClass("blocked"),
+    detail: `${suppressedCount} automatic remediation action${suppressedCount === 1 ? "" : "s"} suppressed by policy guardrails.`,
+  };
+};
+
 const Operations = () => {
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
@@ -126,6 +190,8 @@ const Operations = () => {
   const [runbookSteps, setRunbookSteps] = useState<RunbookStepRow[]>([]);
   const [orgHistory, setOrgHistory] = useState<OrgHistoryRow[]>([]);
   const [guardianCreds, setGuardianCreds] = useState<GuardianCredentialRow[]>([]);
+  const [automationRuns, setAutomationRuns] = useState<AutomationRunRow[]>([]);
+  const [eventActivity, setEventActivity] = useState<GuardianEventActivityRow[]>([]);
   const [editingPolicy, setEditingPolicy] = useState<EventPolicyRow | null>(null);
   const [policyForm, setPolicyForm] = useState({
     name: "",
@@ -146,21 +212,19 @@ const Operations = () => {
       runbooksResp,
       orgResp,
       guardianResp,
+      automationRunsResp,
+      eventActivityResp,
     ] = await Promise.all([
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (supabase.from("event_response_policies" as any).select("*").order("created_at", { ascending: false }).limit(25) as any),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (supabase.from("cost_automation_rules" as any).select("*").order("created_at", { ascending: false }).limit(25) as any),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (supabase.from("drift_events" as any).select("*").order("detected_at", { ascending: false }).limit(25) as any),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (supabase.from("resource_snapshots" as any).select("*").eq("is_baseline", true).order("captured_at", { ascending: false }).limit(100) as any),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (supabase.from("runbook_executions" as any).select("*").order("updated_at", { ascending: false }).limit(15) as any),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (supabase.from("org_operation_history" as any).select("*").order("created_at", { ascending: false }).limit(20) as any),
+      supabase.from("event_response_policies").select("*").order("created_at", { ascending: false }).limit(25),
+      supabase.from("cost_automation_rules").select("*").order("created_at", { ascending: false }).limit(25),
+      supabase.from("drift_events").select("*").order("detected_at", { ascending: false }).limit(25),
+      supabase.from("resource_snapshots").select("*").eq("is_baseline", true).order("captured_at", { ascending: false }).limit(100),
+      supabase.from("runbook_executions").select("*").order("updated_at", { ascending: false }).limit(15),
+      supabase.from("org_operation_history").select("*").order("created_at", { ascending: false }).limit(20),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (supabase.from("stored_aws_credentials" as any).select("id, label, account_id, guardian_enabled, last_scan_at, last_scan_status").eq("guardian_enabled", true) as any),
+      supabase.from("automation_runs").select("*").order("created_at", { ascending: false }).limit(20),
+      supabase.from("guardian_event_activity").select("*").order("created_at", { ascending: false }).limit(20),
     ]);
 
     setEventPolicies((policiesResp.data || []) as unknown as EventPolicyRow[]);
@@ -171,6 +235,8 @@ const Operations = () => {
     setRunbookExecutions(executions);
     setOrgHistory((orgResp.data || []) as unknown as OrgHistoryRow[]);
     setGuardianCreds((guardianResp.data || []) as unknown as GuardianCredentialRow[]);
+    setAutomationRuns((automationRunsResp.data || []) as AutomationRunRow[]);
+    setEventActivity((eventActivityResp.data || []) as GuardianEventActivityRow[]);
 
     const executionIds = executions.map((execution) => execution.id);
     if (executionIds.length > 0) {
@@ -210,6 +276,8 @@ const Operations = () => {
       .on("postgres_changes", { event: "*", schema: "public", table: "runbook_execution_steps" }, refresh)
       .on("postgres_changes", { event: "*", schema: "public", table: "org_operation_history" }, refresh)
       .on("postgres_changes", { event: "*", schema: "public", table: "stored_aws_credentials" }, refresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "automation_runs" }, refresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "guardian_event_activity" }, refresh)
       .subscribe();
 
     return () => {
@@ -431,6 +499,81 @@ const Operations = () => {
             })}
           </div>
         </section>
+
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+          <section className="rounded-xl border border-border bg-card p-5 space-y-4">
+            <div>
+              <p className="text-[10px] font-mono text-muted-foreground tracking-widest uppercase">Live Event Activity</p>
+              <h2 className="text-lg font-semibold text-foreground mt-1">CloudTrail-driven responses</h2>
+            </div>
+
+            <div className="space-y-3">
+              {loading ? (
+                <p className="text-sm text-muted-foreground">Loading event activity...</p>
+              ) : eventActivity.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No processed event activity has been recorded yet.</p>
+              ) : eventActivity.map((event) => {
+                const matchedPolicies = summarizeMatchedPolicies(event.matched_policies);
+                const autoFixes = Array.isArray(event.auto_fixes) ? event.auto_fixes.length : 0;
+                const notifications = Array.isArray(event.notifications) ? event.notifications.length : 0;
+                const runbooks = Array.isArray(event.runbooks) ? event.runbooks.length : 0;
+                const autoFixState = summarizeAutoFixState(event.auto_fixes);
+                return (
+                  <div key={event.id} className="rounded-lg border border-border bg-muted/30 p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-foreground">{event.event_name}</p>
+                        <p className="text-[11px] text-muted-foreground mt-1">
+                          Resource: {event.resource_id || "Unknown"} · Region: {event.region || "Unknown"} · {new Date(event.created_at).toLocaleString()}
+                        </p>
+                      </div>
+                      <div className="flex flex-col items-end gap-2">
+                        <span className={`text-[10px] font-mono px-2 py-1 rounded border ${badgeClass(event.risk_level)}`}>{event.risk_level}</span>
+                        <span className={`text-[10px] font-mono px-2 py-1 rounded border ${autoFixState.className}`}>{autoFixState.label}</span>
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground mt-2">
+                      Actor: {event.actor_arn || "Unknown"} · Policies: {matchedPolicies.join(", ") || "None"} · Auto-fixes: {autoFixes} · Notifications: {notifications} · Runbooks: {runbooks}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground mt-1">
+                      {autoFixState.detail}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+
+          <section className="rounded-xl border border-border bg-card p-5 space-y-4">
+            <div>
+              <p className="text-[10px] font-mono text-muted-foreground tracking-widest uppercase">Automation Runtime</p>
+              <h2 className="text-lg font-semibold text-foreground mt-1">Scheduler and processor history</h2>
+            </div>
+
+            <div className="space-y-3">
+              {loading ? (
+                <p className="text-sm text-muted-foreground">Loading automation runs...</p>
+              ) : automationRuns.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No scheduler or runtime history has been recorded yet.</p>
+              ) : automationRuns.map((run) => (
+                <div key={run.id} className="rounded-lg border border-border bg-muted/30 p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-foreground">{run.source}</p>
+                      <p className="text-[11px] text-muted-foreground mt-1">
+                        Mode: {run.mode} · Account: {run.account_id || "Unknown"} · {new Date(run.created_at).toLocaleString()}
+                      </p>
+                    </div>
+                    <span className={`text-[10px] font-mono px-2 py-1 rounded border ${badgeClass(run.status)}`}>{run.status}</span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-2">
+                    {run.summary ? JSON.stringify(run.summary) : "No summary recorded."}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </section>
+        </div>
 
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
           <section className="rounded-xl border border-border bg-card p-5 space-y-4">

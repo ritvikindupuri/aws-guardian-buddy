@@ -244,9 +244,6 @@ To use CloudPilot AI, you need to provide it with access to your AWS account. We
 9. At the top of the summary page, copy the **ARN** (it will look like `arn:aws:iam::123456789012:role/CloudPilot-AuditRole`).
 10. Ensure the AWS credentials you provide to the application have the `sts:AssumeRole` permission for this specific Role ARN.
 11. Enter the Role ARN into the CloudPilot AI interface under the "Assume Role" tab.
-
-=======
-
 ---
 
 ## Understanding Agent Capabilities via IAM Roles
