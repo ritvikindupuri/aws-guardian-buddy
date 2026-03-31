@@ -574,10 +574,10 @@ async function runAutonomousScans(supabaseAdmin: any): Promise<any[]> {
   for (const cred of storedCreds) {
     const scanStart = Date.now();
     try {
-      const accessKeyId = decryptValue(cred.encrypted_access_key_id);
-      const secretAccessKey = decryptValue(cred.encrypted_secret_access_key);
+      const accessKeyId = await decryptValue(cred.encrypted_access_key_id, cred.user_id);
+      const secretAccessKey = await decryptValue(cred.encrypted_secret_access_key, cred.user_id);
       const sessionToken = cred.encrypted_session_token
-        ? decryptValue(cred.encrypted_session_token)
+        ? await decryptValue(cred.encrypted_session_token, cred.user_id)
         : undefined;
 
       const awsConfig = buildAwsConfig({
