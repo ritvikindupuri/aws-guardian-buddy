@@ -2463,7 +2463,7 @@ Each encrypted field is stored as a Base64 string containing:
 
 ---
 
-## 33. RBAC & Multi-Tenant Organization System
+## 35. RBAC & Multi-Tenant Organization System
 
 CloudPilot implements a full role-based access control (RBAC) system with multi-tenant isolation at the organization level. This is the foundation for enterprise team management.
 
