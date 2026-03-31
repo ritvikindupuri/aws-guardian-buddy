@@ -244,6 +244,223 @@ async function storeIdempotencyFailure(supabaseAdmin: any, operationName: string
   }).eq("operation_name", operationName).eq("request_key", requestKey);
 }
 
+async function upsertApprovalRequest(
+  supabaseAdmin: any,
+  payload: {
+    requestKey: string;
+    requestHash: string;
+    operationName: string;
+    requesterUserId: string;
+    summary: string;
+    riskLevel: string;
+    requiredApprovals: number;
+    previewPayload: Record<string, unknown>;
+    requestPayload: Record<string, unknown>;
+    evidencePayload?: Record<string, unknown>;
+  },
+) {
+  const dualApprovalRequired = payload.requiredApprovals > 1;
+  const baseRow = {
+    request_key: payload.requestKey,
+    request_hash: payload.requestHash,
+    operation_name: payload.operationName,
+    requester_user_id: payload.requesterUserId,
+    summary: payload.summary,
+    risk_level: payload.riskLevel,
+    required_approvals: payload.requiredApprovals,
+    dual_approval_required: dualApprovalRequired,
+    preview_payload: payload.previewPayload,
+    request_payload: payload.requestPayload,
+    evidence_payload: payload.evidencePayload || {},
+    updated_at: new Date().toISOString(),
+  };
+
+  const { data: existing, error: fetchError } = await supabaseAdmin
+    .from("approval_requests")
+    .select("*")
+    .eq("request_key", payload.requestKey)
+    .maybeSingle();
+
+  if (fetchError) {
+    throw new CloudPilotError(`Failed to read approval request: ${fetchError.message}`, {
+      code: "APPROVAL_REQUEST_LOOKUP_FAILED",
+      category: "internal",
+    });
+  }
+
+  if (existing) {
+    const { data: updated, error: updateError } = await supabaseAdmin
+      .from("approval_requests")
+      .update(baseRow)
+      .eq("id", existing.id)
+      .select("*")
+      .single();
+
+    if (updateError) {
+      throw new CloudPilotError(`Failed to update approval request: ${updateError.message}`, {
+        code: "APPROVAL_REQUEST_UPDATE_FAILED",
+        category: "internal",
+      });
+    }
+
+    return updated;
+  }
+
+  const { data: created, error: insertError } = await supabaseAdmin
+    .from("approval_requests")
+    .insert({
+      ...baseRow,
+      status: "pending_approval",
+    })
+    .select("*")
+    .single();
+
+  if (insertError) {
+    throw new CloudPilotError(`Failed to create approval request: ${insertError.message}`, {
+      code: "APPROVAL_REQUEST_INSERT_FAILED",
+      category: "internal",
+    });
+  }
+
+  return created;
+}
+
+async function recordApprovalAction(
+  supabaseAdmin: any,
+  approvalRequestId: string,
+  approverUserId: string,
+  decision = "approve",
+  comment?: string,
+) {
+  const { error } = await supabaseAdmin
+    .from("approval_actions")
+    .upsert({
+      approval_request_id: approvalRequestId,
+      approver_user_id: approverUserId,
+      decision,
+      comment: comment || null,
+    }, {
+      onConflict: "approval_request_id,approver_user_id",
+    });
+
+  if (error) {
+    throw new CloudPilotError(`Failed to record approval action: ${error.message}`, {
+      code: "APPROVAL_ACTION_INSERT_FAILED",
+      category: "internal",
+    });
+  }
+}
+
+async function refreshApprovalRequestState(
+  supabaseAdmin: any,
+  approvalRequestId: string,
+  requiredApprovals: number,
+  nextStatusIfSatisfied = "approved",
+) {
+  const { data: actions, error: actionsError } = await supabaseAdmin
+    .from("approval_actions")
+    .select("approver_user_id, decision")
+    .eq("approval_request_id", approvalRequestId);
+
+  if (actionsError) {
+    throw new CloudPilotError(`Failed to read approval actions: ${actionsError.message}`, {
+      code: "APPROVAL_ACTION_LOOKUP_FAILED",
+      category: "internal",
+    });
+  }
+
+  const approverIds = Array.from(new Set(
+    (actions || [])
+      .filter((action: any) => action.decision === "approve")
+      .map((action: any) => action.approver_user_id),
+  ));
+
+  const approvalCount = approverIds.length;
+  const status = approvalCount >= requiredApprovals ? nextStatusIfSatisfied : "pending_approval";
+
+  const { data: updated, error: updateError } = await supabaseAdmin
+    .from("approval_requests")
+    .update({
+      current_approvals: approvalCount,
+      status,
+      last_approved_at: approvalCount > 0 ? new Date().toISOString() : null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", approvalRequestId)
+    .select("*")
+    .single();
+
+  if (updateError) {
+    throw new CloudPilotError(`Failed to update approval counts: ${updateError.message}`, {
+      code: "APPROVAL_REQUEST_STATE_UPDATE_FAILED",
+      category: "internal",
+    });
+  }
+
+  return {
+    request: updated,
+    approvalCount,
+    approverIds,
+    status,
+  };
+}
+
+async function markApprovalRequestExecuted(
+  supabaseAdmin: any,
+  approvalRequestId: string,
+  executionPayload: Record<string, unknown>,
+) {
+  const { error } = await supabaseAdmin
+    .from("approval_requests")
+    .update({
+      status: "executed",
+      execution_payload: executionPayload,
+      executed_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", approvalRequestId);
+
+  if (error) {
+    console.error("Failed to mark approval request as executed:", error.message);
+  }
+}
+
+async function markApprovalRequestFailed(
+  supabaseAdmin: any,
+  approvalRequestId: string,
+  errorPayload: Record<string, unknown>,
+) {
+  const { error } = await supabaseAdmin
+    .from("approval_requests")
+    .update({
+      status: "failed",
+      execution_payload: errorPayload,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", approvalRequestId);
+
+  if (error) {
+    console.error("Failed to mark approval request as failed:", error.message);
+  }
+}
+
+function buildApprovalSummaryPayload(
+  approvalRequest: any,
+  approvalCount: number,
+  requiredApprovals: number,
+  nextAction: string,
+) {
+  return {
+    approvalRequestId: approvalRequest.id,
+    requestKey: approvalRequest.request_key,
+    status: approvalRequest.status,
+    currentApprovals: approvalCount,
+    requiredApprovals,
+    dualApprovalRequired: requiredApprovals > 1,
+    nextAction,
+  };
+}
+
 
 
 const IPV4_ANYWHERE = "0.0.0.0/0";
@@ -672,6 +889,12 @@ function buildIamAccessPlan(rawArgs: Record<string, any>) {
   };
 }
 
+function requiredApprovalsForIamPlan(plan: ReturnType<typeof buildIamAccessPlan>): number {
+  const principal = plan.args.principalIdentifier.toLowerCase();
+  const resources = stableStringify(plan.policyDocument.Statement[0]?.Resource || "").toLowerCase();
+  return principal.includes("prod") || resources.includes("prod") ? 2 : 1;
+}
+
 async function ensureIamPrincipalExists(iam: any, principalType: IamPrincipalType, identifier: string) {
   if (principalType === "group") {
     await iam.getGroup({ GroupName: identifier }).promise();
@@ -778,6 +1001,10 @@ function isProdLikeGroup(summary: SecurityGroupSummary): boolean {
     summary.tags.tier === "production" ||
     summary.tags.name?.includes("prod") === true
   );
+}
+
+function requiredApprovalsForSecurityGroup(targetGroup: SecurityGroupSummary): number {
+  return isProdLikeGroup(targetGroup) ? 2 : 1;
 }
 
 function classifySecurityGroupRisk(
@@ -3592,6 +3819,7 @@ serve(async (req) => {
               const countConfirmation = parseOrgConfirmationCount(latestUserMessage);
               const hasRequiredCountConfirmation = countConfirmation === resolution.accounts.length;
               const requiresDoubleConfirmation = highestTier.confirmation === "double";
+              const requiredApprovals = requiresDoubleConfirmation ? 2 : 1;
 
               if (resolution.accounts.length === 0) {
                 throw new Error("The requested scope resolved to zero accounts.");
@@ -3605,6 +3833,35 @@ serve(async (req) => {
                 policyDocument,
                 rollbackPlan,
               );
+
+              const orgIdempotencyPayload = {
+                action,
+                scope,
+                scpTemplate,
+                allowedRegions,
+                rollbackPlan,
+                accountIds: resolution.accounts.map((account) => account.id).sort(),
+              };
+              const orgRequestHash = await sha256(stableStringify(orgIdempotencyPayload));
+              const orgRequestKey = `org-operation:${orgRequestHash}`;
+              const approvalSummary = `Attach SCP template '${scpTemplate}' across ${resolution.accounts.length} account(s) in scope '${scope}'.`;
+              const approvalRequest = await upsertApprovalRequest(supabaseAdmin, {
+                requestKey: orgRequestKey,
+                requestHash: orgRequestHash,
+                operationName: "manage_org_operation",
+                requesterUserId: userId,
+                summary: approvalSummary,
+                riskLevel: requiresDoubleConfirmation ? "HIGH" : "MEDIUM",
+                requiredApprovals,
+                previewPayload,
+                requestPayload: orgIdempotencyPayload,
+                evidencePayload: {
+                  scope,
+                  blastRadius,
+                  warnings: previewPayload.warnings,
+                  rollbackPlan: rollbackPlan || null,
+                },
+              });
 
               if (!blastRadius.safe_to_proceed) {
                 await persistOrgOperationHistory(supabaseAdmin, userId, {
@@ -3622,7 +3879,15 @@ serve(async (req) => {
                 apiMessages.push({
                   role: "tool",
                   tool_call_id: toolCall.id,
-                  content: JSON.stringify(previewPayload),
+                  content: JSON.stringify({
+                    ...previewPayload,
+                    approval: buildApprovalSummaryPayload(
+                      approvalRequest,
+                      approvalRequest.current_approvals || 0,
+                      requiredApprovals,
+                      "This request is blocked until the blast-radius issues are resolved.",
+                    ),
+                  }),
                 } as any);
                 continue;
               }
@@ -3651,7 +3916,15 @@ serve(async (req) => {
                 apiMessages.push({
                   role: "tool",
                   tool_call_id: toolCall.id,
-                  content: JSON.stringify(rollbackPreviewPayload),
+                  content: JSON.stringify({
+                    ...rollbackPreviewPayload,
+                    approval: buildApprovalSummaryPayload(
+                      approvalRequest,
+                      approvalRequest.current_approvals || 0,
+                      requiredApprovals,
+                      "Add a rollback plan before this request can move forward.",
+                    ),
+                  }),
                 } as any);
                 continue;
               }
@@ -3676,21 +3949,61 @@ serve(async (req) => {
                 apiMessages.push({
                   role: "tool",
                   tool_call_id: toolCall.id,
-                  content: JSON.stringify(previewPayload),
+                  content: JSON.stringify({
+                    ...previewPayload,
+                    approval: buildApprovalSummaryPayload(
+                      approvalRequest,
+                      approvalRequest.current_approvals || 0,
+                      requiredApprovals,
+                      requiresDoubleConfirmation
+                        ? `A distinct second approver is required. After review, an approver should confirm with 'apply to ${resolution.accounts.length} accounts'.`
+                        : "Reply with 'confirm' to approve and execute this request.",
+                    ),
+                  }),
                 } as any);
                 continue;
               }
 
-              const orgIdempotencyPayload = {
-                action,
-                scope,
-                scpTemplate,
-                allowedRegions,
-                rollbackPlan,
-                accountIds: resolution.accounts.map((account) => account.id).sort(),
-              };
-              const orgRequestHash = await sha256(stableStringify(orgIdempotencyPayload));
-              const orgRequestKey = `org-operation:${orgRequestHash}`;
+              await recordApprovalAction(supabaseAdmin, approvalRequest.id, userId);
+              const approvalState = await refreshApprovalRequestState(
+                supabaseAdmin,
+                approvalRequest.id,
+                requiredApprovals,
+              );
+
+              if (approvalState.approvalCount < requiredApprovals) {
+                const awaitingApprovalPayload = {
+                  ...previewPayload,
+                  status: "awaiting_additional_approval",
+                  approval: buildApprovalSummaryPayload(
+                    approvalState.request,
+                    approvalState.approvalCount,
+                    requiredApprovals,
+                    `A distinct approver must approve this request before execution. Current approvals: ${approvalState.approvalCount}/${requiredApprovals}.`,
+                  ),
+                };
+
+                await persistOrgOperationHistory(supabaseAdmin, userId, {
+                  action,
+                  scope,
+                  scpTemplate,
+                  accountCount: resolution.accounts.length,
+                  envBreakdown: blastRadius.by_env,
+                  warnings: previewPayload.warnings,
+                  blocked: previewPayload.blocked,
+                  rollbackPlan,
+                  status: "awaiting_additional_approval",
+                  previewPayload: awaitingApprovalPayload,
+                });
+
+                apiMessages.push({
+                  role: "tool",
+                  tool_call_id: toolCall.id,
+                  content: JSON.stringify(awaitingApprovalPayload),
+                } as any);
+                continue;
+              }
+
               const orgClaim = await claimIdempotencyKey(
                 supabaseAdmin,
                 userId,
@@ -3720,6 +4033,7 @@ serve(async (req) => {
               const execTime = Date.now() - startTime;
               const summary = buildOrgExecutionSummary(scope, execution.policyName, execution.policyId, execution.results);
               await storeIdempotencySuccess(supabaseAdmin, "manage_org_operation", orgRequestKey, summary);
+              await markApprovalRequestExecuted(supabaseAdmin, approvalRequest.id, summary);
               await persistOrgOperationHistory(supabaseAdmin, userId, {
                 action,
                 scope,
@@ -3792,6 +4106,18 @@ serve(async (req) => {
                   `org-operation:${requestHash}`,
                   { error: errorMessage, code: typedError.code, category: typedError.category },
                 );
+                const { data: approvalRequest } = await supabaseAdmin
+                  .from("approval_requests")
+                  .select("id")
+                  .eq("request_key", `org-operation:${requestHash}`)
+                  .maybeSingle();
+                if (approvalRequest?.id) {
+                  await markApprovalRequestFailed(supabaseAdmin, approvalRequest.id, {
+                    error: errorMessage,
+                    code: typedError.code,
+                    category: typedError.category,
+                  });
+                }
               } catch {
                 // Best-effort failure recording only.
               }
@@ -3869,6 +4195,17 @@ serve(async (req) => {
               const operationName = buildSecurityGroupOperationName(args.action);
               const existingMatch = findExistingMatchingPermission(targetGroup, args, permission, sourceGroup?.groupId);
               const wouldBeNoop = isAllowAction(args.action) ? Boolean(existingMatch) : !existingMatch;
+              const requiredApprovals = requiredApprovalsForSecurityGroup(targetGroup);
+              const sgIdempotencyPayload = {
+                region: awsConfig.region,
+                action: args.action,
+                targetGroupId: targetGroup.groupId,
+                sourceGroupId: sourceGroup?.groupId || null,
+                cidr: args.cidr || null,
+                permission,
+              };
+              const sgRequestHash = await sha256(stableStringify(sgIdempotencyPayload));
+              const sgRequestKey = `security-group:${sgRequestHash}`;
               const execTime = Date.now() - startTime;
 
               if (!risk.allowed) {
@@ -3952,8 +4289,30 @@ serve(async (req) => {
                   exposureSummary: args.cidr
                     ? `${getSecurityGroupDirection(args.action)} rule targets ${args.cidr}.`
                     : `${getSecurityGroupDirection(args.action)} rule targets security group ${sourceGroup?.groupName || sourceGroup?.groupId}.`,
-                  confirmationHint: "Reply with 'confirm' to apply this security group change.",
+                  confirmationHint: requiredApprovals > 1
+                    ? "Reply with 'confirm' to register approval. A distinct second approver is required before execution."
+                    : "Reply with 'confirm' to approve and apply this security group change.",
                 };
+
+                const approvalRequest = userId
+                  ? await upsertApprovalRequest(supabaseAdmin, {
+                    requestKey: sgRequestKey,
+                    requestHash: sgRequestHash,
+                    operationName: "manage_security_group_rule",
+                    requesterUserId: userId,
+                    summary: preview.summary,
+                    riskLevel: risk.riskLevel,
+                    requiredApprovals,
+                    previewPayload: preview,
+                    requestPayload: sgIdempotencyPayload,
+                    evidencePayload: {
+                      targetGroupId: targetGroup.groupId,
+                      groupName: targetGroup.groupName,
+                      prodLike: isProdLikeGroup(targetGroup),
+                      reasons: risk.reasons,
+                    },
+                  })
+                  : null;
 
                 if (userId) {
                   supabaseAdmin.from("agent_audit_log").insert({
@@ -3984,7 +4343,19 @@ serve(async (req) => {
                 apiMessages.push({
                   role: "tool",
                   tool_call_id: toolCall.id,
-                  content: JSON.stringify(preview),
+                  content: JSON.stringify({
+                    ...preview,
+                    approval: approvalRequest
+                      ? buildApprovalSummaryPayload(
+                        approvalRequest,
+                        approvalRequest.current_approvals || 0,
+                        requiredApprovals,
+                        requiredApprovals > 1
+                          ? "A distinct second approver is required before execution."
+                          : "Reply with 'confirm' to approve and execute.",
+                      )
+                      : null,
+                  }),
                 } as any);
                 continue;
               }
@@ -4009,16 +4380,75 @@ serve(async (req) => {
                 continue;
               }
 
-              const sgIdempotencyPayload = {
-                region: awsConfig.region,
-                action: args.action,
-                targetGroupId: targetGroup.groupId,
-                sourceGroupId: sourceGroup?.groupId || null,
-                cidr: args.cidr || null,
-                permission,
-              };
-              const sgRequestHash = await sha256(stableStringify(sgIdempotencyPayload));
-              const sgRequestKey = `security-group:${sgRequestHash}`;
+              if (!userId) {
+                throw new CloudPilotError("Authentication is required for security group approvals.", {
+                  code: "AUTH_REQUIRED_FOR_APPROVAL",
+                  category: "authentication",
+                  status: 401,
+                });
+              }
+
+              const approvalRequest = await upsertApprovalRequest(supabaseAdmin, {
+                requestKey: sgRequestKey,
+                requestHash: sgRequestHash,
+                operationName: "manage_security_group_rule",
+                requesterUserId: userId,
+                summary: `${isAllowAction(args.action) ? "Add" : "Remove"} ${getSecurityGroupDirection(args.action)} ${args.protocol}:${args.fromPort}-${args.toPort} on ${targetGroup.groupName} (${targetGroup.groupId}).`,
+                riskLevel: risk.riskLevel,
+                requiredApprovals,
+                previewPayload: {
+                  targetGroup,
+                  sourceGroup,
+                  permission,
+                  reasons: risk.reasons,
+                },
+                requestPayload: sgIdempotencyPayload,
+                evidencePayload: {
+                  targetGroupId: targetGroup.groupId,
+                  groupName: targetGroup.groupName,
+                  prodLike: isProdLikeGroup(targetGroup),
+                  reasons: risk.reasons,
+                },
+              });
+
+              await recordApprovalAction(supabaseAdmin, approvalRequest.id, userId);
+              const approvalState = await refreshApprovalRequestState(
+                supabaseAdmin,
+                approvalRequest.id,
+                requiredApprovals,
+              );
+
+              if (approvalState.approvalCount < requiredApprovals) {
+                apiMessages.push({
+                  role: "tool",
+                  tool_call_id: toolCall.id,
+                  content: JSON.stringify({
+                    status: "awaiting_additional_approval",
+                    riskLevel: risk.riskLevel,
+                    direction: getSecurityGroupDirection(args.action),
+                    operation: operationName,
+                    targetGroup,
+                    sourceGroup,
+                    requestedRule: {
+                      action: args.action,
+                      protocol: args.protocol,
+                      fromPort: args.fromPort,
+                      toPort: args.toPort,
+                      cidr: args.cidr || null,
+                      sourceGroupId: sourceGroup?.groupId || null,
+                    },
+                    reasons: risk.reasons,
+                    approval: buildApprovalSummaryPayload(
+                      approvalState.request,
+                      approvalState.approvalCount,
+                      requiredApprovals,
+                      `A distinct approver must approve this security group change before execution. Current approvals: ${approvalState.approvalCount}/${requiredApprovals}.`,
+                    ),
+                  }),
+                } as any);
+                continue;
+              }
+
               const sgClaim = await claimIdempotencyKey(
                 supabaseAdmin,
                 userId,
@@ -4083,6 +4513,7 @@ serve(async (req) => {
                 sgRequestKey,
                 executionResult,
               );
+              await markApprovalRequestExecuted(supabaseAdmin, approvalRequest.id, executionResult);
 
               if (userId) {
                 supabaseAdmin.from("agent_audit_log").insert({
@@ -4154,6 +4585,18 @@ serve(async (req) => {
                     `security-group:${requestHash}`,
                     { error: errorMessage, code: typedError.code, category: typedError.category },
                   );
+                  const { data: approvalRequest } = await supabaseAdmin
+                    .from("approval_requests")
+                    .select("id")
+                    .eq("request_key", `security-group:${requestHash}`)
+                    .maybeSingle();
+                  if (approvalRequest?.id) {
+                    await markApprovalRequestFailed(supabaseAdmin, approvalRequest.id, {
+                      error: errorMessage,
+                      code: typedError.code,
+                      category: typedError.category,
+                    });
+                  }
                 } catch {
                   // Best-effort failure recording only.
                 }
@@ -4203,6 +4646,16 @@ serve(async (req) => {
             try {
               const rawArgs = JSON.parse(toolCall.function.arguments);
               const plan = buildIamAccessPlan(rawArgs);
+              const requiredApprovals = requiredApprovalsForIamPlan(plan);
+              const idempotencyPayload = {
+                region: awsConfig.region,
+                principalType: plan.args.principalType,
+                principalIdentifier: plan.args.principalIdentifier,
+                policyName: plan.policyName,
+                policyDocument: plan.policyDocument,
+              };
+              const iamRequestHash = await sha256(stableStringify(idempotencyPayload));
+              const iamRequestKey = `iam-access:${iamRequestHash}`;
 
               if (!userHasConfirmedMutation) {
                 const execTime = Date.now() - startTime;
@@ -4232,8 +4685,29 @@ serve(async (req) => {
                   ],
                   warnings: plan.warnings,
                   policyDocument: plan.policyDocument,
-                  confirmationHint: "Reply with 'confirm' to apply this IAM change.",
+                  confirmationHint: requiredApprovals > 1
+                    ? "Reply with 'confirm' to register approval. A distinct second approver is required before execution."
+                    : "Reply with 'confirm' to approve and apply this IAM change.",
                 };
+
+                const approvalRequest = userId
+                  ? await upsertApprovalRequest(supabaseAdmin, {
+                    requestKey: iamRequestKey,
+                    requestHash: iamRequestHash,
+                    operationName: "manage_iam_access",
+                    requesterUserId: userId,
+                    summary: preview.summary,
+                    riskLevel: requiredApprovals > 1 ? "HIGH" : "MEDIUM",
+                    requiredApprovals,
+                    previewPayload: preview,
+                    requestPayload: idempotencyPayload,
+                    evidencePayload: {
+                      principalType: plan.args.principalType,
+                      principalIdentifier: plan.args.principalIdentifier,
+                      resources: plan.policyDocument.Statement[0].Resource,
+                    },
+                  })
+                  : null;
 
                 if (userId) {
                   supabaseAdmin.from("agent_audit_log").insert({
@@ -4263,21 +4737,84 @@ serve(async (req) => {
                 apiMessages.push({
                   role: "tool",
                   tool_call_id: toolCall.id,
-                  content: JSON.stringify(preview),
+                  content: JSON.stringify({
+                    ...preview,
+                    approval: approvalRequest
+                      ? buildApprovalSummaryPayload(
+                        approvalRequest,
+                        approvalRequest.current_approvals || 0,
+                        requiredApprovals,
+                        requiredApprovals > 1
+                          ? "A distinct second approver is required before execution."
+                          : "Reply with 'confirm' to approve and execute.",
+                      )
+                      : null,
+                  }),
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 } as any);
                 continue;
               }
 
-              const idempotencyPayload = {
-                region: awsConfig.region,
-                principalType: plan.args.principalType,
-                principalIdentifier: plan.args.principalIdentifier,
-                policyName: plan.policyName,
-                policyDocument: plan.policyDocument,
-              };
-              const iamRequestHash = await sha256(stableStringify(idempotencyPayload));
-              const iamRequestKey = `iam-access:${iamRequestHash}`;
+              if (!userId) {
+                throw new CloudPilotError("Authentication is required for IAM approval workflows.", {
+                  code: "AUTH_REQUIRED_FOR_APPROVAL",
+                  category: "authentication",
+                  status: 401,
+                });
+              }
+
+              const approvalRequest = await upsertApprovalRequest(supabaseAdmin, {
+                requestKey: iamRequestKey,
+                requestHash: iamRequestHash,
+                operationName: "manage_iam_access",
+                requesterUserId: userId,
+                summary: `Create policy '${plan.policyName}' and attach it to IAM ${plan.args.principalType} '${plan.args.principalIdentifier}'.`,
+                riskLevel: requiredApprovals > 1 ? "HIGH" : "MEDIUM",
+                requiredApprovals,
+                previewPayload: {
+                  principalType: plan.args.principalType,
+                  principalIdentifier: plan.args.principalIdentifier,
+                  policyName: plan.policyName,
+                  resources: plan.policyDocument.Statement[0].Resource,
+                },
+                requestPayload: idempotencyPayload,
+                evidencePayload: {
+                  principalType: plan.args.principalType,
+                  principalIdentifier: plan.args.principalIdentifier,
+                  resources: plan.policyDocument.Statement[0].Resource,
+                },
+              });
+
+              await recordApprovalAction(supabaseAdmin, approvalRequest.id, userId);
+              const approvalState = await refreshApprovalRequestState(
+                supabaseAdmin,
+                approvalRequest.id,
+                requiredApprovals,
+              );
+
+              if (approvalState.approvalCount < requiredApprovals) {
+                apiMessages.push({
+                  role: "tool",
+                  tool_call_id: toolCall.id,
+                  content: JSON.stringify({
+                    status: "awaiting_additional_approval",
+                    summary: `Create policy '${plan.policyName}' and attach it to IAM ${plan.args.principalType} '${plan.args.principalIdentifier}'.`,
+                    principal: {
+                      type: plan.args.principalType,
+                      identifier: plan.args.principalIdentifier,
+                    },
+                    policyName: plan.policyName,
+                    approval: buildApprovalSummaryPayload(
+                      approvalState.request,
+                      approvalState.approvalCount,
+                      requiredApprovals,
+                      `A distinct approver must approve this IAM request before execution. Current approvals: ${approvalState.approvalCount}/${requiredApprovals}.`,
+                    ),
+                  }),
+                } as any);
+                continue;
+              }
+
               const iamClaim = await claimIdempotencyKey(
                 supabaseAdmin,
                 userId,
@@ -4348,6 +4885,7 @@ serve(async (req) => {
               };
 
               await storeIdempotencySuccess(supabaseAdmin, "manage_iam_access", iamRequestKey, executionResult);
+              await markApprovalRequestExecuted(supabaseAdmin, approvalRequest.id, executionResult);
 
               if (userId) {
                 supabaseAdmin.from("agent_audit_log").insert({
@@ -4403,6 +4941,18 @@ serve(async (req) => {
                   `iam-access:${requestHash}`,
                   { error: errorMessage, code: typedError.code, category: typedError.category },
                 );
+                const { data: approvalRequest } = await supabaseAdmin
+                  .from("approval_requests")
+                  .select("id")
+                  .eq("request_key", `iam-access:${requestHash}`)
+                  .maybeSingle();
+                if (approvalRequest?.id) {
+                  await markApprovalRequestFailed(supabaseAdmin, approvalRequest.id, {
+                    error: errorMessage,
+                    code: typedError.code,
+                    category: typedError.category,
+                  });
+                }
               }
 
               if (userId) {

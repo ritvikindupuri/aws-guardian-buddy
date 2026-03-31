@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, FileText, Layers3, PlayCircle, RefreshCcw, Shield, SlidersHorizontal, TrendingUp, ShieldCheck, Clock, AlertTriangle } from "lucide-react";
+import { AlertTriangle, ArrowLeft, CheckSquare, Clock, Download, FileText, Layers3, PlayCircle, RefreshCcw, Shield, ShieldCheck, SlidersHorizontal, TrendingUp } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
@@ -118,6 +118,49 @@ interface GuardianEventActivityRow {
   runbooks: unknown;
 }
 
+interface ApprovalRequestRow {
+  id: string;
+  request_key: string;
+  operation_name: string;
+  summary: string;
+  risk_level: string;
+  required_approvals: number;
+  current_approvals: number;
+  dual_approval_required: boolean;
+  status: string;
+  last_approved_at: string | null;
+  executed_at: string | null;
+  created_at: string;
+}
+
+interface ApprovalActionRow {
+  id: string;
+  approval_request_id: string;
+  approver_user_id: string;
+  decision: string;
+  created_at: string;
+}
+
+interface ComplianceEvidenceExportRow {
+  id: string;
+  title: string;
+  export_type: string;
+  status: string;
+  evidence_hash: string;
+  evidence_bundle: Record<string, unknown> | null;
+  created_at: string;
+  generated_at: string;
+}
+
+interface AuditLogRow {
+  id: string;
+  aws_service: string;
+  aws_operation: string;
+  status: string;
+  error_message: string | null;
+  created_at: string;
+}
+
 const badgeClass = (status: string) => {
   const normalized = status.toLowerCase();
   if (normalized.includes("critical") || normalized.includes("failed") || normalized.includes("blocked")) {
@@ -192,6 +235,10 @@ const Operations = () => {
   const [guardianCreds, setGuardianCreds] = useState<GuardianCredentialRow[]>([]);
   const [automationRuns, setAutomationRuns] = useState<AutomationRunRow[]>([]);
   const [eventActivity, setEventActivity] = useState<GuardianEventActivityRow[]>([]);
+  const [approvalRequests, setApprovalRequests] = useState<ApprovalRequestRow[]>([]);
+  const [approvalActions, setApprovalActions] = useState<ApprovalActionRow[]>([]);
+  const [evidenceExports, setEvidenceExports] = useState<ComplianceEvidenceExportRow[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLogRow[]>([]);
   const [editingPolicy, setEditingPolicy] = useState<EventPolicyRow | null>(null);
   const [policyForm, setPolicyForm] = useState({
     name: "",
@@ -214,6 +261,10 @@ const Operations = () => {
       guardianResp,
       automationRunsResp,
       eventActivityResp,
+      approvalRequestsResp,
+      approvalActionsResp,
+      evidenceExportsResp,
+      auditLogsResp,
     ] = await Promise.all([
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (supabase.from("event_response_policies" as any).select("*").order("created_at", { ascending: false }).limit(25) as any),
@@ -233,6 +284,14 @@ const Operations = () => {
       (supabase.from("automation_runs" as any).select("*").order("created_at", { ascending: false }).limit(20) as any),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (supabase.from("guardian_event_activity" as any).select("*").order("created_at", { ascending: false }).limit(20) as any),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (supabase.from("approval_requests" as any).select("*").order("updated_at", { ascending: false }).limit(20) as any),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (supabase.from("approval_actions" as any).select("*").order("created_at", { ascending: false }).limit(100) as any),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (supabase.from("compliance_evidence_exports" as any).select("*").order("created_at", { ascending: false }).limit(20) as any),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (supabase.from("agent_audit_log" as any).select("id, aws_service, aws_operation, status, error_message, created_at").order("created_at", { ascending: false }).limit(40) as any),
     ]);
 
     setEventPolicies((policiesResp.data || []) as unknown as EventPolicyRow[]);
@@ -245,6 +304,16 @@ const Operations = () => {
     setGuardianCreds((guardianResp.data || []) as unknown as GuardianCredentialRow[]);
     setAutomationRuns((automationRunsResp.data || []) as unknown as AutomationRunRow[]);
     setEventActivity((eventActivityResp.data || []) as unknown as GuardianEventActivityRow[]);
+    setApprovalRequests((approvalRequestsResp.data || []) as ApprovalRequestRow[]);
+    setApprovalActions((approvalActionsResp.data || []) as ApprovalActionRow[]);
+    setEvidenceExports((evidenceExportsResp.data || []) as ComplianceEvidenceExportRow[]);
+    setAuditLogs((auditLogsResp.data || []) as AuditLogRow[]);
+    setAutomationRuns((automationRunsResp.data || []) as unknown as AutomationRunRow[]);
+    setEventActivity((eventActivityResp.data || []) as unknown as GuardianEventActivityRow[]);
+    setApprovalRequests((approvalRequestsResp.data || []) as unknown as ApprovalRequestRow[]);
+    setApprovalActions((approvalActionsResp.data || []) as unknown as ApprovalActionRow[]);
+    setEvidenceExports((evidenceExportsResp.data || []) as unknown as ComplianceEvidenceExportRow[]);
+    setAuditLogs((auditLogsResp.data || []) as unknown as AuditLogRow[]);
 
     const executionIds = executions.map((execution) => execution.id);
     if (executionIds.length > 0) {
@@ -286,6 +355,10 @@ const Operations = () => {
       .on("postgres_changes", { event: "*", schema: "public", table: "stored_aws_credentials" }, refresh)
       .on("postgres_changes", { event: "*", schema: "public", table: "automation_runs" }, refresh)
       .on("postgres_changes", { event: "*", schema: "public", table: "guardian_event_activity" }, refresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "approval_requests" }, refresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "approval_actions" }, refresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "compliance_evidence_exports" }, refresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "agent_audit_log" }, refresh)
       .subscribe();
 
     return () => {
@@ -310,6 +383,63 @@ const Operations = () => {
     }
     return map;
   }, [runbookSteps]);
+
+  const approvalActionsByRequest = useMemo(() => {
+    const map = new Map<string, ApprovalActionRow[]>();
+    for (const action of approvalActions) {
+      const existing = map.get(action.approval_request_id) || [];
+      existing.push(action);
+      map.set(action.approval_request_id, existing);
+    }
+    return map;
+  }, [approvalActions]);
+
+  const pendingApprovals = useMemo(
+    () => approvalRequests.filter((request) => request.status !== "executed" && request.status !== "failed"),
+    [approvalRequests],
+  );
+
+  const immutableTimeline = useMemo(() => {
+    const approvalEntries = approvalRequests.map((request) => ({
+      id: `approval-${request.id}`,
+      timestamp: request.created_at,
+      title: request.summary,
+      detail: `Approval workflow · ${request.current_approvals}/${request.required_approvals} approval(s) · ${request.status}`,
+      status: request.status,
+    }));
+    const auditEntries = auditLogs.map((log) => ({
+      id: `audit-${log.id}`,
+      timestamp: log.created_at,
+      title: `${log.aws_service}.${log.aws_operation}`,
+      detail: log.error_message || `Audit record status: ${log.status}.`,
+      status: log.status,
+    }));
+    const eventEntries = eventActivity.map((event) => ({
+      id: `event-${event.id}`,
+      timestamp: event.created_at,
+      title: `CloudTrail ${event.event_name}`,
+      detail: `${event.resource_id || "Unknown resource"} · ${event.risk_level}`,
+      status: event.risk_level,
+    }));
+    const runbookEntries = runbookExecutions.map((execution) => ({
+      id: `runbook-${execution.id}`,
+      timestamp: execution.updated_at,
+      title: execution.runbook_name,
+      detail: `Runbook execution · ${execution.status}`,
+      status: execution.status,
+    }));
+    const orgEntries = orgHistory.map((entry) => ({
+      id: `org-${entry.id}`,
+      timestamp: entry.created_at,
+      title: entry.scp_template || entry.action,
+      detail: `Organization rollout · ${entry.account_count} account(s) · ${entry.status}`,
+      status: entry.status,
+    }));
+
+    return [...approvalEntries, ...auditEntries, ...eventEntries, ...runbookEntries, ...orgEntries]
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+      .slice(0, 30);
+  }, [approvalRequests, auditLogs, eventActivity, runbookExecutions, orgHistory]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -377,6 +507,54 @@ const Operations = () => {
     setEditingPolicy(null);
   };
 
+  const handleGenerateEvidenceExport = async () => {
+    if (!user) return;
+
+    const evidenceBundle = {
+      generatedAt: new Date().toISOString(),
+      approvals: approvalRequests,
+      approvalActions,
+      auditLogs,
+      driftEvents,
+      runbookExecutions,
+      runbookSteps,
+      orgHistory,
+      automationRuns,
+      eventActivity,
+    };
+
+    const encoded = new TextEncoder().encode(JSON.stringify(evidenceBundle));
+    const digest = await crypto.subtle.digest("SHA-256", encoded);
+    const evidenceHash = Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0")).join("");
+
+    const insertPayload = {
+      user_id: user.id,
+      title: `Compliance evidence export ${new Date().toLocaleString()}`,
+      export_type: "audit_timeline",
+      status: "generated",
+      evidence_hash: evidenceHash,
+      evidence_bundle: evidenceBundle,
+      filters: {
+        approvals: approvalRequests.length,
+        audits: auditLogs.length,
+        drift: driftEvents.length,
+        runbooks: runbookExecutions.length,
+        orgOperations: orgHistory.length,
+        eventActivity: eventActivity.length,
+      },
+    };
+
+    await supabase.from("compliance_evidence_exports").insert(insertPayload);
+
+    const blob = new Blob([JSON.stringify(insertPayload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `cloudpilot-evidence-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="min-h-screen bg-background">
       <div className="border-b border-border bg-card/70 backdrop-blur-sm">
@@ -410,12 +588,14 @@ const Operations = () => {
       </div>
 
       <div className="max-w-7xl mx-auto px-6 py-6 space-y-6">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-6 gap-4">
           {[
             { label: "Event Policies", value: eventPolicies.length, icon: Shield },
             { label: "Cost Rules", value: costRules.length, icon: TrendingUp },
             { label: "Unresolved Drift", value: baselineSummary.unresolvedDrift, icon: Layers3 },
             { label: "Runbooks", value: runbookExecutions.length, icon: PlayCircle },
+            { label: "Pending Approvals", value: pendingApprovals.length, icon: CheckSquare },
+            { label: "Evidence Exports", value: evidenceExports.length, icon: FileText },
           ].map((item) => (
             <div key={item.label} className="rounded-xl border border-border bg-card p-4">
               <div className="flex items-start justify-between">
@@ -582,6 +762,111 @@ const Operations = () => {
             </div>
           </section>
         </div>
+
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+          <section className="rounded-xl border border-border bg-card p-5 space-y-4">
+            <div>
+              <p className="text-[10px] font-mono text-muted-foreground tracking-widest uppercase">Approval Workflows</p>
+              <h2 className="text-lg font-semibold text-foreground mt-1">High-risk execution approvals</h2>
+            </div>
+
+            <div className="space-y-3">
+              {loading ? (
+                <p className="text-sm text-muted-foreground">Loading approval requests...</p>
+              ) : approvalRequests.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No approval requests have been recorded yet.</p>
+              ) : approvalRequests.map((request) => {
+                const actions = approvalActionsByRequest.get(request.id) || [];
+                return (
+                  <div key={request.id} className="rounded-lg border border-border bg-muted/30 p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-foreground">{request.summary}</p>
+                        <p className="text-[11px] text-muted-foreground mt-1">
+                          {request.operation_name} · Created {new Date(request.created_at).toLocaleString()}
+                        </p>
+                      </div>
+                      <div className="flex flex-col items-end gap-2">
+                        <span className={`text-[10px] font-mono px-2 py-1 rounded border ${badgeClass(request.risk_level)}`}>{request.risk_level}</span>
+                        <span className={`text-[10px] font-mono px-2 py-1 rounded border ${badgeClass(request.status)}`}>{request.status}</span>
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground mt-2">
+                      Approvals: {request.current_approvals}/{request.required_approvals} · {request.dual_approval_required ? "Dual approval required" : "Single approval flow"}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground mt-1">
+                      Approver records: {actions.length === 0 ? "None yet" : actions.map((action) => `${action.approver_user_id.slice(0, 8)}… (${action.decision})`).join(" · ")}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+
+          <section className="rounded-xl border border-border bg-card p-5 space-y-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-[10px] font-mono text-muted-foreground tracking-widest uppercase">Compliance Evidence</p>
+                <h2 className="text-lg font-semibold text-foreground mt-1">Immutable export history</h2>
+              </div>
+              <Button variant="outline" size="sm" onClick={handleGenerateEvidenceExport}>
+                <Download className="w-4 h-4 mr-2" />
+                Generate Export
+              </Button>
+            </div>
+
+            <div className="space-y-3">
+              {loading ? (
+                <p className="text-sm text-muted-foreground">Loading evidence exports...</p>
+              ) : evidenceExports.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No compliance evidence exports have been generated yet.</p>
+              ) : evidenceExports.map((item) => (
+                <div key={item.id} className="rounded-lg border border-border bg-muted/30 p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-foreground">{item.title}</p>
+                      <p className="text-[11px] text-muted-foreground mt-1">
+                        {item.export_type} · Generated {new Date(item.generated_at).toLocaleString()}
+                      </p>
+                    </div>
+                    <span className={`text-[10px] font-mono px-2 py-1 rounded border ${badgeClass(item.status)}`}>{item.status}</span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-2 break-all">
+                    Evidence hash: {item.evidence_hash}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </section>
+        </div>
+
+        <section className="rounded-xl border border-border bg-card p-5 space-y-4">
+          <div>
+            <p className="text-[10px] font-mono text-muted-foreground tracking-widest uppercase">Immutable Audit Timeline</p>
+            <h2 className="text-lg font-semibold text-foreground mt-1">Cross-system evidence trail</h2>
+          </div>
+
+          <div className="space-y-3">
+            {loading ? (
+              <p className="text-sm text-muted-foreground">Loading audit timeline...</p>
+            ) : immutableTimeline.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No audit timeline records are available yet.</p>
+            ) : immutableTimeline.map((entry) => (
+              <div key={entry.id} className="rounded-lg border border-border bg-muted/30 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-foreground">{entry.title}</p>
+                    <p className="text-[11px] text-muted-foreground mt-1">{entry.detail}</p>
+                  </div>
+                  <div className="flex flex-col items-end gap-2">
+                    <span className={`text-[10px] font-mono px-2 py-1 rounded border ${badgeClass(entry.status)}`}>{entry.status}</span>
+                    <span className="text-[10px] font-mono text-muted-foreground">{new Date(entry.timestamp).toLocaleString()}</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
 
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
           <section className="rounded-xl border border-border bg-card p-5 space-y-4">

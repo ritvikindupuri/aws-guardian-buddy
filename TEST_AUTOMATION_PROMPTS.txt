@@ -83,59 +83,68 @@ Apply the deny-non-approved-regions SCP to all dev accounts in the organization.
 21. SCP rollout confirmation
 Apply to N accounts
 
+22. Production SCP dual approval preview
+Apply the deny-non-approved-regions SCP to all prod accounts in the organization. Allow only us-east-1 and eu-west-1. Show a formal preview with the exact account count, warnings, rollback requirement, and approval status. Do not execute until the required approvals are satisfied.
+
 
 Runbooks
 
-22. Public S3 lockdown runbook plan
+23. Public S3 lockdown runbook plan
 Run the public S3 lockdown playbook for customer-data-bucket. Show the full formal step plan first, identify which steps are automatic and which require confirmation, and wait for me to say run playbook before executing.
 
-23. Data breach response plan
+24. Data breach response plan
 Run incident response for a suspected data breach. Show the full formal step plan, the confirmation gates, the manual steps, and the rollback notes before execution.
 
-24. Cost spike dry run
+25. Cost spike dry run
 Run the cost spike remediation playbook in dry-run mode. Execute all query steps for real, stop before any AWS action steps, and return a formal report of what would happen next.
 
-25. Start planned runbook
+26. Start planned runbook
 Run playbook
 
-26. Confirm paused runbook step
+27. Confirm paused runbook step
 Confirm
 
-27. Abort active runbook
+28. Abort active runbook
 Abort
 
 
 Event-driven automation
 
-28. Create world-open SSH response policy
+29. Create world-open SSH response policy
 If anyone opens port 22 to the world, close it immediately and page me.
 
-29. Create IAM user creation alert policy
+30. Create IAM user creation alert policy
 Alert the security team whenever a new IAM user is created outside Guardian.
 
-30. Create root account usage response policy
+31. Create root account usage response policy
 If root account is used for anything, wake up the on-call immediately.
 
-31. Replay recent CloudTrail events
+32. Replay recent CloudTrail events
 Replay the last 24 hours of CloudTrail events against my response policies and return a formal backtest report showing which events would have triggered which policies. Do not use emojis.
 
-32. Replay recent CloudTrail events with auto-fix decisions
+33. Replay recent CloudTrail events with auto-fix decisions
 Replay the last 24 hours of CloudTrail events against my current response policies and return a formal report that explicitly states, for each matched event, whether auto-fix would be applied, suppressed by guardrails, or not attempted.
 
-33. Create CloudTrail disablement response policy
+34. Create CloudTrail disablement response policy
 If CloudTrail logging is disabled, restore it immediately, notify the security team, and trigger the appropriate runbook.
 
 
 Operations UI verification
 
-34. Create data for Operations page
+35. Create data for Operations page
 Create or refresh enough automation state for the Operations page by listing my active event response policies, saved cost rules, latest drift status, recent runbook executions, recent organization operation history, recent live event activity, and recent automation runtime records in a formal summary.
 
-35. Guardian credential status summary
+36. Guardian credential status summary
 List every stored AWS credential set Guardian knows about, the last scan time, the latest scan outcome, and the current anomaly count for each credential set in a formal summary.
 
-36. Latest live event activity summary
+37. Latest live event activity summary
 Show me the latest live Guardian event activity. Include event name, risk level, affected resource, matched policy, and whether auto-fix was applied, suppressed, or not attempted.
 
-37. Latest automation runtime summary
+38. Latest automation runtime summary
 Show me the most recent Guardian automation runtime entries for scheduled scans and event processing, including status, scan type, timestamps, and any summary counts.
+
+39. Production IAM approval preview
+Prepare a least-privilege IAM policy to give the IAM group prod-analytics read-only S3 access to arn:aws:s3:::prod-analytics-bucket and arn:aws:s3:::prod-analytics-bucket/* only. Show the preview, approval status, and wait for the required approvals before executing.
+
+40. Production security group approval preview
+Open port 443 to 203.0.113.0/24 on the security group prod-web-sg. Show the exact rule preview, approval status, and wait for the required approvals before executing.
