@@ -100,35 +100,37 @@ const AwsCredentialsPanel = ({ credentials, onSave, compact = false }: AwsCreden
       setIsOpen(false);
       toast.success(`Connected to AWS account ${data.identity?.account || ""}`);
 
-      // Store credentials for Guardian autonomous scans if opted in
+      // Store credentials for Guardian autonomous scans if opted in (AES-256-GCM server-side)
       if (storeForGuardian && method === "access_key") {
         try {
-          const encryptKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY?.slice(0, 32) || "";
-          const encrypt = (val: string) => {
-            const bytes = new TextEncoder().encode(val);
-            const keyBytes = new TextEncoder().encode(encryptKey);
-            return Array.from(bytes).map((b, i) => (b ^ keyBytes[i % keyBytes.length]).toString(16).padStart(2, "0")).join("");
-          };
-
-          const { error: storeErr } = await supabase.from("stored_aws_credentials" as any).upsert({
-            user_id: (await supabase.auth.getUser()).data.user?.id,
-            label: "Default",
-            region,
-            encrypted_access_key_id: encrypt(accessKeyId),
-            encrypted_secret_access_key: encrypt(secretAccessKey),
-            encrypted_session_token: sessionToken ? encrypt(sessionToken) : null,
-            credential_method: method,
-            account_id: data.identity?.account || null,
-            notification_email: notificationEmail || null,
-            guardian_enabled: true,
-            scan_mode: "all",
-          } as any, { onConflict: "user_id,label" as any });
-
-          if (storeErr) {
-            console.error("Failed to store credentials for Guardian:", storeErr);
+          const vaultResp = await fetch(
+            `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/aws-credential-vault`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}`,
+              },
+              body: JSON.stringify({
+                action: "encrypt_and_store",
+                accessKeyId,
+                secretAccessKey,
+                sessionToken: sessionToken || undefined,
+                region,
+                label: "Default",
+                accountId: data.identity?.account || null,
+                notificationEmail: notificationEmail || null,
+                scanMode: "all",
+                credentialMethod: method,
+              }),
+            }
+          );
+          const vaultData = await vaultResp.json();
+          if (!vaultResp.ok) {
+            console.error("Vault store failed:", vaultData.error);
             toast.error("Connected but failed to store for Guardian scheduling.");
           } else {
-            toast.success("Credentials stored for autonomous Guardian scans.");
+            toast.success("Credentials stored (AES-256-GCM) for autonomous Guardian scans.");
           }
         } catch (guardianErr) {
           console.error("Guardian store error:", guardianErr);

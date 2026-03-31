@@ -510,24 +510,47 @@ async function runDriftScan(supabaseAdmin: any, userId: string, awsConfig: any) 
   return { accountId, snapshotCount: currentSnapshots.length, driftEvents: events };
 }
 
-// ── Encryption helpers for stored credentials ──────────────────────────────
-const ENCRYPTION_KEY = REQUIRED_SCHEDULER_ENVS.supabaseServiceRoleKey.slice(0, 32);
+// ── AES-256-GCM Encryption helpers for stored credentials ──────────────────
+// Key derivation: PBKDF2 from service role key + user-specific salt
+// Matches the aws-credential-vault edge function encryption scheme.
 
-function decryptValue(encryptedHex: string): string {
-  // pgcrypto-compatible AES-256 symmetric decrypt using service role key derivative
-  // For edge function simplicity, we store base64-encoded values encrypted with
-  // a simple XOR cipher keyed by the service role key hash. This is defence-in-depth
-  // on top of Supabase's at-rest encryption and RLS policies.
+async function deriveDecryptionKey(userId: string): Promise<CryptoKey> {
+  const encoder = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(REQUIRED_SCHEDULER_ENVS.supabaseServiceRoleKey),
+    "PBKDF2",
+    false,
+    ["deriveKey"]
+  );
+  return crypto.subtle.deriveKey(
+    {
+      name: "PBKDF2",
+      salt: encoder.encode(`cloudpilot-vault-${userId}`),
+      iterations: 100000,
+      hash: "SHA-256",
+    },
+    keyMaterial,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["decrypt"]
+  );
+}
+
+async function decryptValue(encryptedB64: string, userId: string): Promise<string> {
   try {
-    const bytes = Uint8Array.from(encryptedHex.match(/.{2}/g)!.map(b => parseInt(b, 16)));
-    const keyBytes = new TextEncoder().encode(ENCRYPTION_KEY);
-    const decrypted = new Uint8Array(bytes.length);
-    for (let i = 0; i < bytes.length; i++) {
-      decrypted[i] = bytes[i] ^ keyBytes[i % keyBytes.length];
-    }
+    const key = await deriveDecryptionKey(userId);
+    const combined = Uint8Array.from(atob(encryptedB64), c => c.charCodeAt(0));
+    const iv = combined.slice(0, 12);
+    const ciphertext = combined.slice(12);
+    const decrypted = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv },
+      key,
+      ciphertext
+    );
     return new TextDecoder().decode(decrypted);
   } catch {
-    throw new Error("Failed to decrypt stored credential value.");
+    throw new Error("Failed to decrypt stored credential value. Credentials may need re-encryption.");
   }
 }
 
