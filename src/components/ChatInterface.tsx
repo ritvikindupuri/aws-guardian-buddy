@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Send, Plus, PanelRightOpen, PanelRightClose, LogOut, History, FileText, Gauge, Settings2 } from "lucide-react";
+import { Send, Plus, PanelRightOpen, PanelRightClose, LogOut, History, FileText, Gauge, Settings2, Users } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import ChatMessage from "@/components/ChatMessage";
