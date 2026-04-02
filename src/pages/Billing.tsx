@@ -321,8 +321,8 @@ const Billing = () => {
                     <h3 className="text-xl font-bold text-foreground">{plan.name}</h3>
                   </div>
                   <div className="flex items-baseline gap-1">
-                    <span className="text-4xl font-bold">${plan.price}</span>
-                    <span className="text-muted-foreground text-sm">/ seat / mo</span>
+                    <span className="text-4xl font-bold">{plan.price === 0 ? "Free" : `$${plan.price}`}</span>
+                    {plan.price > 0 && <span className="text-muted-foreground text-sm">/ seat / mo</span>}
                   </div>
                 </div>
 
