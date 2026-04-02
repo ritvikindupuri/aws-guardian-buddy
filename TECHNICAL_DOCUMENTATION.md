@@ -3064,10 +3064,11 @@ graph TD
 
 | Plan | Price | Billing | Target Audience |
 |------|-------|---------|-----------------|
+| **Free** | $0 | Auto-assigned on signup | New users evaluating the platform |
 | **Pro** | $49/seat/month | Monthly recurring | Individual engineers, small teams |
 | **Enterprise** | $199/seat/month | Monthly recurring | Large organizations, regulated industries |
 
-**Pro** includes unlimited API execution, basic policy sets, real-time SSE streaming, single account audit, and email notifications. **Enterprise** adds SSO/SAML integration, cross-account role auditing, custom event policies, priority support, and immutable audit trails.
+**Free** is auto-assigned to every new organization via the `handle_new_user_org` database trigger. It includes 5 API executions per day, single AWS account support, basic security scans, and community support. **Pro** includes unlimited API execution, basic policy sets, real-time SSE streaming, single account audit, and email notifications. **Enterprise** adds SSO/SAML integration, cross-account role auditing, custom event policies, priority support, and immutable audit trails.
 
 ### Edge Function: `stripe-checkout`
 
