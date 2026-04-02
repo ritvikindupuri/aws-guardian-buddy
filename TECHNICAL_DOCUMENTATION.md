@@ -63,8 +63,9 @@ By tightly coupling LLM reasoning capabilities with strict, restricted, and audi
 40. [End-to-End Test Suite](#40-end-to-end-test-suite)
 41. [Team Management UI](#41-team-management-ui)
 42. [SSO/SAML Integration Preparation](#42-ssosaml-integration-preparation)
-43. [Production Readiness Roadmap](#43-production-readiness-roadmap)
-44. [Conclusion](#44-conclusion)
+43. [Billing & Subscription System — Stripe Integration](#43-billing--subscription-system--stripe-integration)
+44. [Production Readiness Roadmap](#44-production-readiness-roadmap)
+45. [Conclusion](#45-conclusion)
 
 ---
 
