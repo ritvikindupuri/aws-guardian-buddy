@@ -3080,3 +3080,18 @@ Combined with the unified audit engine (Section 23), guarded IAM and security gr
 For environments requiring the highest level of network isolation, the VPC Endpoint configuration guide (Section 21) enables fully private AWS API routing with zero code changes. The WORM S3 audit archive meets SEC Rule 17a-4, FINRA, CFTC, SOC 2 Type II, and FedRAMP evidence requirements.
 
 Through its robust technical foundation and relentless commitment to real data over simulation, CloudPilot AI empowers security teams to identify and remediate vulnerabilities faster and more effectively than ever before.
+
+## Enterprise Security & Infrastructure Upgrades
+
+The following operational gaps were explicitly resolved to make the application production-ready for enterprise deployment:
+
+| Gap Resolved | Why It Matters |
+| --- | --- |
+| **Email verification enforced** | Ensures users cannot sign up without confirming their identity. |
+| **SSO/SAML integration built** | Allows enterprises to enforce Okta/Azure AD integration across their seat allocations. |
+| **Billing & Subscription layer added** | Provides usage metering, seat-based pricing UI, and Stripe integration handling. |
+| **Edge functions enforce `verify_jwt = true`** | Prevents skipped authentication on public-facing APIs, securing the system for production workloads. |
+| **Rate limiting on the API layer** | Implements sliding-window counters to prevent API abuse under real production traffic. |
+| **Automated test coverage** | Vitest testing suites run against core hooks (e.g., Auth) to act as a CI/CD safety net. |
+| **Team invite handles non-existing users** | Allows admins to seamlessly invite users who haven't yet signed up (auto-creating shadow accounts). |
+| **Error monitoring (Sentry) integrated** | Provides complete observability into client-side failures and edge function exceptions. |

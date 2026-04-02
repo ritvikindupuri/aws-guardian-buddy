@@ -20,8 +20,14 @@ export const useAuth = () => {
   }, []);
 
   const signIn = async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) throw error;
+
+    // Enforce email verification
+    if (data.user && !data.user.email_confirmed_at) {
+      await supabase.auth.signOut();
+      throw new Error("Please verify your email address before signing in.");
+    }
   };
 
   const signUp = async (email: string, password: string) => {
@@ -29,9 +35,14 @@ export const useAuth = () => {
     if (error) throw error;
   };
 
+  const signInWithSSO = async (domain: string) => {
+    const { error } = await supabase.auth.signInWithSSO({ domain });
+    if (error) throw error;
+  };
+
   const signOut = async () => {
     await supabase.auth.signOut();
   };
 
-  return { user, loading, signIn, signUp, signOut };
+  return { user, loading, signIn, signUp, signInWithSSO, signOut };
 };

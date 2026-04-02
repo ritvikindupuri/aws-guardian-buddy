@@ -85,15 +85,22 @@ Deno.serve(async (req) => {
         );
       }
 
-      const targetUser = users.find(
+      let targetUser = users.find(
         (u: { email?: string }) => u.email?.toLowerCase() === email.toLowerCase()
       );
 
       if (!targetUser) {
-        return new Response(
-          JSON.stringify({ error: "No user found with that email. They must create a CloudPilot account first." }),
-          { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+        // Invite the user via Supabase Auth Admin API
+        const { data: inviteData, error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(email);
+
+        if (inviteError || !inviteData.user) {
+          return new Response(
+            JSON.stringify({ error: `Failed to invite user: ${inviteError?.message || 'Unknown error'}` }),
+            { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+
+        targetUser = inviteData.user;
       }
 
       // Check if already a member

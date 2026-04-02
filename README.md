@@ -112,6 +112,12 @@ This approach is simpler than AWS EventBridge because it runs inside the databas
 - **Operations Control Plane**: A centralized UI dashboard (`/operations`) aggregating event policies, cost rules, drift status, runbook history, and organization rollouts.
 - **Real-Time Reactive Automations**: EventBridge + Lambda for live CloudTrail reactions and pg_cron for scheduled cost and drift polling.
 - **Live Streaming Executions**: Realtime runbook step streaming directly in the UI with actual notification delivery paths.
+- **Enterprise Ready Authentication**: Enforced email verification and SSO/SAML integrations built natively into the authentication flows.
+- **Seat-based Billing & Subscriptions**: Dedicated UI portal for managing Pro and Enterprise feature allocations.
+- **Secure API Edge Architecture**: Supabase Edge Functions strictly enforce `verify_jwt = true` alongside built-in sliding-window rate limiting.
+- **Client-Side Observability**: Integrated Sentry error monitoring provides robust insights into client-side failures and user-flow bottlenecks.
+- **Streamlined Team Invites**: Zero-friction team onboarding that handles shadow accounts for users who haven't signed up yet.
+- **Automated Test Coverage**: Comprehensive test suites running via Vitest to provide a continuous integration safety net.
 
 ---
 

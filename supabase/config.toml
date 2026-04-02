@@ -1,16 +1,16 @@
 project_id = "lomerqywiwxlblpunkdl"
 
 [functions.aws-agent]
-verify_jwt = false
+verify_jwt = true
 
 [functions.aws-agent-tools]
-verify_jwt = false
+verify_jwt = true
 
 [functions.aws-agent-scanner]
-verify_jwt = false
+verify_jwt = true
 
 [functions.aws-agent-ops]
-verify_jwt = false
+verify_jwt = true
 
 [functions.guardian-scheduler]
 verify_jwt = false
@@ -19,4 +19,4 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.aws-executor]
-verify_jwt = false
+verify_jwt = true

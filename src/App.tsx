@@ -11,6 +11,7 @@ import Report from "./pages/Report.tsx";
 import ReportsHistory from "./pages/ReportsHistory.tsx";
 import Operations from "./pages/Operations.tsx";
 import Team from "./pages/Team.tsx";
+import Billing from "./pages/Billing.tsx";
 import NotFound from "./pages/NotFound.tsx";
 import { useAuth } from "@/hooks/useAuth.ts";
 
@@ -82,6 +83,14 @@ const AppRoutes = () => {
         element={
           <ProtectedRoute>
             <Team />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/billing"
+        element={
+          <ProtectedRoute>
+            <Billing />
           </ProtectedRoute>
         }
       />

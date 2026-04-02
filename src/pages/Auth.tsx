@@ -6,14 +6,14 @@ import CloudPilotLogo from "@/components/CloudPilotLogo";
 import { useAuth } from "@/hooks/useAuth";
 
 const Auth = () => {
-  const [mode, setMode] = useState<"signin" | "signup">("signin");
+  const [mode, setMode] = useState<"signin" | "signup" | "sso">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
-  const { user, signIn, signUp } = useAuth();
+  const { user, signIn, signUp, signInWithSSO } = useAuth();
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -24,18 +24,34 @@ const Auth = () => {
     e.preventDefault();
     setError("");
     setSuccessMsg("");
-    if (!email.trim() || !password.trim()) {
-      setError("Email and password are required.");
-      return;
+
+    if (mode === "sso") {
+      if (!email.trim()) {
+        setError("Company email is required for SSO.");
+        return;
+      }
+    } else {
+      if (!email.trim() || !password.trim()) {
+        setError("Email and password are required.");
+        return;
+      }
     }
+
     setLoading(true);
     try {
       if (mode === "signin") {
         await signIn(email.trim(), password);
         navigate("/", { replace: true });
-      } else {
+      } else if (mode === "signup") {
         await signUp(email.trim(), password);
         setSuccessMsg("Account created! Check your email to confirm your address, then sign in.");
+      } else if (mode === "sso") {
+        const domain = email.trim().split("@")[1];
+        if (!domain) {
+          throw new Error("Invalid email domain for SSO.");
+        }
+        await signInWithSSO(domain);
+        // Supabase will redirect the user to the IdP
       }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
@@ -78,6 +94,17 @@ const Auth = () => {
             </button>
             <button
               type="button"
+              onClick={() => { setMode("sso"); setError(""); setSuccessMsg(""); }}
+              className={`flex-1 py-1.5 text-sm font-medium rounded-md transition-all ${
+                mode === "sso"
+                  ? "bg-card text-foreground shadow-sm border border-border"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              SSO Login
+            </button>
+            <button
+              type="button"
               onClick={() => { setMode("signup"); setError(""); setSuccessMsg(""); }}
               className={`flex-1 py-1.5 text-sm font-medium rounded-md transition-all ${
                 mode === "signup"
@@ -85,7 +112,7 @@ const Auth = () => {
                   : "text-muted-foreground hover:text-foreground"
               }`}
             >
-              Create Account
+              Sign Up
             </button>
           </div>
 
@@ -93,7 +120,7 @@ const Auth = () => {
             {/* Email */}
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                Email
+                {mode === "sso" ? "Company Email" : "Email"}
               </label>
               <input
                 type="email"
@@ -106,28 +133,30 @@ const Auth = () => {
             </div>
 
             {/* Password */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                Password
-              </label>
-              <div className="relative">
-                <input
-                  type={showPassword ? "text" : "password"}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder={mode === "signup" ? "Min. 6 characters" : "Enter your password"}
-                  autoComplete={mode === "signin" ? "current-password" : "new-password"}
-                  className="w-full rounded-lg bg-muted border border-border px-3.5 py-2.5 pr-10 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/40 focus:ring-1 focus:ring-primary/15"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                >
-                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
+            {mode !== "sso" && (
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                  Password
+                </label>
+                <div className="relative">
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder={mode === "signup" ? "Min. 6 characters" : "Enter your password"}
+                    autoComplete={mode === "signin" ? "current-password" : "new-password"}
+                    className="w-full rounded-lg bg-muted border border-border px-3.5 py-2.5 pr-10 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/40 focus:ring-1 focus:ring-primary/15"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
-            </div>
+            )}
 
             {/* Error */}
             {error && (
@@ -155,6 +184,8 @@ const Auth = () => {
                 <Loader2 className="w-4 h-4 animate-spin" />
               ) : mode === "signin" ? (
                 "Sign In"
+              ) : mode === "sso" ? (
+                "Sign in with SSO"
               ) : (
                 "Create Account"
               )}
