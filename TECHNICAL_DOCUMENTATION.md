@@ -3026,7 +3026,194 @@ The following infrastructure is already in place to support SSO:
 
 ---
 
-## 43. Production Readiness Roadmap
+## 43. Billing & Subscription System — Stripe Integration
+
+CloudPilot AI implements a fully functional billing and subscription system powered by Stripe. This section details the architecture, payment flow, and subscription lifecycle management that enables seat-based pricing for organizations.
+
+### Architecture Overview
+
+The billing system consists of three layers: the Stripe API (payment processor), two dedicated edge functions (`stripe-checkout` and `stripe-webhook`), and two database tables (`subscriptions` and `payment_history`) that maintain local subscription state.
+
+```mermaid
+graph TD
+    A[Billing Page UI] --> B[stripe-checkout Edge Function]
+    B --> C[Stripe API]
+    C --> D[Stripe Checkout Session]
+    D --> E[Customer Completes Payment]
+    E --> F[Stripe Webhook Event]
+    F --> G[stripe-webhook Edge Function]
+    G --> H[(subscriptions Table)]
+    G --> I[(payment_history Table)]
+    H --> A
+    I --> A
+
+    style A fill:#1a1a2e,stroke:#00d4ff,color:#e0e0e0
+    style B fill:#1a1a2e,stroke:#00d4ff,color:#e0e0e0
+    style C fill:#1a1a2e,stroke:#f0c040,color:#e0e0e0
+    style D fill:#1a1a2e,stroke:#f0c040,color:#e0e0e0
+    style G fill:#1a1a2e,stroke:#00d4ff,color:#e0e0e0
+    style H fill:#1a1a2e,stroke:#00ff88,color:#e0e0e0
+    style I fill:#1a1a2e,stroke:#00ff88,color:#e0e0e0
+```
+
+<p align="center">
+  <em>Figure 43.1: Billing System Architecture — End-to-end payment flow from UI through Stripe to database</em>
+</p>
+
+### Subscription Plans
+
+| Plan | Price | Billing | Target Audience |
+|------|-------|---------|-----------------|
+| **Pro** | $49/seat/month | Monthly recurring | Individual engineers, small teams |
+| **Enterprise** | $199/seat/month | Monthly recurring | Large organizations, regulated industries |
+
+**Pro** includes unlimited API execution, basic policy sets, real-time SSE streaming, single account audit, and email notifications. **Enterprise** adds SSO/SAML integration, cross-account role auditing, custom event policies, priority support, and immutable audit trails.
+
+### Edge Function: `stripe-checkout`
+
+This function handles three actions:
+
+| Action | Purpose | Auth Required |
+|--------|---------|---------------|
+| `create_checkout` | Creates a Stripe Checkout Session and returns the redirect URL | Owner only |
+| `create_portal` | Creates a Stripe Customer Portal session for subscription management | Owner only |
+| `get_subscription` | Retrieves current subscription and payment history for an org | Any org member |
+
+The `create_checkout` action enforces that only organization owners can initiate billing changes. It creates or reuses a Stripe customer record, then generates a Checkout Session with the selected plan's pricing. The session includes `metadata` tags for `org_id`, `user_id`, and `plan_id` that flow through to the webhook for accurate record-keeping.
+
+```mermaid
+sequenceDiagram
+    participant U as Org Owner
+    participant UI as Billing Page
+    participant EF as stripe-checkout
+    participant S as Stripe API
+    participant DB as Database
+
+    U->>UI: Click "Subscribe to Pro"
+    UI->>EF: POST {action: create_checkout, plan_id: pro, org_id}
+    EF->>EF: Verify JWT + check org ownership
+    EF->>DB: Check for existing Stripe customer
+    alt No existing customer
+        EF->>S: stripe.customers.create()
+    end
+    EF->>S: stripe.checkout.sessions.create()
+    S-->>EF: Session URL
+    EF-->>UI: {url: "https://checkout.stripe.com/..."}
+    UI->>U: Redirect to Stripe Checkout
+    U->>S: Complete payment
+    S-->>U: Redirect to success URL
+```
+
+<p align="center">
+  <em>Figure 43.2: Checkout Flow — From subscription selection through Stripe payment to redirect</em>
+</p>
+
+### Edge Function: `stripe-webhook`
+
+The webhook handler processes five Stripe event types to maintain local subscription state:
+
+| Event | Action |
+|-------|--------|
+| `checkout.session.completed` | Creates/upserts subscription record with plan and customer IDs |
+| `customer.subscription.updated` | Updates status, billing period dates, and cancellation flags |
+| `customer.subscription.deleted` | Marks subscription as canceled |
+| `invoice.payment_succeeded` | Records successful payment in `payment_history` |
+| `invoice.payment_failed` | Records failed payment and marks subscription as `past_due` |
+
+Webhook signature verification uses `STRIPE_WEBHOOK_SECRET` when configured. In development mode, events are parsed directly without signature validation.
+
+```mermaid
+graph LR
+    A[Stripe Event] --> B{Event Type}
+    B --> C[checkout.session.completed]
+    B --> D[subscription.updated]
+    B --> E[subscription.deleted]
+    B --> F[invoice.payment_succeeded]
+    B --> G[invoice.payment_failed]
+
+    C --> H[Upsert subscription]
+    D --> I[Update status/period]
+    E --> J[Mark canceled]
+    F --> K[Record payment ✓]
+    G --> L[Record failure + past_due]
+
+    style A fill:#1a1a2e,stroke:#f0c040,color:#e0e0e0
+    style H fill:#1a1a2e,stroke:#00ff88,color:#e0e0e0
+    style I fill:#1a1a2e,stroke:#00ff88,color:#e0e0e0
+    style J fill:#1a1a2e,stroke:#ff4444,color:#e0e0e0
+    style K fill:#1a1a2e,stroke:#00ff88,color:#e0e0e0
+    style L fill:#1a1a2e,stroke:#ff4444,color:#e0e0e0
+```
+
+<p align="center">
+  <em>Figure 43.3: Webhook Event Processing — How Stripe events update local subscription state</em>
+</p>
+
+### Database Schema
+
+**`subscriptions` table:**
+
+| Column | Type | Purpose |
+|--------|------|---------|
+| `user_id` | UUID | The org owner who initiated the subscription |
+| `org_id` | UUID (FK → organizations) | Organization this subscription belongs to |
+| `stripe_customer_id` | TEXT | Stripe Customer ID for portal access |
+| `stripe_subscription_id` | TEXT (UNIQUE) | Stripe Subscription ID for webhook correlation |
+| `stripe_price_id` | TEXT | Active Stripe Price ID |
+| `plan_name` | TEXT | Human-readable plan name (pro/enterprise) |
+| `status` | TEXT | Stripe status: active, past_due, canceled, trialing |
+| `current_period_start/end` | TIMESTAMPTZ | Current billing period boundaries |
+| `cancel_at_period_end` | BOOLEAN | Whether cancellation is scheduled |
+| `seats` | INTEGER | Number of seats purchased |
+
+**`payment_history` table:**
+
+| Column | Type | Purpose |
+|--------|------|---------|
+| `org_id` | UUID (FK → organizations) | Organization charged |
+| `stripe_invoice_id` | TEXT | Stripe Invoice ID for reconciliation |
+| `amount_cents` | INTEGER | Payment amount in cents |
+| `currency` | TEXT | ISO currency code (default: usd) |
+| `status` | TEXT | succeeded or failed |
+| `description` | TEXT | Human-readable description from Stripe |
+
+### RLS Policies
+
+| Table | Policy | Rule |
+|-------|--------|------|
+| `subscriptions` | Org members can view | `is_org_member(auth.uid(), org_id)` |
+| `subscriptions` | Org owners can manage | `get_org_role(auth.uid(), org_id) = 'owner'` |
+| `payment_history` | Org members can view | `is_org_member(auth.uid(), org_id)` |
+| Both tables | Service role full access | For webhook processing |
+
+### Billing UI
+
+The Billing page (`/billing`) provides:
+
+1. **Current Subscription Banner** — Shows active plan name, status badge (active/past_due/canceled), renewal date, and a "Manage Subscription" button that opens the Stripe Customer Portal
+2. **Plan Cards** — Two-column grid displaying Pro and Enterprise plans with feature lists and pricing. The active plan shows a "CURRENT PLAN" badge; inactive plans show "Subscribe" or "Switch" buttons
+3. **Payment History Table** — Chronological list of the 10 most recent payments with date, description, status (Paid/Failed), and formatted currency amount
+4. **Stripe Customer Portal** — One-click access to Stripe's hosted portal where users can update payment methods, switch plans, cancel subscriptions, and view invoices
+
+### Stripe Configuration
+
+To receive real money, the following must be configured:
+
+1. **`STRIPE_SECRET_KEY`** — Your Stripe secret key (already configured as a backend secret)
+2. **`STRIPE_WEBHOOK_SECRET`** — Webhook signing secret from Stripe Dashboard → Developers → Webhooks (already configured)
+3. **Stripe Webhook Endpoint** — In Stripe Dashboard, create a webhook pointing to `https://<project-ref>.supabase.co/functions/v1/stripe-webhook` and subscribe to events: `checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.payment_succeeded`, `invoice.payment_failed`
+4. **Stripe Customer Portal** — Enable the Customer Portal in Stripe Dashboard → Settings → Customer Portal to allow self-service subscription management
+
+### Security Considerations
+
+- The `stripe-checkout` function validates JWT claims and verifies org ownership before creating checkout sessions
+- The `stripe-webhook` function uses `verify_jwt = false` in config.toml because Stripe webhooks are authenticated via signature verification, not JWTs
+- Stripe customer IDs are stored locally but all payment processing occurs on Stripe's PCI-compliant infrastructure
+- No credit card numbers or sensitive payment data ever touch CloudPilot servers
+
+---
+
+## 44. Production Readiness Roadmap
 
 This section tracks the enterprise readiness status of each major capability area.
 
@@ -3045,13 +3232,13 @@ This section tracks the enterprise readiness status of each major capability are
 | E2E test suite (Playwright) | Auth + routing coverage | 40 |
 | Team management UI + invite edge function | Full page with email-based invites | 41 |
 | SSO/SAML architecture preparation | Readiness checklist and integration plan | 42 |
+| Billing & subscription system (Stripe) | Full checkout, webhook, portal, payment history | 43 |
 
 ### Remaining Enterprise Requirements
 
 | Feature | Priority | Status |
 |---------|----------|--------|
 | SSO/SAML IdP configuration | HIGH | Architecture ready, per-customer setup pending |
-| Billing/subscription layer | MEDIUM | Not started |
 | API key rotation UI | MEDIUM | Not started |
 | Exportable compliance reports (PDF/CSV) | MEDIUM | PDF export exists, CSV not implemented |
 | Data retention policy enforcement | LOW | Not started |
@@ -3060,23 +3247,23 @@ This section tracks the enterprise readiness status of each major capability are
 
 ---
 
-## 44. Conclusion
+## 45. Conclusion
 
 CloudPilot AI represents a significant advancement in applied generative AI for cloud security operations. By bridging the reasoning capabilities of Google's Gemini 2.5 Flash with the strict, deterministic execution of real AWS APIs across 35+ services, it eliminates the "hallucination" problem common in standard chat assistants through its uncompromising Zero Simulation Tolerance policy. The two-model architecture — Gemini 2.5 Flash Lite for intent classification and Gemini 2.5 Flash for the main agent — optimizes for both speed and accuracy, reducing token usage by 40-70% on focused queries.
 
-The architecture is meticulously designed for security at every layer: STS credential exchange ensures raw keys never reach the agent (Section 4); AES-256-GCM encryption with PBKDF2-derived per-user keys protects stored credentials at rest (Section 36); six defense-in-depth gates validate every tool call (Section 10); IAM blocked actions prevent privilege escalation through automation (Section 11); triple-sink audit logging provides forensic-grade accountability (Section 12); and TOTP-based MFA enrollment adds a second authentication factor (Section 36).
+The architecture is meticulously designed for security at every layer: STS credential exchange ensures raw keys never reach the agent (Section 4); AES-256-GCM encryption with PBKDF2-derived per-user keys protects stored credentials at rest (Section 34); six defense-in-depth gates validate every tool call (Section 10); IAM blocked actions prevent privilege escalation through automation (Section 11); triple-sink audit logging provides forensic-grade accountability (Section 12); and TOTP-based MFA enrollment adds a second authentication factor (Section 36).
 
-The backend's decomposed architecture — nine specialized edge functions including the credential vault and webhook dispatcher — ensures reliable deployment and clean separation of concerns. Token-bucket rate limiting (Section 37) protects all endpoints from abuse, while the `aws-executor` dynamic loader pattern solves the bundle timeout problem while supporting all 35 AWS service clients.
+The backend's decomposed architecture — eleven specialized edge functions including the credential vault, webhook dispatcher, and Stripe billing functions — ensures reliable deployment and clean separation of concerns. Token-bucket rate limiting (Section 37) protects all endpoints from abuse, while the `aws-executor` dynamic loader pattern solves the bundle timeout problem while supporting all 35 AWS service clients.
 
-The enterprise foundation includes a full RBAC system with four-level role hierarchy (owner/admin/member/viewer), multi-tenant organization isolation, and auto-provisioning triggers (Section 35). The Team Management UI (Section 41) exposes this system through a dedicated page where owners can invite members, assign roles, and manage org-level credential access. External notification integrations via Slack, PagerDuty, and generic webhooks (Section 38) ensure security alerts reach ops teams through their existing toolchains.
+The enterprise foundation includes a full RBAC system with four-level role hierarchy (owner/admin/member/viewer), multi-tenant organization isolation, and auto-provisioning triggers (Section 35). The Team Management UI (Section 41) exposes this system through a dedicated page where owners can invite members, assign roles, and manage org-level credential access. The Stripe-powered billing system (Section 43) enables seat-based pricing with real payment processing, customer portal access, and full payment history tracking. External notification integrations via Slack, PagerDuty, and generic webhooks (Section 38) ensure security alerts reach ops teams through their existing toolchains.
 
-The governed automation layer elevates Guardian from safe automation into enterprise-grade governed automation. The dual approval workflow (Section 32) ensures that high-risk operations targeting production IAM, security groups, or organization-wide SCPs require multiple independent approvals before execution, with every decision recorded in `approval_requests` and `approval_actions` for full accountability. Compliance evidence exports (Section 35) bundle all operational data — approvals, audit logs, drift events, runbook executions, and event activity — into SHA-256 hashed JSON artifacts stored in `compliance_evidence_exports`, providing tamper-evident proof of control effectiveness for SOC 2 Type II and similar audits. The immutable audit timeline merges these three data sources into a unified chronological feed, giving auditors a clear narrative from initial request through approval gates to final execution.
+The governed automation layer elevates Guardian from safe automation into enterprise-grade governed automation. The dual approval workflow (Section 32) ensures that high-risk operations targeting production IAM, security groups, or organization-wide SCPs require multiple independent approvals before execution, with every decision recorded in `approval_requests` and `approval_actions` for full accountability. Compliance evidence exports (Section 33) bundle all operational data — approvals, audit logs, drift events, runbook executions, and event activity — into SHA-256 hashed JSON artifacts stored in `compliance_evidence_exports`, providing tamper-evident proof of control effectiveness for SOC 2 Type II and similar audits. The immutable audit timeline merges these three data sources into a unified chronological feed, giving auditors a clear narrative from initial request through approval gates to final execution.
 
-The comprehensive React frontend provides a professional interface with 55+ pre-built security workflows across 8 categories (Section 9), real-time SSE streaming, animated panels, date-grouped chat history, color-coded severity tracking, a guided onboarding wizard for new users (Section 41), and inline MFA/webhook management. The mandatory industry-grade report format (Section 15) ensures every response meets enterprise audit standards with compliance mapping across 17+ frameworks (Section 20).
+The comprehensive React frontend provides a professional interface with 55+ pre-built security workflows across 8 categories (Section 9), real-time SSE streaming, animated panels, date-grouped chat history, color-coded severity tracking, a guided onboarding wizard for new users (Section 39), and inline MFA/webhook management. The mandatory industry-grade report format (Section 15) ensures every response meets enterprise audit standards with compliance mapping across 17+ frameworks (Section 20).
 
 The Guardian automation layer (Section 28) transforms CloudPilot AI from a reactive chat tool into a proactive security operations platform: the scheduler enables continuous posture monitoring via AES-256-GCM encrypted stored credentials and autonomous multi-user scanning, while the event processor provides real-time threat response with auto-fix capabilities restricted to reversible critical events by a strict guardrail. The Operations Control Plane (Section 31) makes every Guardian decision transparent through explicit AUTO-FIX APPLIED / AUTO-FIX SUPPRESSED status badges on each processed event.
 
-Combined with the unified audit engine (Section 23), guarded IAM and security group automation (Sections 24-25), cost anomaly detection (Section 26), baseline-driven drift detection (Section 27), AWS Organizations controls (Section 29), the runbook execution engine (Section 30), the unified Operations Control Plane (Section 31), dual approval workflows (Section 32), compliance evidence exports (Section 35), and Playwright-based E2E testing (Section 40), CloudPilot AI delivers an enterprise-grade security operations platform suitable for regulated industries including financial services, healthcare, and government.
+Combined with the unified audit engine (Section 23), guarded IAM and security group automation (Sections 24-25), cost anomaly detection (Section 26), baseline-driven drift detection (Section 27), AWS Organizations controls (Section 29), the runbook execution engine (Section 30), the unified Operations Control Plane (Section 31), dual approval workflows (Section 32), compliance evidence exports (Section 33), Stripe billing (Section 43), and Playwright-based E2E testing (Section 40), CloudPilot AI delivers an enterprise-grade security operations platform suitable for regulated industries including financial services, healthcare, and government.
 
 For environments requiring the highest level of network isolation, the VPC Endpoint configuration guide (Section 21) enables fully private AWS API routing with zero code changes. The WORM S3 audit archive meets SEC Rule 17a-4, FINRA, CFTC, SOC 2 Type II, and FedRAMP evidence requirements.
 
@@ -3090,7 +3277,7 @@ The following operational gaps were explicitly resolved to make the application 
 | --- | --- |
 | **Email verification enforced** | Ensures users cannot sign up without confirming their identity. |
 | **SSO/SAML integration built** | Allows enterprises to enforce Okta/Azure AD integration across their seat allocations. |
-| **Billing & Subscription layer added** | Provides usage metering, seat-based pricing UI, and Stripe integration handling. |
+| **Billing & Subscription layer added** | Full Stripe integration with checkout, webhooks, customer portal, and payment history (Section 43). |
 | **Edge functions enforce `verify_jwt = true`** | Prevents skipped authentication on public-facing APIs, securing the system for production workloads. |
 | **Rate limiting on the API layer** | Implements sliding-window counters to prevent API abuse under real production traffic. |
 | **Automated test coverage** | Vitest testing suites run against core hooks (e.g., Auth) to act as a CI/CD safety net. |
