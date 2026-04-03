@@ -21,11 +21,6 @@ const REQUIRED_EVENT_PROCESSOR_ENVS = {
   supabaseServiceRoleKey: requireEnv("SUPABASE_SERVICE_ROLE_KEY"),
 };
 
-AWS.config.update({
-  maxRetries: 4,
-  retryDelayOptions: { base: 250 },
-});
-
 const AUTOMATION_SECRET = REQUIRED_EVENT_PROCESSOR_ENVS.automationSecret;
 const AWS_REGION_REGEX = /^[a-z]{2}(-[a-z]+-\d+)?$/;
 const ACCESS_KEY_REGEX = /^[A-Z0-9]{16,128}$/;
@@ -125,7 +120,12 @@ function buildAwsConfig(credentials: any) {
   if (!AWS_REGION_REGEX.test(region)) throw new Error("Invalid AWS region.");
   if (!ACCESS_KEY_REGEX.test(accessKeyId)) throw new Error("Invalid AWS access key.");
   if (!secretAccessKey) throw new Error("Missing AWS secret access key.");
-  return { region, credentials: { accessKeyId, secretAccessKey, sessionToken } };
+  return {
+    region,
+    credentials: { accessKeyId, secretAccessKey, sessionToken },
+    maxRetries: 4,
+    retryDelayOptions: { base: 250 },
+  };
 }
 
 async function resolveUserId(req: Request, body: any, supabaseAdmin: any): Promise<string> {
