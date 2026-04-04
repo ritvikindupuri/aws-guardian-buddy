@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { STSClient, GetCallerIdentityCommand, GetSessionTokenCommand, AssumeRoleCommand } from "npm:@aws-sdk/client-sts@3.744.0";
+import { IAMClient, SimulatePrincipalPolicyCommand } from "npm:@aws-sdk/client-iam@3.744.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -163,7 +164,7 @@ serve(async (req) => {
     }
 
     // --- Pre-Flight IAM Boundary Checks ---
-    const iam = new AWS.IAM({
+    const iam = new IAMClient({
       credentials: {
         accessKeyId: tempCredentials.accessKeyId,
         secretAccessKey: tempCredentials.secretAccessKey,
@@ -197,10 +198,10 @@ serve(async (req) => {
     const permissions: Record<string, boolean> = {};
 
     try {
-      const simResult = await iam.simulatePrincipalPolicy({
+      const simResult = await iam.send(new SimulatePrincipalPolicyCommand({
         PolicySourceArn: identity.arn,
         ActionNames: actionsToTest,
-      }).promise();
+      }));
 
       if (simResult.EvaluationResults) {
         simResult.EvaluationResults.forEach((result) => {
