@@ -25,11 +25,6 @@ const REQUIRED_AWS_AGENT_ENVS = {
   lovableApiKey: requireEnv("LOVABLE_API_KEY"),
 };
 
-AWS.config.update({
-  maxRetries: 4,
-  retryDelayOptions: { base: 250 },
-});
-
 type ErrorCategory =
   | "validation"
   | "authentication"
@@ -2267,7 +2262,11 @@ async function getAssumedAwsConfig(accountId: string, region: string, externalId
     throw new Error("GUARDIAN_ORG_EXTERNAL_ID is not configured for cross-account role assumption.");
   }
 
-  const sts = new AWS.STS({ region });
+  const sts = new AWS.STS({
+    region,
+    maxRetries: 4,
+    retryDelayOptions: { base: 250 },
+  });
   const roleArn = `arn:aws:iam::${accountId}:role/${ORG_ROLE_NAME}`;
   const assumed = await sts.assumeRole({
     RoleArn: roleArn,
@@ -2286,6 +2285,8 @@ async function getAssumedAwsConfig(accountId: string, region: string, externalId
     accessKeyId: credentials.AccessKeyId,
     secretAccessKey: credentials.SecretAccessKey,
     sessionToken: credentials.SessionToken,
+    maxRetries: 4,
+    retryDelayOptions: { base: 250 },
   };
   orgClientCache.set(cacheKey, {
     config,
@@ -5970,6 +5971,8 @@ serve(async (req) => {
         sessionToken: sanitizeString(sessionToken, 2048),
       },
       region,
+      maxRetries: 4,
+      retryDelayOptions: { base: 250 },
     };
 
     const maskedKey = awsConfig.credentials.accessKeyId.slice(0, 4) + "****" + awsConfig.credentials.accessKeyId.slice(-4);

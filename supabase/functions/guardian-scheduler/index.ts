@@ -21,11 +21,6 @@ const REQUIRED_SCHEDULER_ENVS = {
   supabaseServiceRoleKey: requireEnv("SUPABASE_SERVICE_ROLE_KEY"),
 };
 
-AWS.config.update({
-  maxRetries: 4,
-  retryDelayOptions: { base: 250 },
-});
-
 const AUTOMATION_SECRET = REQUIRED_SCHEDULER_ENVS.automationSecret;
 const AWS_REGION_REGEX = /^[a-z]{2}(-[a-z]+-\d+)?$/;
 const ACCESS_KEY_REGEX = /^[A-Z0-9]{16,128}$/;
@@ -52,6 +47,8 @@ function buildAwsConfig(credentials: any) {
       secretAccessKey,
       sessionToken,
     },
+    maxRetries: 4,
+    retryDelayOptions: { base: 250 },
   };
 }
 
