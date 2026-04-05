@@ -264,8 +264,8 @@ const Compliance = () => {
   };
 
   const handleExceptionStatus = async (row: ComplianceExceptionRow, status: string) => {
-    const { data, error } = await supabase
-      .from("compliance_exceptions")
+    const { data, error } = await (supabase
+      .from("compliance_exceptions" as any)
       .update({
         status,
         updated_at: new Date().toISOString(),
@@ -283,14 +283,14 @@ const Compliance = () => {
   };
 
   const handleAttestationStatus = async (row: ComplianceAttestationRow, status: string) => {
-    const updatePayload: Database["public"]["Tables"]["compliance_attestations"]["Update"] = {
+    const updatePayload: any = {
       status,
       updated_at: new Date().toISOString(),
       last_completed_at: status === "completed" ? new Date().toISOString() : row.last_completed_at,
     };
 
-    const { data, error } = await supabase
-      .from("compliance_attestations")
+    const { data, error } = await (supabase
+      .from("compliance_attestations" as any)
       .update(updatePayload)
       .eq("id", row.id)
       .select("*")
@@ -338,7 +338,7 @@ const Compliance = () => {
       const digest = await crypto.subtle.digest("SHA-256", encoded);
       const evidenceHash = Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0")).join("");
 
-      const insertPayload: Database["public"]["Tables"]["compliance_evidence_exports"]["Insert"] = {
+      const insertPayload: any = {
         user_id: user.id,
         title: `Auditor export ${new Date().toLocaleString()}`,
         export_type: "auditor_bundle",
@@ -353,7 +353,7 @@ const Compliance = () => {
         },
       };
 
-      const { data, error } = await supabase.from("compliance_evidence_exports").insert(insertPayload).select("*").single();
+      const { data, error } = await (supabase.from("compliance_evidence_exports" as any).insert(insertPayload).select("*").single() as any);
       if (error || !data) {
         toast.error("Failed to store auditor bundle.");
         return;
@@ -365,7 +365,7 @@ const Compliance = () => {
         ["Framework", "Reports", "Pass Signals", "Fail Signals", "Not Applicable", "Score"],
         ...frameworkSummaries.map((item) => [item.label, String(item.reportsCount), String(item.passSignals), String(item.failSignals), String(item.notApplicableSignals), item.score === null ? "" : String(item.score)]),
       ];
-      const csv = csvRows.map((row) => row.map((cell) => `"${String(cell).replaceAll("\"", "\"\"")}"`).join(",")).join("\n");
+      const csv = csvRows.map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(",")).join("\n");
 
       downloadBlob(`cloudpilot-auditor-bundle-${new Date().toISOString().slice(0, 10)}.json`, "application/json", JSON.stringify(insertPayload, null, 2));
       downloadBlob(`cloudpilot-framework-summary-${new Date().toISOString().slice(0, 10)}.csv`, "text/csv;charset=utf-8", csv);
