@@ -32,13 +32,32 @@ import {
   summarizeControlHealth,
   type ComplianceReportRecord,
 } from "@/lib/compliance";
-import type { Database } from "@/integrations/supabase/types";
-
-type EvidenceExportRow = Database["public"]["Tables"]["compliance_evidence_exports"]["Row"];
-type ComplianceExceptionRow = Database["public"]["Tables"]["compliance_exceptions"]["Row"];
-type ComplianceAttestationRow = Database["public"]["Tables"]["compliance_attestations"]["Row"];
-type ApprovalRequestRow = Database["public"]["Tables"]["approval_requests"]["Row"];
-type AuditLogRow = Database["public"]["Tables"]["agent_audit_log"]["Row"];
+type EvidenceExportRow = {
+  id: string; created_at: string; user_id: string; framework: string;
+  status: string; file_url: string | null; report_id: string | null;
+};
+type ComplianceExceptionRow = {
+  id: string; created_at: string; user_id: string; control_id: string;
+  framework: string; reason: string; status: string; expires_at: string | null;
+  approved_by: string | null;
+};
+type ComplianceAttestationRow = {
+  id: string; created_at: string; user_id: string; framework: string;
+  control_id: string; status: string; notes: string | null;
+  attested_by: string | null;
+};
+type ApprovalRequestRow = {
+  id: string; created_at: string; user_id: string; request_type: string;
+  status: string; payload: Record<string, unknown> | null;
+  reviewed_by: string | null; reviewed_at: string | null;
+};
+type AuditLogRow = {
+  id: string; created_at: string; user_id: string; aws_service: string;
+  aws_operation: string; aws_region: string; status: string;
+  error_code: string | null; error_message: string | null;
+  execution_time_ms: number | null; conversation_id: string | null;
+  params_hash: string | null; validator_result: string | null;
+};
 
 const frameworkOptions = getFrameworkOptions();
 
