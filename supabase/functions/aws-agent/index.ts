@@ -18,7 +18,7 @@ function requireEnv(name: string): string {
   return value;
 }
 
-const ENV = {
+const RUNTIME_CONFIG = {
   supabaseUrl: requireEnv("SUPABASE_URL"),
   supabaseServiceRoleKey: requireEnv("SUPABASE_SERVICE_ROLE_KEY"),
   lovableApiKey: requireEnv("LOVABLE_API_KEY"),
@@ -5908,7 +5908,7 @@ serve(async (req) => {
     const body = await req.json();
     const { messages, credentials, notificationEmail, conversationId } = body;
 
-    const supabaseAdmin = createClient(ENV.supabaseUrl, ENV.supabaseServiceRoleKey);
+    const supabaseAdmin = createClient(RUNTIME_CONFIG.supabaseUrl, RUNTIME_CONFIG.supabaseServiceRoleKey);
     let userId: string | null = null;
     const authHeader = req.headers.get("Authorization");
     if (authHeader?.startsWith("Bearer ")) {
@@ -6003,7 +6003,7 @@ serve(async (req) => {
     let latestUnifiedAuditSummary: Record<string, any> | null = null;
 
     // ── Intent-based routing ─────────────────────────────────────────────────
-    const classifiedIntent = await classifyIntent(sanitizedMessages, ENV.lovableApiKey);
+    const classifiedIntent = await classifyIntent(sanitizedMessages, RUNTIME_CONFIG.lovableApiKey);
     console.log(`[CloudPilot Router] Classified intent: ${classifiedIntent}`);
 
     const allowedToolNames = INTENT_TOOL_MAP[classifiedIntent];
@@ -6014,7 +6014,7 @@ serve(async (req) => {
     console.log(`[CloudPilot Router] Using ${filteredTools.length}/${tools.length} tools for intent: ${classifiedIntent}`);
 
     const MAX_ITERATIONS = 15;
-    const TOOLS_URL = `${ENV.supabaseUrl}/functions/v1/aws-agent-tools`;
+    const TOOLS_URL = `${RUNTIME_CONFIG.supabaseUrl}/functions/v1/aws-agent-tools`;
 
     for (let i = 0; i < MAX_ITERATIONS; i++) {
       const toolChoice = i === 0 ? "required" : "auto";
@@ -6022,7 +6022,7 @@ serve(async (req) => {
       const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${ENV.lovableApiKey}`,
+          Authorization: `Bearer ${RUNTIME_CONFIG.lovableApiKey}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
@@ -6055,7 +6055,7 @@ serve(async (req) => {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${ENV.supabaseServiceRoleKey}`,
+            Authorization: `Bearer ${RUNTIME_CONFIG.supabaseServiceRoleKey}`,
           },
           body: JSON.stringify({
             toolCalls: responseMessage.tool_calls,
