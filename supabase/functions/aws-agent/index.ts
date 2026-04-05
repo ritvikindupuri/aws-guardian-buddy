@@ -19,7 +19,7 @@ function requireEnv(name: string): string {
   return value;
 }
 
-const REQUIRED_AWS_AGENT_ENVS = {
+const ENV = {
   supabaseUrl: requireEnv("SUPABASE_URL"),
   supabaseServiceRoleKey: requireEnv("SUPABASE_SERVICE_ROLE_KEY"),
   lovableApiKey: requireEnv("LOVABLE_API_KEY"),
