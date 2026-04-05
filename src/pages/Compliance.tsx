@@ -32,32 +32,14 @@ import {
   summarizeControlHealth,
   type ComplianceReportRecord,
 } from "@/lib/compliance";
-type EvidenceExportRow = {
-  id: string; created_at: string; user_id: string; framework: string;
-  status: string; file_url: string | null; report_id: string | null;
-};
-type ComplianceExceptionRow = {
-  id: string; created_at: string; user_id: string; control_id: string;
-  framework: string; reason: string; status: string; expires_at: string | null;
-  approved_by: string | null;
-};
-type ComplianceAttestationRow = {
-  id: string; created_at: string; user_id: string; framework: string;
-  control_id: string; status: string; notes: string | null;
-  attested_by: string | null;
-};
-type ApprovalRequestRow = {
-  id: string; created_at: string; user_id: string; request_type: string;
-  status: string; payload: Record<string, unknown> | null;
-  reviewed_by: string | null; reviewed_at: string | null;
-};
-type AuditLogRow = {
-  id: string; created_at: string; user_id: string; aws_service: string;
-  aws_operation: string; aws_region: string; status: string;
-  error_code: string | null; error_message: string | null;
-  execution_time_ms: number | null; conversation_id: string | null;
-  params_hash: string | null; validator_result: string | null;
-};
+/* eslint-disable @typescript-eslint/no-explicit-any */
+// These compliance tables may not exist in the typed schema yet
+type EvidenceExportRow = any;
+type ComplianceExceptionRow = any;
+type ComplianceAttestationRow = any;
+type ApprovalRequestRow = any;
+type AuditLogRow = any;
+/* eslint-enable @typescript-eslint/no-explicit-any */
 
 const frameworkOptions = getFrameworkOptions();
 
