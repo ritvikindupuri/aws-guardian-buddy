@@ -272,7 +272,7 @@ const Compliance = () => {
       })
       .eq("id", row.id)
       .select("*")
-      .single();
+      .single() as any);
 
     if (error || !data) {
       toast.error("Failed to update exception status.");
@@ -294,7 +294,7 @@ const Compliance = () => {
       .update(updatePayload)
       .eq("id", row.id)
       .select("*")
-      .single();
+      .single() as any);
 
     if (error || !data) {
       toast.error("Failed to update attestation.");
