@@ -217,8 +217,7 @@ serve(async (req) => {
         permissions[action] = false;
       });
     }
-    // Fixed the bug
-    //     return new Response(
+    return new Response(
       JSON.stringify({
         sessionCredentials: {
           accessKeyId: tempCredentials.accessKeyId,
