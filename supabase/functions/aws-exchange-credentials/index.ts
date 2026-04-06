@@ -14,8 +14,14 @@ const ROLE_ARN_REGEX = /^arn:aws:iam::\d{12}:role\/[\w+=,.@/-]+$/;
 
 function sanitizeString(val: unknown, maxLen: number): string {
   if (typeof val !== "string") return "";
-  // eslint-disable-next-line no-control-regex
-  return val.slice(0, maxLen).replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "");
+  return val
+    .slice(0, maxLen)
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "")
+    .trim();
+}
+
+function sanitizeCredentialValue(val: unknown, maxLen: number): string {
+  return sanitizeString(val, maxLen).replace(/\s+/g, "");
 }
 
 serve(async (req) => {
@@ -50,8 +56,11 @@ serve(async (req) => {
     let identity: { account: string; arn: string; userId: string };
 
     if (credentials.method === "access_key") {
-      const accessKeyId = sanitizeString(credentials.accessKeyId, 128);
-      const secretAccessKey = sanitizeString(credentials.secretAccessKey, 256);
+      const accessKeyId = sanitizeCredentialValue(credentials.accessKeyId, 128);
+      const secretAccessKey = sanitizeCredentialValue(credentials.secretAccessKey, 256);
+      const providedSessionToken = credentials.sessionToken
+        ? sanitizeCredentialValue(credentials.sessionToken, 4096)
+        : "";
 
       if (!accessKeyId || !secretAccessKey) {
         return new Response(
@@ -65,19 +74,25 @@ serve(async (req) => {
           { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
+      if (accessKeyId.startsWith("ASIA") && !providedSessionToken) {
+        return new Response(
+          JSON.stringify({
+            error: "Temporary AWS credentials require a session token. Paste the Session Token together with the access key and secret.",
+            code: "MissingSessionToken",
+          }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
 
       const sts = new STSClient({
         credentials: {
           accessKeyId,
           secretAccessKey,
-          sessionToken: credentials.sessionToken
-            ? sanitizeString(credentials.sessionToken, 2048)
-            : undefined,
+          sessionToken: providedSessionToken || undefined,
         },
         region,
       });
 
-      // Validate by calling getCallerIdentity
       const callerIdentity = await sts.send(new GetCallerIdentityCommand({}));
       identity = {
         account: callerIdentity.Account || "",
@@ -85,15 +100,12 @@ serve(async (req) => {
         userId: callerIdentity.UserId || "",
       };
 
-      // Try to exchange for temporary session token.
-      // GetSessionToken cannot be called with credentials that already have a session token,
-      // so if the user provided a sessionToken (temporary creds), skip the exchange.
-      if (credentials.sessionToken) {
+      if (providedSessionToken) {
         console.log("[aws-exchange-credentials] Temporary credentials provided, skipping GetSessionToken");
         tempCredentials = {
           accessKeyId,
           secretAccessKey,
-          sessionToken: sanitizeString(credentials.sessionToken, 2048),
+          sessionToken: providedSessionToken,
           expiration: new Date(Date.now() + 3600 * 1000).toISOString(),
         };
       } else {
@@ -102,6 +114,7 @@ serve(async (req) => {
           if (!sessionData.Credentials?.AccessKeyId || !sessionData.Credentials?.SecretAccessKey || !sessionData.Credentials?.SessionToken || !sessionData.Credentials?.Expiration) {
             throw new Error("Incomplete session credentials returned.");
           }
+
           tempCredentials = {
             accessKeyId: sessionData.Credentials.AccessKeyId,
             secretAccessKey: sessionData.Credentials.SecretAccessKey,
@@ -109,8 +122,12 @@ serve(async (req) => {
             expiration: sessionData.Credentials.Expiration.toISOString(),
           };
         } catch (stsErr: any) {
-          console.warn("[aws-exchange-credentials] GetSessionToken failed, using original credentials:", stsErr.message);
-          // Fall back to using the provided long-term credentials directly
+          const stsErrorCode = stsErr?.Code || stsErr?.code || stsErr?.name || "UnknownError";
+          console.warn("[aws-exchange-credentials] GetSessionToken failed, using original credentials", {
+            stsErrorCode,
+            message: stsErr?.message || "Unknown STS error",
+          });
+
           tempCredentials = {
             accessKeyId,
             secretAccessKey,
@@ -131,15 +148,13 @@ serve(async (req) => {
         );
       }
 
-      // For assume role, we need either base credentials or rely on the edge function's own role
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const stsConfig: any = { region };
+      const stsConfig: Record<string, unknown> = { region };
       if (credentials.accessKeyId && credentials.secretAccessKey) {
         stsConfig.credentials = {
-          accessKeyId: sanitizeString(credentials.accessKeyId, 128),
-          secretAccessKey: sanitizeString(credentials.secretAccessKey, 256),
+          accessKeyId: sanitizeCredentialValue(credentials.accessKeyId, 128),
+          secretAccessKey: sanitizeCredentialValue(credentials.secretAccessKey, 256),
           sessionToken: credentials.sessionToken
-            ? sanitizeString(credentials.sessionToken, 2048)
+            ? sanitizeCredentialValue(credentials.sessionToken, 4096)
             : undefined,
         };
       }
@@ -151,11 +166,10 @@ serve(async (req) => {
         DurationSeconds: 3600,
       }));
 
-      if (!assumedRole.Credentials || !assumedRole.Credentials.AccessKeyId || !assumedRole.Credentials.SecretAccessKey || !assumedRole.Credentials.SessionToken || !assumedRole.Credentials.Expiration) {
+      if (!assumedRole.Credentials?.AccessKeyId || !assumedRole.Credentials?.SecretAccessKey || !assumedRole.Credentials?.SessionToken || !assumedRole.Credentials?.Expiration) {
         throw new Error("Failed to assume role.");
       }
 
-      // Get identity from assumed role
       const assumedSts = new STSClient({
         credentials: {
           accessKeyId: assumedRole.Credentials.AccessKeyId,
@@ -184,12 +198,11 @@ serve(async (req) => {
       );
     }
 
-    // --- Pre-Flight IAM Boundary Checks ---
     const iam = new IAMClient({
       credentials: {
         accessKeyId: tempCredentials.accessKeyId,
         secretAccessKey: tempCredentials.secretAccessKey,
-        sessionToken: tempCredentials.sessionToken,
+        sessionToken: tempCredentials.sessionToken || undefined,
       },
       region,
     });
@@ -213,7 +226,7 @@ serve(async (req) => {
       "ec2:DeleteRouteTable",
       "ec2:DeleteInternetGateway",
       "ec2:DetachInternetGateway",
-      "ec2:DeleteRoute"
+      "ec2:DeleteRoute",
     ];
 
     const permissions: Record<string, boolean> = {};
@@ -233,11 +246,11 @@ serve(async (req) => {
       }
     } catch (e) {
       console.warn("SimulatePrincipalPolicy failed", e);
-      // If we cannot simulate, we just return empty or false
-      actionsToTest.forEach(action => {
+      actionsToTest.forEach((action) => {
         permissions[action] = false;
       });
     }
+
     return new Response(
       JSON.stringify({
         sessionCredentials: {
@@ -252,19 +265,38 @@ serve(async (req) => {
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (err: any) {
-    const message = err.message || "Credential validation failed.";
+    const errorCode = err?.Code || err?.code || err?.name || "CredentialValidationFailed";
+    const message = err?.message || "Credential validation failed.";
+    const statusCode = err?.$metadata?.httpStatusCode || err?.statusCode || 400;
     const isAccessDenied =
-      err.code === "AccessDeniedException" ||
-      err.code === "AccessDenied" ||
-      err.statusCode === 403;
+      errorCode === "AccessDeniedException" ||
+      errorCode === "AccessDenied" ||
+      statusCode === 403;
+    const isInvalidToken = errorCode === "InvalidClientTokenId";
+    const isSignatureMismatch =
+      errorCode === "SignatureDoesNotMatch" || errorCode === "IncompleteSignature";
+
+    console.error("[aws-exchange-credentials] Validation failed", {
+      errorCode,
+      message,
+      statusCode,
+    });
+
+    let friendlyMessage = message;
+    if (isInvalidToken) {
+      friendlyMessage = "AWS rejected the submitted credentials. This usually means the Access Key ID is inactive or deleted, the Secret Access Key does not match, or temporary credentials were pasted without the Session Token.";
+    } else if (isSignatureMismatch) {
+      friendlyMessage = "AWS could not verify the Secret Access Key. Double-check the secret and remove any extra spaces or line breaks before retrying.";
+    } else if (isAccessDenied) {
+      friendlyMessage = `Access Denied: ${message}. Ensure your IAM user or role has sts:GetCallerIdentity and sts:GetSessionToken permissions.`;
+    }
 
     return new Response(
       JSON.stringify({
-        error: isAccessDenied
-          ? `Access Denied: ${message}. Ensure your IAM user/role has sts:GetCallerIdentity and sts:GetSessionToken permissions.`
-          : message,
+        error: friendlyMessage,
+        code: errorCode,
+        details: message,
       }),
       {
         status: isAccessDenied ? 403 : 400,

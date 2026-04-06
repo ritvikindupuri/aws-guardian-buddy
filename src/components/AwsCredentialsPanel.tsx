@@ -60,14 +60,29 @@ const AwsCredentialsPanel = ({ credentials, onSave, compact = false }: AwsCreden
   const handleSave = async () => {
     setExchanging(true);
     try {
+      const session = (await supabase.auth.getSession()).data.session;
+      if (!session?.access_token) {
+        throw new Error("No active session. Please sign in again.");
+      }
+
+      const normalizedRegion = region.trim();
+      const normalizedAccessKeyId = accessKeyId.trim().replace(/\s+/g, "");
+      const normalizedSecretAccessKey = secretAccessKey.trim().replace(/\s+/g, "");
+      const normalizedSessionToken = sessionToken.trim().replace(/\s+/g, "");
+      const normalizedRoleArn = roleArn.trim();
+
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const payload: any = { method, region };
+      const payload: any = { method, region: normalizedRegion };
       if (method === "access_key") {
-        payload.accessKeyId = accessKeyId;
-        payload.secretAccessKey = secretAccessKey;
-        if (sessionToken) payload.sessionToken = sessionToken;
+        if (normalizedAccessKeyId.startsWith("ASIA") && !normalizedSessionToken) {
+          throw new Error("Temporary AWS credentials require a session token.");
+        }
+
+        payload.accessKeyId = normalizedAccessKeyId;
+        payload.secretAccessKey = normalizedSecretAccessKey;
+        if (normalizedSessionToken) payload.sessionToken = normalizedSessionToken;
       } else {
-        payload.roleArn = roleArn;
+        payload.roleArn = normalizedRoleArn;
       }
 
       const resp = await fetch(
@@ -76,8 +91,8 @@ const AwsCredentialsPanel = ({ credentials, onSave, compact = false }: AwsCreden
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-           Authorization: `Bearer ${(await supabase.auth.getSession()).data.session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
-           apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+            Authorization: `Bearer ${session.access_token}`,
+            apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
           },
           body: JSON.stringify({ credentials: payload }),
         }
@@ -90,18 +105,17 @@ const AwsCredentialsPanel = ({ credentials, onSave, compact = false }: AwsCreden
 
       const creds: AwsCredentials = {
         method,
-        region,
+        region: normalizedRegion,
         session: data.sessionCredentials,
         identity: data.identity,
         permissions: data.permissions,
-        displayKeyPrefix: method === "access_key" ? accessKeyId.slice(0, 10) : undefined,
+        displayKeyPrefix: method === "access_key" ? normalizedAccessKeyId.slice(0, 10) : undefined,
       };
 
       onSave(creds);
       setIsOpen(false);
       toast.success(`Connected to AWS account ${data.identity?.account || ""}`);
 
-      // Store credentials for Guardian autonomous scans if opted in (AES-256-GCM server-side)
       if (storeForGuardian && method === "access_key") {
         try {
           const vaultResp = await fetch(
@@ -110,14 +124,14 @@ const AwsCredentialsPanel = ({ credentials, onSave, compact = false }: AwsCreden
               method: "POST",
               headers: {
                 "Content-Type": "application/json",
-                Authorization: `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}`,
+                Authorization: `Bearer ${session.access_token}`,
               },
               body: JSON.stringify({
                 action: "encrypt_and_store",
-                accessKeyId,
-                secretAccessKey,
-                sessionToken: sessionToken || undefined,
-                region,
+                accessKeyId: normalizedAccessKeyId,
+                secretAccessKey: normalizedSecretAccessKey,
+                sessionToken: normalizedSessionToken || undefined,
+                region: normalizedRegion,
                 label: "Default",
                 accountId: data.identity?.account || null,
                 notificationEmail: notificationEmail || null,
@@ -138,7 +152,6 @@ const AwsCredentialsPanel = ({ credentials, onSave, compact = false }: AwsCreden
         }
       }
 
-      // Clear raw inputs from memory
       setAccessKeyId("");
       setSecretAccessKey("");
       setSessionToken("");
