@@ -362,7 +362,7 @@ const AwsCredentialsPanel = ({ credentials, onSave, compact = false }: AwsCreden
                     Attach this exact inline policy to your IAM user or role to unlock every Quick Action and VPC Routing feature. No <code>AdministratorAccess</code> needed.
                   </p>
                   <div className="relative">
-                    <pre className="text-[9px] font-mono bg-muted/60 border border-border rounded p-2 overflow-x-auto max-h-56 overflow-y-auto scrollbar-thin whitespace-pre leading-relaxed text-muted-foreground select-all">{`{
+                    <pre id="cloudpilot-policy-pre" className="text-[9px] font-mono bg-muted/60 border border-border rounded p-2 overflow-x-auto max-h-56 overflow-y-auto scrollbar-thin whitespace-pre leading-relaxed text-muted-foreground select-all">{`{
   "Version": "2012-10-17",
   "Statement": [
     {
