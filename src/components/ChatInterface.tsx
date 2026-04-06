@@ -34,8 +34,8 @@ const ChatInterface = () => {
     return localStorage.getItem("cloudpilot-notification-email") || "";
   });
   const [showVpcDialog, setShowVpcDialog] = useState(false);
-  const [vpcSetupActive, setVpcSetupActive] = useState<boolean>(() => {
-    return localStorage.getItem("cloudpilot-vpc-active") === "true";
+  const [vpcRoutingStatus, setVpcRoutingStatus] = useState<"inactive" | "requested">(() => {
+    return localStorage.getItem("cloudpilot-vpc-status") === "requested" ? "requested" : "inactive";
   });
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -66,15 +66,16 @@ const ChatInterface = () => {
 
   const handleCredentialsSave = (creds: AwsCredentials) => {
     setCredentials(creds);
-    if (!vpcSetupActive) {
+    if (vpcRoutingStatus === "inactive") {
       setShowVpcDialog(true);
     }
   };
 
   const handleVpcAccept = async () => {
     setShowVpcDialog(false);
-    setVpcSetupActive(true);
-    localStorage.setItem("cloudpilot-vpc-active", "true");
+    setVpcRoutingStatus("requested");
+    localStorage.setItem("cloudpilot-vpc-status", "requested");
+    toast.info("VPC routing request sent. This flow is currently guided through the agent and is not a verified PrivateLink activation check.");
 
     // Auto-trigger VPC setup message
     const prompt = "Please route the AI agent through my AWS VPC by automatically setting up a VPC, subnets, and security groups in my environment. Explain what you are setting up and then confirm when the setup is active.";
@@ -100,8 +101,8 @@ const ChatInterface = () => {
       } catch {}
     }
     await sendMessage(prompt, credentials, convId);
-    setVpcSetupActive(false);
-    localStorage.removeItem("cloudpilot-vpc-active");
+    setVpcRoutingStatus("inactive");
+    localStorage.removeItem("cloudpilot-vpc-status");
   };
 
   const handleDeleteConversation = async (id: string) => {
@@ -512,9 +513,12 @@ const ChatInterface = () => {
             {credentials && (
               <div className="border border-border rounded-lg bg-card p-3 space-y-2">
                 <p className="text-[10px] font-mono text-muted-foreground tracking-widest uppercase">VPC ROUTING</p>
-                {vpcSetupActive ? (
+                {vpcRoutingStatus === "requested" ? (
                   <div className="space-y-2">
-                    <p className="text-[10px] text-green-500 font-mono">Status: Active</p>
+                    <p className="text-[10px] text-warning font-mono">Status: Requested</p>
+                    <p className="text-[10px] text-muted-foreground">
+                      Guided setup prompt sent. Verify the actual AWS resources before treating routing as active.
+                    </p>
                     <Button
                       variant="outline"
                       size="sm"

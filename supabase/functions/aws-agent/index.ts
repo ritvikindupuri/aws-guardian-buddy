@@ -6072,8 +6072,9 @@ serve(async (req) => {
           const errText = await toolsResp.text();
           console.error("[CloudPilot] Tools function error:", toolsResp.status, errText);
           // Push error for all tool calls so the LLM can recover
+          const detailedError = `Tool execution pipeline failure (${toolsResp.status}): ${errText || "No downstream error details returned."}`;
           for (const tc of responseMessage.tool_calls) {
-            apiMessages.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify({ error: "Internal tool execution error" }) });
+            apiMessages.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify({ error: detailedError }) });
           }
           continue;
         }

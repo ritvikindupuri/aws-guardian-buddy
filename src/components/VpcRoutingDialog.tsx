@@ -89,8 +89,8 @@ export const VpcRoutingDialog = ({
                 <div>
                   <h2 className="text-lg font-bold text-foreground mb-1">Route agent through AWS VPC?</h2>
                   <p className="text-sm text-muted-foreground leading-relaxed">
-                    Would you like to automatically route the AI agent through an isolated AWS VPC?
-                    This will automatically set up the required VPC, subnets, and security groups in your environment.
+                    Would you like to start a guided workflow for routing the agent through an isolated AWS VPC?
+                    This sends a setup request through the agent and checks for the EC2 permissions needed to provision networking resources, but it does not independently verify a completed PrivateLink deployment.
                   </p>
                   <div className="mt-3 p-3 bg-muted/30 rounded-md border border-border text-left">
                     <p className="text-xs font-semibold mb-1">Exact Permissions Required:</p>

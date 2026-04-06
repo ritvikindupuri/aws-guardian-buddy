@@ -36,7 +36,9 @@ async function dispatch(calls: any[], functionName: string, rest: Record<string,
     console.error(`[Router] ${functionName} error:`, resp.status, errText);
     return calls.map((tc: any) => ({
       toolCallId: tc.id,
-      content: JSON.stringify({ error: `Internal tool dispatch error from ${functionName}` }),
+      content: JSON.stringify({
+        error: `Tool dispatch error from ${functionName} (${resp.status}). ${errText || "No additional error details were returned."}`,
+      }),
     }));
   }
   const data = await resp.json();
