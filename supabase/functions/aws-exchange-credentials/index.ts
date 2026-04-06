@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { STSClient, GetCallerIdentityCommand, GetSessionTokenCommand, AssumeRoleCommand } from "npm:@aws-sdk/client-sts@3.744.0";
-import { IAMClient, SimulatePrincipalPolicyCommand } from "npm:@aws-sdk/client-iam@3.744.0";
+import { STSClient, GetCallerIdentityCommand, GetSessionTokenCommand, AssumeRoleCommand } from "https://esm.sh/@aws-sdk/client-sts@3.744.0";
+import { IAMClient, SimulatePrincipalPolicyCommand } from "https://esm.sh/@aws-sdk/client-iam@3.744.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
