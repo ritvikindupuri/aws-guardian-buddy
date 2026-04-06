@@ -2801,7 +2801,11 @@ serve(async (req) => {
             } catch (err: any) {
               const execTime = Date.now() - startTime;
               const typedError = toCloudPilotError(err);
-              const errorMessage = typedError.message || "Unified audit failed.";
+              let errorMessage = typedError.message || "Unified audit failed.";
+
+              if (err.name === "AccessDeniedException" || err.name === "AccessDenied" || err.code === "AccessDeniedException" || err.code === "AccessDenied" || err.code === "UnauthorizedAccess" || err.code === "AuthorizationError" || err.$metadata?.httpStatusCode === 403 || err.statusCode === 403) {
+                 errorMessage += "\n\nPlease ensure that CloudPilot AI has the necessary permissions to execute `run_unified_audit`. Required IAM permissions: `iam:ListUsers`, `iam:ListAttachedUserPolicies`, `iam:ListMFADevices`, `iam:ListAccessKeys`, `s3:ListAllMyBuckets`, `s3:GetBucketTagging`, `s3:GetBucketPublicAccessBlock`, `s3:GetEncryptionConfiguration`, `s3:GetBucketVersioning`, `s3:GetLifecycleConfiguration`, `ec2:DescribeSecurityGroups`, `ec2:DescribeInstances`, `ec2:DescribeVolumes`, `ce:GetCostAndUsage`, `sts:GetCallerIdentity`.";
+              }
 
               if (userId) {
                 supabaseAdmin.from("agent_audit_log").insert({
