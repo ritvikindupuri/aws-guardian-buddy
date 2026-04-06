@@ -353,21 +353,148 @@ const AwsCredentialsPanel = ({ credentials, onSave, compact = false }: AwsCreden
                   </p>
                 </div>
 
-                <div className="mt-2 p-3 bg-card border border-border rounded-md text-left">
+              <div className="mt-2 p-3 bg-card border border-border rounded-md text-left">
                   <h4 className="text-[11px] font-bold mb-1.5 flex items-center gap-1.5">
                     <ShieldCheck className="w-3.5 h-3.5 text-primary" />
-                    Required Permissions
+                    Required IAM Inline Policy
                   </h4>
-                  <div className="space-y-2 text-[10px] text-muted-foreground">
-                    <p>
-                      <strong className="text-foreground">Basic Permissions (Required):</strong> The <code>SecurityAudit</code> managed policy (or equivalent read-only access) is required for most tasks.
-                      This allows the agent to audit S3, IAM, EC2, run compliance checks, and read logs.
-                      It <strong>does not</strong> allow the agent to block IPs, revoke IAM, or isolate instances.
-                    </p>
-                    <p>
-                      <strong className="text-foreground">Automated Remediation:</strong> If you want the agent to automatically fix issues (e.g., block malicious IPs, revoke IAM credentials),
-                      you need to attach explicit write permissions for those services. <code>AdministratorAccess</code> is <strong>not</strong> needed, but specific write access (like <code>wafv2:UpdateIPSet</code> or <code>iam:UpdateAccessKey</code>) is required for those actions.
-                    </p>
+                  <p className="text-[10px] text-muted-foreground mb-2">
+                    Attach this exact inline policy to your IAM user or role to unlock every Quick Action and VPC Routing feature. No <code>AdministratorAccess</code> needed.
+                  </p>
+                  <div className="relative">
+                    <pre id="cloudpilot-policy-pre" className="text-[9px] font-mono bg-muted/60 border border-border rounded p-2 overflow-x-auto max-h-56 overflow-y-auto scrollbar-thin whitespace-pre leading-relaxed text-muted-foreground select-all">{`{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CloudPilotFullAccess",
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListAllMyBuckets",
+        "s3:GetBucketPublicAccessBlock",
+        "s3:GetBucketAcl",
+        "s3:GetBucketPolicy",
+        "s3:GetEncryptionConfiguration",
+        "s3:GetBucketVersioning",
+        "s3:GetBucketLogging",
+        "s3:GetBucketReplication",
+        "s3:GetAccountPublicAccessBlock",
+        "s3:GetBucketObjectLockConfiguration",
+        "iam:GetAccountAuthorizationDetails",
+        "iam:ListUsers",
+        "iam:ListAccessKeys",
+        "iam:GetAccountPasswordPolicy",
+        "iam:ListMFADevices",
+        "iam:GetCredentialReport",
+        "iam:ListRoles",
+        "iam:UpdateAccessKey",
+        "iam:ListAttachedUserPolicies",
+        "iam:DetachUserPolicy",
+        "iam:CreatePolicy",
+        "iam:AttachUserPolicy",
+        "iam:GetGroup",
+        "iam:SimulatePrincipalPolicy",
+        "ec2:DescribeSecurityGroups",
+        "ec2:DescribeNetworkInterfaces",
+        "ec2:DescribeInstances",
+        "ec2:DescribeVolumes",
+        "ec2:DescribeLaunchTemplates",
+        "ec2:DescribeVpcPeeringConnections",
+        "ec2:DescribeRouteTables",
+        "ec2:DescribeNetworkAcls",
+        "ec2:DescribeVpcEndpoints",
+        "ec2:ReplaceNetworkAclEntry",
+        "ec2:CreateSecurityGroup",
+        "ec2:ModifyInstanceAttribute",
+        "ec2:CreateSnapshot",
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:RevokeSecurityGroupEgress",
+        "ec2:ModifyInstanceMetadataOptions",
+        "ec2:StopInstances",
+        "ec2:RunInstances",
+        "ec2:TerminateInstances",
+        "ec2:CreateVpc",
+        "ec2:CreateSubnet",
+        "ec2:CreateRouteTable",
+        "ec2:CreateInternetGateway",
+        "ec2:AttachInternetGateway",
+        "ec2:CreateRoute",
+        "ec2:DeleteVpc",
+        "ec2:DeleteSubnet",
+        "ec2:DeleteSecurityGroup",
+        "ec2:DeleteRouteTable",
+        "ec2:DeleteInternetGateway",
+        "ec2:DetachInternetGateway",
+        "ec2:DeleteRoute",
+        "rds:DescribeDBInstances",
+        "rds:DescribeDBClusters",
+        "lambda:ListFunctions",
+        "lambda:GetFunction",
+        "lambda:GetPolicy",
+        "lambda:GetFunctionConfiguration",
+        "cloudtrail:LookupEvents",
+        "cloudtrail:DescribeTrails",
+        "cloudtrail:GetTrailStatus",
+        "cloudtrail:GetEventSelectors",
+        "logs:FilterLogEvents",
+        "logs:PutMetricFilter",
+        "logs:DescribeMetricFilters",
+        "logs:StartQuery",
+        "logs:GetQueryResults",
+        "guardduty:ListDetectors",
+        "guardduty:ListFindings",
+        "guardduty:GetFindings",
+        "guardduty:GetDetector",
+        "guardduty:GetMalwareScanSettings",
+        "guardduty:CreateDetector",
+        "securityhub:GetEnabledStandards",
+        "securityhub:GetFindings",
+        "securityhub:DescribeHub",
+        "config:DescribeConfigurationRecorders",
+        "ce:GetCostAndUsage",
+        "organizations:ListAccounts",
+        "organizations:ListPolicies",
+        "organizations:ListTargetsForPolicy",
+        "wafv2:ListIPSets",
+        "wafv2:UpdateIPSet",
+        "wafv2:GetIPSet",
+        "wafv2:GetSampledRequests",
+        "cloudwatch:DescribeAlarms",
+        "cloudwatch:PutMetricAlarm",
+        "cloudwatch:PutAnomalyDetector",
+        "cloudwatch:PutDashboard",
+        "ecs:ListTaskDefinitions",
+        "ecs:DescribeTaskDefinitions",
+        "ssm:DescribeParameters",
+        "ssm:GetParameters",
+        "secretsmanager:ListSecrets",
+        "secretsmanager:GetResourcePolicy",
+        "elasticloadbalancing:DescribeLoadBalancers",
+        "apigateway:GetRestApis",
+        "sns:ListTopics",
+        "sns:ListSubscriptionsByTopic",
+        "sns:ListSubscriptions",
+        "dynamodb:ListTables",
+        "ses:ListIdentities",
+        "ses:GetIdentityVerificationAttributes",
+        "sts:AssumeRole",
+        "budgets:CreateBudget",
+        "budgets:CreateNotification"
+      ],
+      "Resource": "*"
+    }
+  ]
+}`}</pre>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const policy = document.querySelector('#cloudpilot-policy-pre')?.textContent;
+                        if (policy) navigator.clipboard.writeText(policy);
+                        toast.success("IAM policy copied to clipboard");
+                      }}
+                      className="absolute top-1.5 right-1.5 px-1.5 py-0.5 text-[9px] font-mono bg-primary/10 hover:bg-primary/20 border border-primary/20 rounded text-primary transition-colors"
+                    >
+                      Copy
+                    </button>
                   </div>
                 </div>
               </div>

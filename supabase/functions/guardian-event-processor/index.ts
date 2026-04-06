@@ -1,5 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import AWS from "npm:aws-sdk@2.1693.0";
+import AWS from "https://esm.sh/aws-sdk@2.1693.0";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 
 const corsHeaders = {
