@@ -5,6 +5,8 @@ import { Button } from "@/components/ui/button";
 import ChatMessage from "@/components/ChatMessage";
 import ThinkingIndicator from "@/components/ThinkingIndicator";
 import QuickActions from "@/components/QuickActions";
+import { QuickActionPermissionsDialog } from "@/components/QuickActionPermissionsDialog";
+import { getPermissionsForPrompt } from "@/lib/permissions";
 import AwsCredentialsPanel, { type AwsCredentials } from "@/components/AwsCredentialsPanel";
 import VpcRoutingDialog from "@/components/VpcRoutingDialog";
 import FindingsPanel, { type Finding } from "@/components/FindingsPanel";
@@ -34,6 +36,7 @@ const ChatInterface = () => {
     return localStorage.getItem("cloudpilot-notification-email") || "";
   });
   const [showVpcDialog, setShowVpcDialog] = useState(false);
+  const [pendingPrompt, setPendingPrompt] = useState<{prompt: string, label?: string, requiredPermissions: string[]} | null>(null);
   const [vpcRoutingStatus, setVpcRoutingStatus] = useState<"inactive" | "requested">(() => {
     return localStorage.getItem("cloudpilot-vpc-status") === "requested" ? "requested" : "inactive";
   });
@@ -122,6 +125,16 @@ const ChatInterface = () => {
   const handleSend = async () => {
     const trimmed = input.trim();
     if (!trimmed || isLoading || !credentials?.session) return;
+
+    // Evaluate permissions for custom prompt
+    const requiredPermissions = getPermissionsForPrompt(trimmed);
+    setPendingPrompt({ prompt: trimmed, requiredPermissions });
+  };
+
+  const confirmSend = async () => {
+    if (!pendingPrompt || !credentials?.session) return;
+    const trimmed = pendingPrompt.prompt;
+    setPendingPrompt(null);
     setInput("");
 
     let convId = currentConvId;
@@ -153,15 +166,10 @@ const ChatInterface = () => {
     }
   };
 
-  const handleQuickAction = (prompt: string) => {
-    setInput(prompt);
-    setTimeout(() => {
-      if (textareaRef.current) {
-        textareaRef.current.focus();
-        textareaRef.current.style.height = "auto";
-        textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 120) + "px";
-      }
-    }, 0);
+  const handleQuickAction = (prompt: string, label?: string) => {
+    // Determine permissions for quick actions and custom prompts
+    const requiredPermissions = getPermissionsForPrompt(prompt, label);
+    setPendingPrompt({ prompt, label, requiredPermissions });
   };
 
   const handleSaveNotificationEmail = (email: string) => {
@@ -684,6 +692,17 @@ const ChatInterface = () => {
             setShowOnboarding(false);
             localStorage.setItem("cloudpilot-onboarding-complete", "true");
           }}
+        />
+      )}
+          {pendingPrompt && (
+        <QuickActionPermissionsDialog
+          open={!!pendingPrompt}
+          onOpenChange={(open) => !open && setPendingPrompt(null)}
+          prompt={pendingPrompt.prompt}
+          actionLabel={pendingPrompt.label || "Custom Prompt"}
+          requiredPermissions={pendingPrompt.requiredPermissions}
+          credentials={credentials}
+          onConfirm={confirmSend}
         />
       )}
     </div>
