@@ -85,19 +85,40 @@ serve(async (req) => {
         userId: callerIdentity.UserId || "",
       };
 
-      // Exchange for temporary session token
-      const sessionData = await sts.send(new GetSessionTokenCommand({ DurationSeconds: 3600 }));
-
-      if (!sessionData.Credentials || !sessionData.Credentials.AccessKeyId || !sessionData.Credentials.SecretAccessKey || !sessionData.Credentials.SessionToken || !sessionData.Credentials.Expiration) {
-        throw new Error("Failed to obtain temporary session credentials.");
+      // Try to exchange for temporary session token.
+      // GetSessionToken cannot be called with credentials that already have a session token,
+      // so if the user provided a sessionToken (temporary creds), skip the exchange.
+      if (credentials.sessionToken) {
+        console.log("[aws-exchange-credentials] Temporary credentials provided, skipping GetSessionToken");
+        tempCredentials = {
+          accessKeyId,
+          secretAccessKey,
+          sessionToken: sanitizeString(credentials.sessionToken, 2048),
+          expiration: new Date(Date.now() + 3600 * 1000).toISOString(),
+        };
+      } else {
+        try {
+          const sessionData = await sts.send(new GetSessionTokenCommand({ DurationSeconds: 3600 }));
+          if (!sessionData.Credentials?.AccessKeyId || !sessionData.Credentials?.SecretAccessKey || !sessionData.Credentials?.SessionToken || !sessionData.Credentials?.Expiration) {
+            throw new Error("Incomplete session credentials returned.");
+          }
+          tempCredentials = {
+            accessKeyId: sessionData.Credentials.AccessKeyId,
+            secretAccessKey: sessionData.Credentials.SecretAccessKey,
+            sessionToken: sessionData.Credentials.SessionToken,
+            expiration: sessionData.Credentials.Expiration.toISOString(),
+          };
+        } catch (stsErr: any) {
+          console.warn("[aws-exchange-credentials] GetSessionToken failed, using original credentials:", stsErr.message);
+          // Fall back to using the provided long-term credentials directly
+          tempCredentials = {
+            accessKeyId,
+            secretAccessKey,
+            sessionToken: "",
+            expiration: new Date(Date.now() + 3600 * 1000).toISOString(),
+          };
+        }
       }
-
-      tempCredentials = {
-        accessKeyId: sessionData.Credentials.AccessKeyId,
-        secretAccessKey: sessionData.Credentials.SecretAccessKey,
-        sessionToken: sessionData.Credentials.SessionToken,
-        expiration: sessionData.Credentials.Expiration.toISOString(),
-      };
     } else if (credentials.method === "assume_role") {
       const roleArn = sanitizeString(credentials.roleArn, 256);
       if (!roleArn || !ROLE_ARN_REGEX.test(roleArn)) {
