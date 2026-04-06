@@ -92,6 +92,12 @@ export const VpcRoutingDialog = ({
                     Would you like to automatically route the AI agent through an isolated AWS VPC?
                     This will automatically set up the required VPC, subnets, and security groups in your environment.
                   </p>
+                  <div className="mt-3 p-3 bg-muted/30 rounded-md border border-border text-left">
+                    <p className="text-xs font-semibold mb-1">Exact Permissions Required:</p>
+                    <p className="text-[10px] text-muted-foreground font-mono leading-tight">
+                      {REQUIRED_VPC_PERMISSIONS.join(", ")}
+                    </p>
+                  </div>
                 </div>
                 <div className="flex items-center gap-3 pt-4 w-full">
                   <Button variant="outline" className="flex-1" onClick={onDecline}>

@@ -339,6 +339,24 @@ const AwsCredentialsPanel = ({ credentials, onSave, compact = false }: AwsCreden
                     Raw keys are exchanged for temporary STS session tokens. Only session tokens are used for requests — raw keys are never stored or transmitted to the agent.
                   </p>
                 </div>
+
+                <div className="mt-2 p-3 bg-card border border-border rounded-md text-left">
+                  <h4 className="text-[11px] font-bold mb-1.5 flex items-center gap-1.5">
+                    <ShieldCheck className="w-3.5 h-3.5 text-primary" />
+                    Required Permissions
+                  </h4>
+                  <div className="space-y-2 text-[10px] text-muted-foreground">
+                    <p>
+                      <strong className="text-foreground">Basic Permissions (Required):</strong> The <code>SecurityAudit</code> managed policy (or equivalent read-only access) is required for most tasks.
+                      This allows the agent to audit S3, IAM, EC2, run compliance checks, and read logs.
+                      It <strong>does not</strong> allow the agent to block IPs, revoke IAM, or isolate instances.
+                    </p>
+                    <p>
+                      <strong className="text-foreground">Automated Remediation:</strong> If you want the agent to automatically fix issues (e.g., block malicious IPs, revoke IAM credentials),
+                      you need to attach explicit write permissions for those services. <code>AdministratorAccess</code> is <strong>not</strong> needed, but specific write access (like <code>wafv2:UpdateIPSet</code> or <code>iam:UpdateAccessKey</code>) is required for those actions.
+                    </p>
+                  </div>
+                </div>
               </div>
 
               {credentials?.permissions && Object.keys(credentials.permissions).length > 0 && (
