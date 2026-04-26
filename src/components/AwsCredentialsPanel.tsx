@@ -377,7 +377,7 @@ const AwsCredentialsPanel = ({ credentials, onSave, compact = false }: AwsCreden
                   <details className="group mb-2">
                     <summary className="cursor-pointer list-none flex items-center justify-between gap-2 text-[11px] font-bold select-none">
                       <span className="flex items-center gap-1.5">
-                        <AlertTriangle className="w-3.5 h-3.5 text-yellow-500" />
+                        <AlertTriangle className="w-3.5 h-3.5 text-destructive" />
                         Two AWS-side caveats to know
                       </span>
                       <span className="text-[9px] font-mono text-muted-foreground group-open:hidden">SHOW</span>
