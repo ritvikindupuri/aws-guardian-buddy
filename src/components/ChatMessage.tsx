@@ -2,7 +2,7 @@ import { useState, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { User, Loader2, CheckCircle, AlertOctagon, ExternalLink, Copy, Check, Download, CloudUpload } from "lucide-react";
+import { User, Loader2, CheckCircle, AlertOctagon, ExternalLink, Copy, Check, Download, CloudUpload, Trash2 } from "lucide-react";
 import CloudPilotLogo from "@/components/CloudPilotLogo";
 
 export type MessageRole = "user" | "assistant" | "system";
@@ -19,9 +19,10 @@ export interface ChatMessageData {
 interface ChatMessageProps {
   message: ChatMessageData;
   onAddToS3?: (content: string, messageId: string) => Promise<void>;
+  onTeardownVpc?: () => void;
 }
 
-const ChatMessage = ({ message, onAddToS3 }: ChatMessageProps) => {
+const ChatMessage = ({ message, onAddToS3, onTeardownVpc }: ChatMessageProps) => {
   const isUser = message.role === "user";
   const isComplete = message.status === "complete" && !isUser;
   const [copied, setCopied] = useState(false);
@@ -208,6 +209,16 @@ const ChatMessage = ({ message, onAddToS3 }: ChatMessageProps) => {
                 {copied ? <Check className="w-3 h-3 text-primary" /> : <Copy className="w-3 h-3" />}
                 {copied ? "Copied" : "Copy Link"}
               </button>
+              {onTeardownVpc && (
+                <button
+                  onClick={onTeardownVpc}
+                  className="flex items-center gap-1 text-[10px] font-mono text-destructive/70 hover:text-destructive transition-colors px-1.5 py-1 rounded hover:bg-destructive/10 border border-transparent hover:border-destructive/30"
+                  title="Tear down all VPC resources the agent created"
+                >
+                  <Trash2 className="w-3 h-3" />
+                  Teardown VPC
+                </button>
+              )}
             </div>
           )}
         </div>
