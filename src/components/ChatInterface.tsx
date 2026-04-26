@@ -427,7 +427,16 @@ const ChatInterface = () => {
             ) : (
               <div className="py-2">
                 {messages.map((msg) => (
-                  <ChatMessage key={msg.id} message={msg} onAddToS3={handleAddToS3} />
+                  <ChatMessage
+                    key={msg.id}
+                    message={msg}
+                    onAddToS3={handleAddToS3}
+                    onTeardownVpc={() =>
+                      handleQuickAction(
+                        "Tear down and completely delete every VPC resource you previously created for routing — including all routes, internet gateway detachment + deletion, subnets, route tables, security groups, NAT gateways, released elastic IPs, and finally the VPC itself. Walk dependencies in the correct order so nothing is left behind that could incur charges. Confirm each deletion and return a final summary of what was removed."
+                      )
+                    }
+                  />
                 ))}
                 {showThinking && <ThinkingIndicator />}
                 <div ref={bottomRef} />
