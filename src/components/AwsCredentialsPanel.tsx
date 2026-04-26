@@ -364,13 +364,13 @@ const AwsCredentialsPanel = ({ credentials, onSave, compact = false }: AwsCreden
                       <span className="text-[9px] font-mono text-muted-foreground hidden group-open:inline">HIDE</span>
                     </summary>
                     <ol className="mt-2 text-[10px] text-foreground/85 leading-snug list-decimal list-inside space-y-1 pl-0.5">
-                      <li>Open the <a href="https://console.aws.amazon.com/iam/home#/users" target="_blank" rel="noreferrer" className="text-primary underline">IAM Users console</a>.</li>
-                      <li>Click <span className="font-mono">Create user</span> → name it <span className="font-mono">cloudpilot-agent</span> → <span className="font-mono">Next</span>.</li>
-                      <li>Choose <span className="font-mono">Attach policies directly</span> → <span className="font-mono">Next</span> → <span className="font-mono">Create user</span>.</li>
-                      <li>Open the user → <span className="font-mono">Permissions</span> → <span className="font-mono">Add permissions</span> → <span className="font-mono">Create inline policy</span>.</li>
-                      <li>Switch to the <span className="font-mono">JSON</span> tab and paste the policy below.</li>
+                      <li>Open the <a href="https://console.aws.amazon.com/iam/home#/policies" target="_blank" rel="noreferrer" className="text-primary underline">IAM Policies console</a> and click <span className="font-mono">Create policy</span>.</li>
+                      <li>Switch to the <span className="font-mono">JSON</span> tab and paste the policy below → <span className="font-mono">Next</span>.</li>
                       <li>Name it <span className="font-mono">CloudPilotFullAccess</span> → <span className="font-mono">Create policy</span>.</li>
-                      <li><span className="font-mono">Security credentials</span> → <span className="font-mono">Create access key</span> → <span className="font-mono">Application outside AWS</span>.</li>
+                      <li>Go to the <a href="https://console.aws.amazon.com/iam/home#/users" target="_blank" rel="noreferrer" className="text-primary underline">IAM Users console</a> → <span className="font-mono">Create user</span>.</li>
+                      <li>Name it <span className="font-mono">cloudpilot-agent</span> → <span className="font-mono">Next</span>.</li>
+                      <li>Choose <span className="font-mono">Attach policies directly</span> → select <span className="font-mono">CloudPilotFullAccess</span> → <span className="font-mono">Next</span> → <span className="font-mono">Create user</span>.</li>
+                      <li>Open the user → <span className="font-mono">Security credentials</span> → <span className="font-mono">Create access key</span> → <span className="font-mono">Application outside AWS</span>.</li>
                       <li>Paste the <span className="font-mono">AKIA…</span> key + secret above. Leave Session Token empty.</li>
                     </ol>
                   </details>
@@ -386,7 +386,7 @@ const AwsCredentialsPanel = ({ credentials, onSave, compact = false }: AwsCreden
                     <div className="mt-2 space-y-2 text-[10px] text-foreground/80 leading-snug">
                       <div className="p-2 rounded border border-border bg-muted/40">
                         <p className="font-bold text-foreground mb-0.5">1. Service Control Policies (SCPs)</p>
-                        <p>If your AWS account is inside an AWS Organization with restrictive SCPs, those override this inline policy and can still block actions. Standalone accounts are unaffected.</p>
+                        <p>If your AWS account is inside an AWS Organization with restrictive SCPs, those override this policy and can still block actions. Standalone accounts are unaffected.</p>
                       </div>
                       <div className="p-2 rounded border border-border bg-muted/40">
                         <p className="font-bold text-foreground mb-0.5">2. Region & resource state</p>
@@ -395,7 +395,7 @@ const AwsCredentialsPanel = ({ credentials, onSave, compact = false }: AwsCreden
                     </div>
                   </details>
                   <p className="text-[10px] font-bold text-foreground mb-1.5 flex items-center gap-1.5">
-                    <ShieldCheck className="w-3 h-3 text-primary" /> Inline policy JSON
+                    <ShieldCheck className="w-3 h-3 text-primary" /> IAM policy JSON
                   </p>
                   <div className="relative">
                     <pre id="cloudpilot-policy-pre" className="text-[9px] font-mono bg-muted/60 border border-border rounded p-2 overflow-x-auto max-h-56 overflow-y-auto scrollbar-thin whitespace-pre leading-relaxed text-muted-foreground select-all">{`{
@@ -412,7 +412,7 @@ const AwsCredentialsPanel = ({ credentials, onSave, compact = false }: AwsCreden
         "s3:GetEncryptionConfiguration",
         "s3:GetBucketVersioning",
         "s3:GetBucketLogging",
-        "s3:GetBucketReplication",
+        "s3:GetReplicationConfiguration",
         "s3:GetAccountPublicAccessBlock",
         "s3:GetBucketObjectLockConfiguration",
         "iam:GetAccountAuthorizationDetails",
@@ -499,13 +499,13 @@ const AwsCredentialsPanel = ({ credentials, onSave, compact = false }: AwsCreden
         "cloudwatch:PutAnomalyDetector",
         "cloudwatch:PutDashboard",
         "ecs:ListTaskDefinitions",
-        "ecs:DescribeTaskDefinitions",
+        "ecs:DescribeTaskDefinition",
         "ssm:DescribeParameters",
         "ssm:GetParameters",
         "secretsmanager:ListSecrets",
         "secretsmanager:GetResourcePolicy",
         "elasticloadbalancing:DescribeLoadBalancers",
-        "apigateway:GetRestApis",
+        "apigateway:GET",
         "sns:ListTopics",
         "sns:ListSubscriptionsByTopic",
         "sns:ListSubscriptions",
@@ -513,8 +513,7 @@ const AwsCredentialsPanel = ({ credentials, onSave, compact = false }: AwsCreden
         "ses:ListIdentities",
         "ses:GetIdentityVerificationAttributes",
         "sts:AssumeRole",
-        "budgets:CreateBudget",
-        "budgets:CreateNotification"
+        "budgets:ModifyBudget"
       ],
       "Resource": "*"
     }

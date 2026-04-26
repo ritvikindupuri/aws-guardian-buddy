@@ -30,7 +30,7 @@ const categories = [
         icon: Search,
         label: "S3 Buckets",
         prompt: "Query all S3 buckets in the account using real AWS API calls. For each bucket check: public access block settings, bucket ACL, bucket policy (identify external principals), default encryption, versioning status, access logging, and replication. Present real findings in a severity-ranked table with the actual bucket names and configurations you retrieved.",
-        requiredPermissions: ["s3:ListAllMyBuckets","s3:GetBucketPublicAccessBlock","s3:GetBucketAcl","s3:GetBucketPolicy","s3:GetEncryptionConfiguration","s3:GetBucketVersioning","s3:GetBucketLogging","s3:GetBucketReplication"],
+        requiredPermissions: ["s3:ListAllMyBuckets","s3:GetBucketPublicAccessBlock","s3:GetBucketAcl","s3:GetBucketPolicy","s3:GetEncryptionConfiguration","s3:GetBucketVersioning","s3:GetBucketLogging","s3:GetReplicationConfiguration"],
       },
       {
         icon: LayoutDashboard,
@@ -162,13 +162,13 @@ const categories = [
         icon: Target,
         label: "S3 Exfil Paths",
         prompt: "Map real S3 data exfiltration paths. Use AWS API calls to: list all buckets and test their GetBucketAcl and GetBucketPolicy, identify buckets with public read/write/list access, find buckets with cross-account policies (external AWS account principals), check for S3 replication rules sending data to external buckets, identify overly permissive bucket policies granting s3:GetObject or s3:* to '*'. Report real bucket names and the actual policy statements that enable exfiltration.",
-        requiredPermissions: ["s3:ListAllMyBuckets","s3:GetBucketAcl","s3:GetBucketPolicy","s3:GetBucketReplication"],
+        requiredPermissions: ["s3:ListAllMyBuckets","s3:GetBucketAcl","s3:GetBucketPolicy","s3:GetReplicationConfiguration"],
       },
       {
         icon: GitBranch,
         label: "Lateral Movement",
         prompt: "Map real lateral movement paths in the account. Use AWS API calls to: enumerate VPC peering connections and route tables, list EC2 instances with IAM roles that have cross-service permissions (e.g., ec2 instance with s3:* or iam:PassRole), enumerate ECS task definitions with privileged containers or host networking, map Lambda execution roles with permissions to assume other roles, identify trust relationships in IAM roles enabling cross-service pivoting. Show real resource IDs and the exact permissions enabling each movement path.",
-        requiredPermissions: ["ec2:DescribeVpcPeeringConnections","ec2:DescribeRouteTables","ec2:DescribeInstances","ecs:ListTaskDefinitions","ecs:DescribeTaskDefinitions","lambda:ListFunctions"],
+        requiredPermissions: ["ec2:DescribeVpcPeeringConnections","ec2:DescribeRouteTables","ec2:DescribeInstances","ecs:ListTaskDefinitions","ecs:DescribeTaskDefinition","lambda:ListFunctions"],
       },
       {
         icon: Fingerprint,
@@ -180,7 +180,7 @@ const categories = [
         icon: Network,
         label: "Network Exposure",
         prompt: "Map the real external network attack surface. Use AWS API calls to: enumerate all security groups with 0.0.0.0/0 inbound rules across all VPCs, find EC2 instances with public IPs AND sensitive IAM roles (SSRF-to-privilege-escalation), check for publicly accessible RDS instances, find load balancers with HTTP (non-HTTPS) listeners, enumerate API Gateways without WAF or without authentication, check for VPC endpoints missing policies. Show real resource identifiers and the exact exposure.",
-        requiredPermissions: ["ec2:DescribeSecurityGroups","ec2:DescribeInstances","rds:DescribeDBInstances","elasticloadbalancing:DescribeLoadBalancers","apigateway:GetRestApis","ec2:DescribeVpcEndpoints"],
+        requiredPermissions: ["ec2:DescribeSecurityGroups","ec2:DescribeInstances","rds:DescribeDBInstances","elasticloadbalancing:DescribeLoadBalancers","apigateway:GET","ec2:DescribeVpcEndpoints"],
       },
       {
         icon: Radar,
@@ -402,7 +402,7 @@ const categories = [
         icon: Bell,
         label: "Set $200 Budget Rule",
         prompt: "Alert me if daily spend exceeds $200.",
-        requiredPermissions: ["budgets:CreateBudget","budgets:CreateNotification"],
+        requiredPermissions: ["budgets:ModifyBudget"],
       },
       {
         icon: BarChart3,
