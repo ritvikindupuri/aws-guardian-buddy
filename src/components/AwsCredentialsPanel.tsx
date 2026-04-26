@@ -354,53 +354,28 @@ const AwsCredentialsPanel = ({ credentials, onSave, compact = false }: AwsCreden
                 </div>
 
               <div className="mt-2 p-3 bg-card border border-border rounded-md text-left">
-                  <h4 className="text-[11px] font-bold mb-1.5 flex items-center gap-1.5">
-                    <ShieldCheck className="w-3.5 h-3.5 text-primary" />
-                    How to Create Your AWS Access Key (Step-by-Step)
-                  </h4>
-                  <p className="text-[10px] text-muted-foreground mb-2">
-                    Follow these baby steps exactly. When finished, every Quick Action and VPC Routing prompt in CloudPilot will work. No <code>AdministratorAccess</code> required.
-                  </p>
-                  <ol className="text-[10px] text-foreground/90 leading-relaxed list-decimal list-inside space-y-1.5 mb-3 pl-1">
-                    <li>
-                      Sign in to the <a href="https://console.aws.amazon.com/iam/home#/users" target="_blank" rel="noreferrer" className="text-primary underline">AWS IAM Console</a> as a root or admin user.
-                    </li>
-                    <li>
-                      In the left sidebar click <span className="font-mono bg-muted px-1 rounded">Users</span>, then click the orange <span className="font-mono bg-muted px-1 rounded">Create user</span> button (top right).
-                    </li>
-                    <li>
-                      Enter a User name like <span className="font-mono bg-muted px-1 rounded">cloudpilot-agent</span>. Leave "Provide user access to the AWS Management Console" <strong>unchecked</strong>. Click <span className="font-mono bg-muted px-1 rounded">Next</span>.
-                    </li>
-                    <li>
-                      On the "Set permissions" screen choose <span className="font-mono bg-muted px-1 rounded">Attach policies directly</span>, then scroll down and click <span className="font-mono bg-muted px-1 rounded">Next</span> (skip selecting any AWS-managed policy — we'll add an inline policy after).
-                    </li>
-                    <li>
-                      Click <span className="font-mono bg-muted px-1 rounded">Create user</span> on the review page.
-                    </li>
-                    <li>
-                      Click on the new user name in the user list, then open the <span className="font-mono bg-muted px-1 rounded">Permissions</span> tab.
-                    </li>
-                    <li>
-                      Click <span className="font-mono bg-muted px-1 rounded">Add permissions</span> → <span className="font-mono bg-muted px-1 rounded">Create inline policy</span>.
-                    </li>
-                    <li>
-                      Switch to the <span className="font-mono bg-muted px-1 rounded">JSON</span> tab. Delete the placeholder text and paste the <strong>exact</strong> policy below (use the Copy button). Click <span className="font-mono bg-muted px-1 rounded">Next</span>.
-                    </li>
-                    <li>
-                      Name the policy <span className="font-mono bg-muted px-1 rounded">CloudPilotFullAccess</span> and click <span className="font-mono bg-muted px-1 rounded">Create policy</span>.
-                    </li>
-                    <li>
-                      Back on the user page open the <span className="font-mono bg-muted px-1 rounded">Security credentials</span> tab. Scroll to <span className="font-mono bg-muted px-1 rounded">Access keys</span> and click <span className="font-mono bg-muted px-1 rounded">Create access key</span>.
-                    </li>
-                    <li>
-                      Choose <span className="font-mono bg-muted px-1 rounded">Application running outside AWS</span> → <span className="font-mono bg-muted px-1 rounded">Next</span> → <span className="font-mono bg-muted px-1 rounded">Create access key</span>.
-                    </li>
-                    <li>
-                      Copy the <strong>Access key ID</strong> (starts with <span className="font-mono bg-muted px-1 rounded">AKIA…</span>) and the <strong>Secret access key</strong>, then paste them into the fields above. Leave the Session Token field empty — long-term <span className="font-mono bg-muted px-1 rounded">AKIA</span> keys do not need one.
-                    </li>
-                  </ol>
+                  <details className="group mb-2">
+                    <summary className="cursor-pointer list-none flex items-center justify-between gap-2 text-[11px] font-bold select-none">
+                      <span className="flex items-center gap-1.5">
+                        <ShieldCheck className="w-3.5 h-3.5 text-primary" />
+                        How to create your AWS access key
+                      </span>
+                      <span className="text-[9px] font-mono text-muted-foreground group-open:hidden">SHOW</span>
+                      <span className="text-[9px] font-mono text-muted-foreground hidden group-open:inline">HIDE</span>
+                    </summary>
+                    <ol className="mt-2 text-[10px] text-foreground/85 leading-snug list-decimal list-inside space-y-1 pl-0.5">
+                      <li>Open the <a href="https://console.aws.amazon.com/iam/home#/users" target="_blank" rel="noreferrer" className="text-primary underline">IAM Users console</a>.</li>
+                      <li>Click <span className="font-mono">Create user</span> → name it <span className="font-mono">cloudpilot-agent</span> → <span className="font-mono">Next</span>.</li>
+                      <li>Choose <span className="font-mono">Attach policies directly</span> → <span className="font-mono">Next</span> → <span className="font-mono">Create user</span>.</li>
+                      <li>Open the user → <span className="font-mono">Permissions</span> → <span className="font-mono">Add permissions</span> → <span className="font-mono">Create inline policy</span>.</li>
+                      <li>Switch to the <span className="font-mono">JSON</span> tab and paste the policy below.</li>
+                      <li>Name it <span className="font-mono">CloudPilotFullAccess</span> → <span className="font-mono">Create policy</span>.</li>
+                      <li><span className="font-mono">Security credentials</span> → <span className="font-mono">Create access key</span> → <span className="font-mono">Application outside AWS</span>.</li>
+                      <li>Paste the <span className="font-mono">AKIA…</span> key + secret above. Leave Session Token empty.</li>
+                    </ol>
+                  </details>
                   <p className="text-[10px] font-bold text-foreground mb-1.5 flex items-center gap-1.5">
-                    <ShieldCheck className="w-3 h-3 text-primary" /> Inline policy JSON (paste in Step 8)
+                    <ShieldCheck className="w-3 h-3 text-primary" /> Inline policy JSON
                   </p>
                   <div className="relative">
                     <pre id="cloudpilot-policy-pre" className="text-[9px] font-mono bg-muted/60 border border-border rounded p-2 overflow-x-auto max-h-56 overflow-y-auto scrollbar-thin whitespace-pre leading-relaxed text-muted-foreground select-all">{`{
