@@ -30,6 +30,7 @@ async function awsExec(service: string, commandName: string, config: any, params
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${ENV.supabaseServiceRoleKey}`,
+      apikey: ENV.supabaseServiceRoleKey,
     },
     body: JSON.stringify({ service, commandName, config, params }),
   });
