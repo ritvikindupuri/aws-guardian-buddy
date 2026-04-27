@@ -24,6 +24,14 @@ function sanitizeCredentialValue(val: unknown, maxLen: number): string {
   return sanitizeString(val, maxLen).replace(/\s+/g, "");
 }
 
+function toPolicySourceArn(identityArn: string): string {
+  const assumedRoleMatch = identityArn.match(/^arn:aws:sts::(\d{12}):assumed-role\/([^/]+)\//);
+  if (assumedRoleMatch) {
+    return `arn:aws:iam::${assumedRoleMatch[1]}:role/${assumedRoleMatch[2]}`;
+  }
+  return identityArn;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -54,6 +62,7 @@ serve(async (req) => {
       expiration: string;
     };
     let identity: { account: string; arn: string; userId: string };
+    let policySourceArn = "";
 
     if (credentials.method === "access_key") {
       const accessKeyId = sanitizeCredentialValue(credentials.accessKeyId, 128);
@@ -99,6 +108,7 @@ serve(async (req) => {
         arn: callerIdentity.Arn || "",
         userId: callerIdentity.UserId || "",
       };
+      policySourceArn = toPolicySourceArn(identity.arn);
 
       if (providedSessionToken) {
         console.log("[aws-exchange-credentials] Temporary credentials provided, skipping GetSessionToken");
@@ -184,6 +194,7 @@ serve(async (req) => {
         arn: callerIdentity.Arn || "",
         userId: callerIdentity.UserId || "",
       };
+      policySourceArn = roleArn;
 
       tempCredentials = {
         accessKeyId: assumedRole.Credentials.AccessKeyId,
@@ -347,7 +358,7 @@ serve(async (req) => {
 
       for (const actionBatch of chunks) {
         const simResult = await iam.send(new SimulatePrincipalPolicyCommand({
-          PolicySourceArn: identity.arn,
+          PolicySourceArn: policySourceArn,
           ActionNames: actionBatch,
         }));
 
