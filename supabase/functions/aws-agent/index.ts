@@ -1,5 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+// deno-lint-ignore no-explicit-any
+import AWS from "https://esm.sh/aws-sdk@2.1693.0?target=deno";
 import { CloudWatchLogsClient, CreateLogGroupCommand, CreateLogStreamCommand, DescribeLogStreamsCommand, PutLogEventsCommand } from "https://esm.sh/@aws-sdk/client-cloudwatch-logs@3.744.0";
 import { STSClient, GetCallerIdentityCommand } from "https://esm.sh/@aws-sdk/client-sts@3.744.0";
 import { S3Client, CreateBucketCommand, PutObjectLockConfigurationCommand, PutPublicAccessBlockCommand, PutBucketEncryptionCommand, PutObjectCommand } from "https://esm.sh/@aws-sdk/client-s3@3.744.0";
