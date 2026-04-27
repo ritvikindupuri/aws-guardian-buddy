@@ -21,13 +21,14 @@ const OPS_TOOLS = new Set([
   "run_attack_simulation", "run_evasion_test",
 ]);
 
-async function dispatch(calls: any[], functionName: string, rest: Record<string, any>): Promise<any[]> {
+async function dispatch(calls: any[], functionName: string, rest: Record<string, any>, authHeader: string | null): Promise<any[]> {
   if (calls.length === 0) return [];
   const resp = await fetch(`${SUPABASE_URL}/functions/v1/${functionName}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+      Authorization: authHeader || `Bearer ${SERVICE_ROLE_KEY}`,
+      apikey: SERVICE_ROLE_KEY,
     },
     body: JSON.stringify({ toolCalls: calls, ...rest }),
   });
@@ -53,13 +54,14 @@ serve(async (req) => {
   try {
     const body = await req.json();
     const { toolCalls, ...rest } = body;
+    const authHeader = req.headers.get("Authorization");
 
     const scannerCalls = toolCalls.filter((tc: any) => SCANNER_TOOLS.has(tc.function.name));
     const opsCalls = toolCalls.filter((tc: any) => OPS_TOOLS.has(tc.function.name));
 
     const [scannerResults, opsResults] = await Promise.all([
-      dispatch(scannerCalls, "aws-agent-scanner", rest),
-      dispatch(opsCalls, "aws-agent-ops", rest),
+      dispatch(scannerCalls, "aws-agent-scanner", rest, authHeader),
+      dispatch(opsCalls, "aws-agent-ops", rest, authHeader),
     ]);
 
     const results = [...scannerResults, ...opsResults];
