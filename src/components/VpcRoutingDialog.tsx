@@ -1,4 +1,3 @@
-import { useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Server } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -11,7 +10,7 @@ interface VpcRoutingDialogProps {
   credentials: AwsCredentials | null;
   onAccept: () => void;
   onDecline: () => void;
-  onReAuthenticate: (creds: AwsCredentials) => void;
+  onReAuthenticate?: (creds: AwsCredentials) => void;
 }
 
 // VPC permissions are auto-granted on demand by aws-executor; no static list needed here.
