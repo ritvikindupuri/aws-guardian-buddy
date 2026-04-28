@@ -26,17 +26,14 @@ export const VpcRoutingDialog = ({
 }: VpcRoutingDialogProps) => {
   const [showError, setShowError] = useState(false);
 
-  const { hasElevationPerms, missingElevationPerms, currentPermissions } = useMemo(() => {
-    // With auto-elevation, the agent only needs IAMFullAccess-equivalent perms
-    // to attach AmazonEC2FullAccess on demand. We check the two key actions.
-    const ELEVATION_PERMS = ["iam:AttachUserPolicy", "iam:AttachRolePolicy" as const];
+  const { hasElevationPerms, missingElevationPerms } = useMemo(() => {
+    // With auto-elevation the agent only needs iam:AttachUserPolicy (granted
+    // by the IAMFullAccess managed policy) to attach per-service policies on demand.
     const perms = credentials?.permissions || {};
-    // Treat as elevatable if EITHER attach action is allowed (user OR role).
     const canElevate = perms["iam:AttachUserPolicy"] === true;
     return {
       hasElevationPerms: canElevate,
       missingElevationPerms: canElevate ? [] : ["iam:AttachUserPolicy"],
-      currentPermissions: perms,
     };
   }, [credentials]);
 
