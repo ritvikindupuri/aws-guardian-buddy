@@ -354,25 +354,33 @@ const AwsCredentialsPanel = ({ credentials, onSave, compact = false }: AwsCreden
                 </div>
 
               <div className="mt-2 p-3 bg-card border border-border rounded-md text-left">
-                  <details className="group mb-2">
+                  <details className="group mb-2" open>
                     <summary className="cursor-pointer list-none flex items-center justify-between gap-2 text-[11px] font-bold select-none">
                       <span className="flex items-center gap-1.5">
                         <ShieldCheck className="w-3.5 h-3.5 text-primary" />
-                        How to create your AWS access key
+                        How to create your AWS access key (2 clicks, no JSON)
                       </span>
                       <span className="text-[9px] font-mono text-muted-foreground group-open:hidden">SHOW</span>
                       <span className="text-[9px] font-mono text-muted-foreground hidden group-open:inline">HIDE</span>
                     </summary>
                     <ol className="mt-2 text-[10px] text-foreground/85 leading-snug list-decimal list-inside space-y-1 pl-0.5">
-                      <li>Open the <a href="https://console.aws.amazon.com/iam/home#/policies" target="_blank" rel="noreferrer" className="text-primary underline">IAM Policies console</a> and click <span className="font-mono">Create policy</span>.</li>
-                      <li>Switch to the <span className="font-mono">JSON</span> tab and paste the policy below → <span className="font-mono">Next</span>.</li>
-                      <li>Name it <span className="font-mono">CloudPilotFullAccess</span> → <span className="font-mono">Create policy</span>.</li>
-                      <li>Go to the <a href="https://console.aws.amazon.com/iam/home#/users" target="_blank" rel="noreferrer" className="text-primary underline">IAM Users console</a> → <span className="font-mono">Create user</span>.</li>
+                      <li>Open the <a href="https://console.aws.amazon.com/iam/home#/users" target="_blank" rel="noreferrer" className="text-primary underline">IAM Users console</a> → <span className="font-mono">Create user</span>.</li>
                       <li>Name it <span className="font-mono">cloudpilot-agent</span> → <span className="font-mono">Next</span>.</li>
-                      <li>Choose <span className="font-mono">Attach policies directly</span> → select <span className="font-mono">CloudPilotFullAccess</span> → <span className="font-mono">Next</span> → <span className="font-mono">Create user</span>.</li>
+                      <li>
+                        Choose <span className="font-mono">Attach policies directly</span> and select these <strong>two AWS-managed policies</strong>:
+                        <ul className="list-disc list-inside ml-3 mt-0.5 space-y-0.5">
+                          <li><span className="font-mono text-primary">SecurityAudit</span> — read-only visibility for scans</li>
+                          <li><span className="font-mono text-primary">IAMFullAccess</span> — lets CloudPilot grant per-action permissions on demand</li>
+                        </ul>
+                      </li>
+                      <li><span className="font-mono">Next</span> → <span className="font-mono">Create user</span>.</li>
                       <li>Open the user → <span className="font-mono">Security credentials</span> → <span className="font-mono">Create access key</span> → <span className="font-mono">Application outside AWS</span>.</li>
                       <li>Paste the <span className="font-mono">AKIA…</span> key + secret above. Leave Session Token empty.</li>
                     </ol>
+                    <div className="mt-2 p-2 rounded border border-primary/20 bg-primary/5 text-[10px] text-foreground/85 leading-snug">
+                      <p className="font-bold text-primary mb-0.5 flex items-center gap-1"><ShieldCheck className="w-3 h-3" /> What happens next</p>
+                      <p>When you run a prompt or VPC routing, CloudPilot detects the exact service it needs (EC2, S3, GuardDuty, etc.) and attaches the matching AWS-managed policy to your <span className="font-mono">cloudpilot-agent</span> user automatically — then executes the action. No manual JSON, no upfront over-permissioning.</p>
+                    </div>
                   </details>
                   <details className="group mb-2">
                     <summary className="cursor-pointer list-none flex items-center justify-between gap-2 text-[11px] font-bold select-none">
@@ -394,162 +402,6 @@ const AwsCredentialsPanel = ({ credentials, onSave, compact = false }: AwsCreden
                       </div>
                     </div>
                   </details>
-                  <p className="text-[10px] font-bold text-foreground mb-1.5 flex items-center gap-1.5">
-                    <ShieldCheck className="w-3 h-3 text-primary" /> IAM policy JSON
-                  </p>
-                  <div className="relative">
-                    <pre id="cloudpilot-policy-pre" className="text-[9px] font-mono bg-muted/60 border border-border rounded p-2 overflow-x-auto max-h-56 overflow-y-auto scrollbar-thin whitespace-pre leading-relaxed text-muted-foreground select-all">{`{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "CloudPilotFullAccess",
-      "Effect": "Allow",
-      "Action": [
-        "apigateway:GET",
-        "budgets:ModifyBudget",
-        "budgets:ViewBudget",
-        "ce:GetCostAndUsage",
-        "cloudtrail:DescribeTrails",
-        "cloudtrail:GetEventSelectors",
-        "cloudtrail:GetTrailStatus",
-        "cloudtrail:LookupEvents",
-        "cloudwatch:DescribeAlarms",
-        "cloudwatch:PutAnomalyDetector",
-        "cloudwatch:PutDashboard",
-        "cloudwatch:PutMetricAlarm",
-        "config:DescribeConfigurationRecorders",
-        "config:DescribeConfigurationRecorderStatus",
-        "dynamodb:ListTables",
-        "ec2:AllocateAddress",
-        "ec2:AssociateRouteTable",
-        "ec2:AttachInternetGateway",
-        "ec2:AuthorizeSecurityGroupIngress",
-        "ec2:CreateInternetGateway",
-        "ec2:CreateNatGateway",
-        "ec2:CreateRoute",
-        "ec2:CreateRouteTable",
-        "ec2:CreateSecurityGroup",
-        "ec2:CreateSnapshot",
-        "ec2:CreateSubnet",
-        "ec2:CreateTags",
-        "ec2:CreateVpc",
-        "ec2:DeleteInternetGateway",
-        "ec2:DeleteNatGateway",
-        "ec2:DeleteRoute",
-        "ec2:DeleteRouteTable",
-        "ec2:DeleteSecurityGroup",
-        "ec2:DeleteSubnet",
-        "ec2:DeleteTags",
-        "ec2:DeleteVpc",
-        "ec2:DescribeAddresses",
-        "ec2:DescribeInstances",
-        "ec2:DescribeInternetGateways",
-        "ec2:DescribeLaunchTemplates",
-        "ec2:DescribeNatGateways",
-        "ec2:DescribeNetworkAcls",
-        "ec2:DescribeNetworkInterfaces",
-        "ec2:DescribeRouteTables",
-        "ec2:DescribeSecurityGroups",
-        "ec2:DescribeSubnets",
-        "ec2:DescribeVolumes",
-        "ec2:DescribeVpcEndpoints",
-        "ec2:DescribeVpcPeeringConnections",
-        "ec2:DescribeVpcs",
-        "ec2:DetachInternetGateway",
-        "ec2:DisassociateRouteTable",
-        "ec2:ModifyInstanceAttribute",
-        "ec2:ModifyInstanceMetadataOptions",
-        "ec2:ReleaseAddress",
-        "ec2:ReplaceNetworkAclEntry",
-        "ec2:RevokeSecurityGroupEgress",
-        "ec2:RunInstances",
-        "ec2:StopInstances",
-        "ec2:TerminateInstances",
-        "ecs:DescribeTaskDefinition",
-        "ecs:ListTaskDefinitions",
-        "elasticloadbalancing:DescribeLoadBalancers",
-        "guardduty:CreateDetector",
-        "guardduty:GetDetector",
-        "guardduty:GetFindings",
-        "guardduty:GetMalwareScanSettings",
-        "guardduty:ListDetectors",
-        "guardduty:ListFindings",
-        "guardduty:UpdateDetector",
-        "iam:AttachUserPolicy",
-        "iam:CreatePolicy",
-        "iam:DetachUserPolicy",
-        "iam:GenerateCredentialReport",
-        "iam:GetAccountAuthorizationDetails",
-        "iam:GetAccountPasswordPolicy",
-        "iam:GetCredentialReport",
-        "iam:GetGroup",
-        "iam:ListAccessKeys",
-        "iam:ListAttachedUserPolicies",
-        "iam:ListMFADevices",
-        "iam:ListRoles",
-        "iam:ListUsers",
-        "iam:SimulatePrincipalPolicy",
-        "iam:UpdateAccessKey",
-        "lambda:GetFunction",
-        "lambda:GetFunctionConfiguration",
-        "lambda:GetPolicy",
-        "lambda:ListFunctions",
-        "logs:DescribeMetricFilters",
-        "logs:FilterLogEvents",
-        "logs:GetQueryResults",
-        "logs:PutMetricFilter",
-        "logs:StartQuery",
-        "organizations:ListAccounts",
-        "organizations:ListPolicies",
-        "organizations:ListTargetsForPolicy",
-        "rds:DescribeDBClusters",
-        "rds:DescribeDBInstances",
-        "s3:GetAccountPublicAccessBlock",
-        "s3:GetBucketAcl",
-        "s3:GetBucketLogging",
-        "s3:GetBucketObjectLockConfiguration",
-        "s3:GetBucketPolicy",
-        "s3:GetBucketPublicAccessBlock",
-        "s3:GetBucketVersioning",
-        "s3:GetEncryptionConfiguration",
-        "s3:GetReplicationConfiguration",
-        "s3:ListAllMyBuckets",
-        "secretsmanager:GetResourcePolicy",
-        "secretsmanager:ListSecrets",
-        "securityhub:DescribeHub",
-        "securityhub:GetEnabledStandards",
-        "securityhub:GetFindings",
-        "ses:GetIdentityVerificationAttributes",
-        "ses:ListIdentities",
-        "sns:ListSubscriptions",
-        "sns:ListSubscriptionsByTopic",
-        "sns:ListTopics",
-        "ssm:DescribeParameters",
-        "ssm:GetParameters",
-        "sts:AssumeRole",
-        "sts:GetCallerIdentity",
-        "sts:GetSessionToken",
-        "wafv2:GetIPSet",
-        "wafv2:GetSampledRequests",
-        "wafv2:ListIPSets",
-        "wafv2:UpdateIPSet"
-      ],
-      "Resource": "*"
-    }
-  ]
-}`}</pre>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const policy = document.querySelector('#cloudpilot-policy-pre')?.textContent;
-                        if (policy) navigator.clipboard.writeText(policy);
-                        toast.success("IAM policy copied to clipboard");
-                      }}
-                      className="absolute top-1.5 right-1.5 px-1.5 py-0.5 text-[9px] font-mono bg-primary/10 hover:bg-primary/20 border border-primary/20 rounded text-primary transition-colors"
-                    >
-                      Copy
-                    </button>
-                  </div>
                 </div>
               </div>
 
