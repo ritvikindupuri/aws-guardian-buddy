@@ -25,25 +25,38 @@ const ENV = {
 const EXECUTOR_URL = `${ENV.supabaseUrl}/functions/v1/aws-executor`;
 
 async function awsExec(service: string, commandName: string, config: any, params: any): Promise<any> {
-  const resp = await fetch(EXECUTOR_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${ENV.supabaseServiceRoleKey}`,
-      apikey: ENV.supabaseServiceRoleKey,
-    },
-    body: JSON.stringify({ service, commandName, config, params }),
-  });
-  const data = await resp.json();
-  if (data.error) {
-    const err: any = new Error(data.error);
+  let resp: Response;
+  try {
+    resp = await fetch(EXECUTOR_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${ENV.supabaseServiceRoleKey}`,
+        apikey: ENV.supabaseServiceRoleKey,
+      },
+      body: JSON.stringify({ service, commandName, config, params }),
+    });
+  } catch (netErr: any) {
+    const err: any = new Error(`Network error reaching aws-executor: ${netErr?.message || netErr}`);
+    err.name = "ExecutorNetworkError";
+    err.code = "EXECUTOR_NETWORK_ERROR";
+    throw err;
+  }
+  let data: any = {};
+  try {
+    data = await resp.json();
+  } catch {
+    data = { error: `aws-executor returned non-JSON (status ${resp.status})` };
+  }
+  if (data && data.error) {
+    const err: any = new Error(String(data.error));
     err.name = data.name || "Error";
     err.code = data.code || "UNKNOWN";
     err.$metadata = { httpStatusCode: data.statusCode || 500 };
     err.statusCode = data.statusCode || 500;
     throw err;
   }
-  return data.result;
+  return data?.result ?? {};
 }
 
 // v2-compatible Proxy wrapper: allows `v2Client("IAM", config).listUsers({}).promise()`
@@ -2892,11 +2905,16 @@ serve(async (req) => {
                 awsExec(service, commandName, awsConfig, args.params || {})
               );
               const execTime = Date.now() - startTime;
-              const resultData = result;
+              const resultData = result ?? {};
 
               // Truncate very large responses to prevent context overflow
-              let resultStr = JSON.stringify(resultData);
-              if (resultStr.length > 100000) {
+              let resultStr: string;
+              try {
+                resultStr = JSON.stringify(resultData) ?? "{}";
+              } catch {
+                resultStr = "{}";
+              }
+              if (resultStr && resultStr.length > 100000) {
                 resultStr = resultStr.slice(0, 100000) + '... [TRUNCATED — response too large, narrow your query]';
               }
 
