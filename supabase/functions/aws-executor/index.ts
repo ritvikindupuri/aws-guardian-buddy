@@ -28,6 +28,10 @@ const _awsSvcMap: Record<string, string> = {
   ElastiCache: "elasticache", Redshift: "redshift",
   DynamoDB: "dynamodb", Route53: "route53",
   ELBv2: "elastic-load-balancing-v2", AutoScaling: "auto-scaling",
+  ElasticLoadBalancingV2: "elastic-load-balancing-v2",
+  ElasticLoadBalancing: "elastic-load-balancing",
+  ConfigService: "config-service", SES: "ses",
+  ApiGateway: "api-gateway", WAFV2: "wafv2",
   Budgets: "budgets",
 };
 
@@ -49,6 +53,10 @@ const V3_CLIENT_NAMES: Record<string, string> = {
   ElastiCache: "ElastiCacheClient", Redshift: "RedshiftClient",
   DynamoDB: "DynamoDBClient", Route53: "Route53Client",
   ELBv2: "ElasticLoadBalancingV2Client", AutoScaling: "AutoScalingClient",
+  ElasticLoadBalancingV2: "ElasticLoadBalancingV2Client",
+  ElasticLoadBalancing: "ElasticLoadBalancingClient",
+  ConfigService: "ConfigServiceClient", SES: "SESClient",
+  ApiGateway: "APIGatewayClient", WAFV2: "WAFV2Client",
   Budgets: "BudgetsClient",
 };
 
@@ -94,6 +102,8 @@ const SERVICE_TO_MANAGED_POLICY: Record<string, string> = {
   ECR: "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryFullAccess",
   Route53: "arn:aws:iam::aws:policy/AmazonRoute53FullAccess",
   ELBv2: "arn:aws:iam::aws:policy/ElasticLoadBalancingFullAccess",
+  ElasticLoadBalancingV2: "arn:aws:iam::aws:policy/ElasticLoadBalancingFullAccess",
+  ElasticLoadBalancing: "arn:aws:iam::aws:policy/ElasticLoadBalancingFullAccess",
   AutoScaling: "arn:aws:iam::aws:policy/AutoScalingFullAccess",
   EventBridge: "arn:aws:iam::aws:policy/AmazonEventBridgeFullAccess",
   StepFunctions: "arn:aws:iam::aws:policy/AWSStepFunctionsFullAccess",
@@ -105,6 +115,10 @@ const SERVICE_TO_MANAGED_POLICY: Record<string, string> = {
   Athena: "arn:aws:iam::aws:policy/AmazonAthenaFullAccess",
   ACM: "arn:aws:iam::aws:policy/AWSCertificateManagerFullAccess",
   APIGateway: "arn:aws:iam::aws:policy/AmazonAPIGatewayAdministrator",
+  ApiGateway: "arn:aws:iam::aws:policy/AmazonAPIGatewayAdministrator",
+  ConfigService: "arn:aws:iam::aws:policy/AWS_ConfigRole",
+  SES: "arn:aws:iam::aws:policy/AmazonSESFullAccess",
+  WAFV2: "arn:aws:iam::aws:policy/AWSWAFFullAccess",
   Shield: "arn:aws:iam::aws:policy/AWSShieldDRTAccessPolicy",
   NetworkFirewall: "arn:aws:iam::aws:policy/AWSNetworkFirewallServiceRolePolicy",
   CognitoIdentityServiceProvider: "arn:aws:iam::aws:policy/AmazonCognitoPowerUser",
@@ -128,6 +142,14 @@ function isAccessDeniedError(e: any): boolean {
 // per warm container. Key = `${arn}::${policyArn}`.
 const _attachedPolicyCache = new Set<string>();
 
+function normalizeAwsConfig(service: string, config: any): any {
+  const globalBillingServices = new Set(["CostExplorer", "Budgets"]);
+  return {
+    ...config,
+    region: globalBillingServices.has(service) ? "us-east-1" : config?.region,
+  };
+}
+
 /**
  * Attempts to attach the AWS-managed policy that grants permissions for the
  * given service to the calling principal (IAM user or role). Returns true if
@@ -139,10 +161,11 @@ const _attachedPolicyCache = new Set<string>();
 async function tryAutoElevate(service: string, config: any): Promise<{ attached: boolean; policyArn?: string; principal?: string; error?: string }> {
   const policyArn = SERVICE_TO_MANAGED_POLICY[service];
   if (!policyArn) return { attached: false, error: `No managed policy mapping for service ${service}` };
+  const normalizedConfig = normalizeAwsConfig(service, config);
 
   try {
     const stsMod = await loadAwsModule("STS");
-    const sts = new stsMod.STSClient(config);
+    const sts = new stsMod.STSClient(normalizedConfig);
     const id = await sts.send(new stsMod.GetCallerIdentityCommand({}));
     const callerArn: string = id.Arn || "";
 
@@ -166,7 +189,7 @@ async function tryAutoElevate(service: string, config: any): Promise<{ attached:
     }
 
     const iamMod = await loadAwsModule("IAM");
-    const iam = new iamMod.IAMClient(config);
+    const iam = new iamMod.IAMClient(normalizedConfig);
 
     if (principalType === "user") {
       await iam.send(new iamMod.AttachUserPolicyCommand({ UserName: principalName, PolicyArn: policyArn }));
@@ -200,6 +223,7 @@ serve(async (req) => {
     }
 
     const mod = await loadAwsModule(service);
+    const normalizedConfig = normalizeAwsConfig(service, config);
     const clientName = V3_CLIENT_NAMES[service] || `${service}Client`;
     const ClientClass = mod[clientName];
     if (!ClientClass) throw new Error(`Client '${clientName}' not found for service '${service}'`);
@@ -207,7 +231,7 @@ serve(async (req) => {
     const CommandClass = mod[commandName];
     if (!CommandClass) throw new Error(`Command '${commandName}' not found for service '${service}'`);
 
-    const client = new ClientClass({ ...config, maxAttempts: 4 });
+    const client = new ClientClass({ ...normalizedConfig, maxAttempts: 4 });
     let elevated: { attached: boolean; policyArn?: string; principal?: string; error?: string } | null = null;
     try {
       const result = await client.send(new CommandClass(params || {}));

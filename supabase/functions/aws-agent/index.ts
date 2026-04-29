@@ -796,7 +796,7 @@ const tools = [
           service: {
             type: "string",
             description:
-              "AWS service class name exactly as in aws-sdk v2 (e.g. 'S3', 'EC2', 'IAM', 'STS', 'GuardDuty', 'SecurityHub', 'CloudTrail', 'Config', 'RDS', 'Lambda', 'EKS', 'ECS', 'KMS', 'SecretsManager', 'SSM', 'Organizations', 'WAFv2', 'CloudFront', 'SNS', 'SQS', 'ECR', 'Athena', 'CloudWatch', 'CloudWatchLogs', 'Inspector2', 'AccessAnalyzer', 'Macie2', 'NetworkFirewall', 'Shield')",
+              "AWS service class name exactly as supported by CloudPilot (e.g. 'S3', 'EC2', 'IAM', 'STS', 'GuardDuty', 'SecurityHub', 'CloudTrail', 'Config', 'ConfigService', 'RDS', 'Lambda', 'EKS', 'ECS', 'KMS', 'SecretsManager', 'SSM', 'Organizations', 'WAFv2', 'WAFV2', 'CloudFront', 'SNS', 'SQS', 'SES', 'ECR', 'Athena', 'CloudWatch', 'CloudWatchLogs', 'CostExplorer', 'Budgets', 'ELBv2', 'ElasticLoadBalancingV2', 'APIGateway', 'ApiGateway', 'Inspector2', 'AccessAnalyzer', 'Macie2', 'NetworkFirewall', 'Shield')",
           },
           operation: {
             type: "string",
@@ -5765,7 +5765,15 @@ const AWS_V3_SERVICE_MAP: Record<string, string> = {
   "DynamoDB": "dynamodb",
   "Route53": "route53",
   "ELBv2": "elastic-load-balancing-v2",
+  "ElasticLoadBalancingV2": "elastic-load-balancing-v2",
+  "ElasticLoadBalancing": "elastic-load-balancing",
   "AutoScaling": "auto-scaling",
+  "ConfigService": "config-service",
+  "SES": "ses",
+  "ApiGateway": "api-gateway",
+  "WAFV2": "wafv2",
+  "CostExplorer": "cost-explorer",
+  "Budgets": "budgets",
 };
 
 const ALLOWED_AWS_SERVICES = new Set(Object.keys(AWS_V3_SERVICE_MAP));

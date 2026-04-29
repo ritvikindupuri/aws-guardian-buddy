@@ -2269,7 +2269,13 @@ const AWS_V3_SERVICE_MAP: Record<string, string> = {
   "DynamoDB": "dynamodb",
   "Route53": "route53",
   "ELBv2": "elastic-load-balancing-v2",
+  "ElasticLoadBalancingV2": "elastic-load-balancing-v2",
+  "ElasticLoadBalancing": "elastic-load-balancing",
   "AutoScaling": "auto-scaling",
+  "ConfigService": "config-service",
+  "SES": "ses",
+  "ApiGateway": "api-gateway",
+  "WAFV2": "wafv2",
   "CostExplorer": "cost-explorer",
   "Budgets": "budgets",
 };

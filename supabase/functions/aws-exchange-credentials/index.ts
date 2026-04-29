@@ -273,6 +273,7 @@ serve(async (req) => {
       "guardduty:ListDetectors",
       "guardduty:ListFindings",
       "guardduty:UpdateDetector",
+      "iam:AttachRolePolicy",
       "iam:AttachUserPolicy",
       "iam:CreatePolicy",
       "iam:DetachUserPolicy",
