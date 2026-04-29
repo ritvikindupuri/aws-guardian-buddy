@@ -2173,7 +2173,7 @@ async function createBudgetAlertAction(awsConfig: any, accountId: string, thresh
   if (!notificationEmail) {
     return { created: false, note: "No notification email is configured, so the budget alert was not created." };
   }
-  const budgets = new (AWS as any).Budgets(awsConfig);
+  const budgets = v2Client("Budgets", awsConfig);
   const budgetName = `guardian-budget-${Date.now()}`;
   await budgets.createBudget({
     AccountId: accountId,
