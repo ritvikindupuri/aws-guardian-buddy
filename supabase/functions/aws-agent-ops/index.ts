@@ -939,8 +939,6 @@ interface SecurityGroupRiskResult {
 
 const SENSITIVE_PORTS = new Set([22, 3389, 3306, 5432, 1433, 27017, 6379, 9200]);
 const LOW_RISK_PORTS = new Set([80, 443, 53]);
-const IPV4_ANYWHERE = "0.0.0.0/0";
-const IPV6_ANYWHERE = "::/0";
 
 function getSecurityGroupDirection(action: SecurityGroupAction): "ingress" | "egress" {
   return action.endsWith("egress") ? "egress" : "ingress";
