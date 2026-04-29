@@ -3,6 +3,13 @@ import { Button } from "@/components/ui/button";
 import { ShieldCheck, ShieldAlert, Check, X } from "lucide-react";
 import { AwsCredentials } from "./AwsCredentialsPanel";
 
+const POLICY_COVERED_PREFIXES = [
+  "apigateway:", "budgets:", "ce:", "cloudtrail:", "cloudwatch:", "config:",
+  "dynamodb:", "ec2:", "ecs:", "elasticloadbalancing:", "guardduty:", "iam:",
+  "lambda:", "logs:", "organizations:", "rds:", "s3:", "secretsmanager:",
+  "securityhub:", "ses:", "sns:", "ssm:", "sts:", "wafv2:",
+];
+
 interface QuickActionPermissionsDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -26,6 +33,8 @@ export function QuickActionPermissionsDialog({
     credentials?.permissions?.["iam:AttachUserPolicy"] ||
     credentials?.permissions?.["iam:AttachRolePolicy"]
   );
+  const isCoveredByAutoGrant = (permission: string) =>
+    POLICY_COVERED_PREFIXES.some((prefix) => permission.toLowerCase().startsWith(prefix));
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -72,7 +81,7 @@ export function QuickActionPermissionsDialog({
                       <li key={perm} className="text-[11px] font-mono flex items-center gap-1.5">
                         {isAllowed === true ? (
                           <><Check className="w-3 h-3 text-green-500" /><span className="text-green-400">Allowed</span></>
-                        ) : canAutoGrant ? (
+                        ) : canAutoGrant && isCoveredByAutoGrant(perm) ? (
                           <><ShieldCheck className="w-3 h-3 text-primary" /><span className="text-primary">Auto-granted at runtime</span></>
                         ) : isAllowed === false ? (
                           <><X className="w-3 h-3 text-red-500" /><span className="text-red-400">Needs IAMFullAccess</span></>
