@@ -28,6 +28,10 @@ const _awsSvcMap: Record<string, string> = {
   ElastiCache: "elasticache", Redshift: "redshift",
   DynamoDB: "dynamodb", Route53: "route53",
   ELBv2: "elastic-load-balancing-v2", AutoScaling: "auto-scaling",
+  ElasticLoadBalancingV2: "elastic-load-balancing-v2",
+  ElasticLoadBalancing: "elastic-load-balancing",
+  ConfigService: "config-service", SES: "ses",
+  ApiGateway: "api-gateway", WAFV2: "wafv2",
   Budgets: "budgets",
 };
 
@@ -49,6 +53,10 @@ const V3_CLIENT_NAMES: Record<string, string> = {
   ElastiCache: "ElastiCacheClient", Redshift: "RedshiftClient",
   DynamoDB: "DynamoDBClient", Route53: "Route53Client",
   ELBv2: "ElasticLoadBalancingV2Client", AutoScaling: "AutoScalingClient",
+  ElasticLoadBalancingV2: "ElasticLoadBalancingV2Client",
+  ElasticLoadBalancing: "ElasticLoadBalancingClient",
+  ConfigService: "ConfigServiceClient", SES: "SESClient",
+  ApiGateway: "APIGatewayClient", WAFV2: "WAFV2Client",
   Budgets: "BudgetsClient",
 };
 
@@ -94,6 +102,8 @@ const SERVICE_TO_MANAGED_POLICY: Record<string, string> = {
   ECR: "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryFullAccess",
   Route53: "arn:aws:iam::aws:policy/AmazonRoute53FullAccess",
   ELBv2: "arn:aws:iam::aws:policy/ElasticLoadBalancingFullAccess",
+  ElasticLoadBalancingV2: "arn:aws:iam::aws:policy/ElasticLoadBalancingFullAccess",
+  ElasticLoadBalancing: "arn:aws:iam::aws:policy/ElasticLoadBalancingFullAccess",
   AutoScaling: "arn:aws:iam::aws:policy/AutoScalingFullAccess",
   EventBridge: "arn:aws:iam::aws:policy/AmazonEventBridgeFullAccess",
   StepFunctions: "arn:aws:iam::aws:policy/AWSStepFunctionsFullAccess",
@@ -105,6 +115,10 @@ const SERVICE_TO_MANAGED_POLICY: Record<string, string> = {
   Athena: "arn:aws:iam::aws:policy/AmazonAthenaFullAccess",
   ACM: "arn:aws:iam::aws:policy/AWSCertificateManagerFullAccess",
   APIGateway: "arn:aws:iam::aws:policy/AmazonAPIGatewayAdministrator",
+  ApiGateway: "arn:aws:iam::aws:policy/AmazonAPIGatewayAdministrator",
+  ConfigService: "arn:aws:iam::aws:policy/AWS_ConfigRole",
+  SES: "arn:aws:iam::aws:policy/AmazonSESFullAccess",
+  WAFV2: "arn:aws:iam::aws:policy/AWSWAFFullAccess",
   Shield: "arn:aws:iam::aws:policy/AWSShieldDRTAccessPolicy",
   NetworkFirewall: "arn:aws:iam::aws:policy/AWSNetworkFirewallServiceRolePolicy",
   CognitoIdentityServiceProvider: "arn:aws:iam::aws:policy/AmazonCognitoPowerUser",
