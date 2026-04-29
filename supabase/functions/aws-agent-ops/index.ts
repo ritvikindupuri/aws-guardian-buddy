@@ -1160,14 +1160,6 @@ function buildSecurityGroupOperationName(action: SecurityGroupAction): string {
   }
 }
 
-const SEVERITY_ORDER: Record<UnifiedAuditSeverity, number> = {
-  CRITICAL: 0,
-  HIGH: 1,
-  MEDIUM: 2,
-  LOW: 3,
-  INFO: 4,
-};
-
 function calculateAccountHealthScore(counts: Record<UnifiedAuditSeverity, number>): number {
   const score =
     100 -
